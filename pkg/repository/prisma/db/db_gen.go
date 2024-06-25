@@ -164,6 +164,40 @@ model UserSession {
   expiresAt DateTime
 }
 
+// WebhookWorker can be used to handle workflows via webhooks
+model WebhookWorker {
+  id        String   @id @unique @default(uuid()) @db.Uuid
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  name       String
+  secret     String
+  url        String  @unique
+  // stores the encrypted hatchet auth token
+  tokenValue String?
+  deleted    Boolean @default(false)
+
+  tokenId String?   @db.Uuid
+  token   APIToken? @relation(fields: [tokenId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  tenantId String @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  webhookWorkerWorkflows WebhookWorkerWorkflow[]
+}
+
+model WebhookWorkerWorkflow {
+  id String @id @unique @default(uuid()) @db.Uuid
+
+  webhookWorker   WebhookWorker @relation(fields: [webhookWorkerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  webhookWorkerId String        @db.Uuid
+
+  workflow   Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  workflowId String   @db.Uuid
+
+  @@unique([webhookWorkerId, workflowId])
+}
+
 // Tenant represents a unique tenant in the database. Each tenant-scoped resource should have the tenant as
 // an identifier, which makes tenant isolation easier.
 model Tenant {
@@ -205,13 +239,12 @@ model Tenant {
   stepRateLimits      StepRateLimit[]
   alertEmailGroups    TenantAlertEmailGroup[]
   // alertMemberEmails controls whether to send alert emails to tenant members in addition to the alert email groups
-  alertMemberEmails   Boolean                  @default(true)
-  slackWebhooks       SlackAppWebhook[]
-  alertingSettings    TenantAlertingSettings?
-
+  alertMemberEmails         Boolean                    @default(true)
+  slackWebhooks             SlackAppWebhook[]
+  alertingSettings          TenantAlertingSettings?
   limits                    TenantResourceLimit[]
   limitAlerts               TenantResourceLimitAlert[]
-
+  webhookWorkers            WebhookWorker[]
 }
 
 enum LimitResource {
@@ -377,6 +410,8 @@ model APIToken {
 
   tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   tenantId String? @db.Uuid
+
+  webhookWorkers WebhookWorker[]
 }
 
 // Event represents an event in the database.
@@ -455,7 +490,8 @@ model Workflow {
   versions WorkflowVersion[]
 
   // the tags for this workflow
-  tags WorkflowTag[]
+  tags                   WorkflowTag[]
+  webhookWorkerWorkflows WebhookWorkerWorkflow[]
 
   // workflow names are unique per tenant
   @@unique([tenantId, name])
@@ -1573,6 +1609,8 @@ func newClient() *PrismaClient {
 	c.UserOAuth = userOAuthActions{client: c}
 	c.UserPassword = userPasswordActions{client: c}
 	c.UserSession = userSessionActions{client: c}
+	c.WebhookWorker = webhookWorkerActions{client: c}
+	c.WebhookWorkerWorkflow = webhookWorkerWorkflowActions{client: c}
 	c.Tenant = tenantActions{client: c}
 	c.TenantResourceLimit = tenantResourceLimitActions{client: c}
 	c.TenantResourceLimitAlert = tenantResourceLimitAlertActions{client: c}
@@ -1646,6 +1684,10 @@ type PrismaClient struct {
 	UserPassword userPasswordActions
 	// UserSession provides access to CRUD methods.
 	UserSession userSessionActions
+	// WebhookWorker provides access to CRUD methods.
+	WebhookWorker webhookWorkerActions
+	// WebhookWorkerWorkflow provides access to CRUD methods.
+	WebhookWorkerWorkflow webhookWorkerWorkflowActions
 	// Tenant provides access to CRUD methods.
 	Tenant tenantActions
 	// TenantResourceLimit provides access to CRUD methods.
@@ -1920,6 +1962,29 @@ const (
 	UserSessionScalarFieldEnumUserID    UserSessionScalarFieldEnum = "userId"
 	UserSessionScalarFieldEnumData      UserSessionScalarFieldEnum = "data"
 	UserSessionScalarFieldEnumExpiresAt UserSessionScalarFieldEnum = "expiresAt"
+)
+
+type WebhookWorkerScalarFieldEnum string
+
+const (
+	WebhookWorkerScalarFieldEnumID         WebhookWorkerScalarFieldEnum = "id"
+	WebhookWorkerScalarFieldEnumCreatedAt  WebhookWorkerScalarFieldEnum = "createdAt"
+	WebhookWorkerScalarFieldEnumUpdatedAt  WebhookWorkerScalarFieldEnum = "updatedAt"
+	WebhookWorkerScalarFieldEnumName       WebhookWorkerScalarFieldEnum = "name"
+	WebhookWorkerScalarFieldEnumSecret     WebhookWorkerScalarFieldEnum = "secret"
+	WebhookWorkerScalarFieldEnumURL        WebhookWorkerScalarFieldEnum = "url"
+	WebhookWorkerScalarFieldEnumTokenValue WebhookWorkerScalarFieldEnum = "tokenValue"
+	WebhookWorkerScalarFieldEnumDeleted    WebhookWorkerScalarFieldEnum = "deleted"
+	WebhookWorkerScalarFieldEnumTokenID    WebhookWorkerScalarFieldEnum = "tokenId"
+	WebhookWorkerScalarFieldEnumTenantID   WebhookWorkerScalarFieldEnum = "tenantId"
+)
+
+type WebhookWorkerWorkflowScalarFieldEnum string
+
+const (
+	WebhookWorkerWorkflowScalarFieldEnumID              WebhookWorkerWorkflowScalarFieldEnum = "id"
+	WebhookWorkerWorkflowScalarFieldEnumWebhookWorkerID WebhookWorkerWorkflowScalarFieldEnum = "webhookWorkerId"
+	WebhookWorkerWorkflowScalarFieldEnumWorkflowID      WebhookWorkerWorkflowScalarFieldEnum = "workflowId"
 )
 
 type TenantScalarFieldEnum string
@@ -2620,6 +2685,46 @@ const userSessionFieldData userSessionPrismaFields = "data"
 
 const userSessionFieldExpiresAt userSessionPrismaFields = "expiresAt"
 
+type webhookWorkerPrismaFields = prismaFields
+
+const webhookWorkerFieldID webhookWorkerPrismaFields = "id"
+
+const webhookWorkerFieldCreatedAt webhookWorkerPrismaFields = "createdAt"
+
+const webhookWorkerFieldUpdatedAt webhookWorkerPrismaFields = "updatedAt"
+
+const webhookWorkerFieldName webhookWorkerPrismaFields = "name"
+
+const webhookWorkerFieldSecret webhookWorkerPrismaFields = "secret"
+
+const webhookWorkerFieldURL webhookWorkerPrismaFields = "url"
+
+const webhookWorkerFieldTokenValue webhookWorkerPrismaFields = "tokenValue"
+
+const webhookWorkerFieldDeleted webhookWorkerPrismaFields = "deleted"
+
+const webhookWorkerFieldTokenID webhookWorkerPrismaFields = "tokenId"
+
+const webhookWorkerFieldToken webhookWorkerPrismaFields = "token"
+
+const webhookWorkerFieldTenantID webhookWorkerPrismaFields = "tenantId"
+
+const webhookWorkerFieldTenant webhookWorkerPrismaFields = "tenant"
+
+const webhookWorkerFieldWebhookWorkerWorkflows webhookWorkerPrismaFields = "webhookWorkerWorkflows"
+
+type webhookWorkerWorkflowPrismaFields = prismaFields
+
+const webhookWorkerWorkflowFieldID webhookWorkerWorkflowPrismaFields = "id"
+
+const webhookWorkerWorkflowFieldWebhookWorker webhookWorkerWorkflowPrismaFields = "webhookWorker"
+
+const webhookWorkerWorkflowFieldWebhookWorkerID webhookWorkerWorkflowPrismaFields = "webhookWorkerId"
+
+const webhookWorkerWorkflowFieldWorkflow webhookWorkerWorkflowPrismaFields = "workflow"
+
+const webhookWorkerWorkflowFieldWorkflowID webhookWorkerWorkflowPrismaFields = "workflowId"
+
 type tenantPrismaFields = prismaFields
 
 const tenantFieldID tenantPrismaFields = "id"
@@ -2695,6 +2800,8 @@ const tenantFieldAlertingSettings tenantPrismaFields = "alertingSettings"
 const tenantFieldLimits tenantPrismaFields = "limits"
 
 const tenantFieldLimitAlerts tenantPrismaFields = "limitAlerts"
+
+const tenantFieldWebhookWorkers tenantPrismaFields = "webhookWorkers"
 
 type tenantResourceLimitPrismaFields = prismaFields
 
@@ -2836,6 +2943,8 @@ const aPITokenFieldTenant aPITokenPrismaFields = "tenant"
 
 const aPITokenFieldTenantID aPITokenPrismaFields = "tenantId"
 
+const aPITokenFieldWebhookWorkers aPITokenPrismaFields = "webhookWorkers"
+
 type eventPrismaFields = prismaFields
 
 const eventFieldID eventPrismaFields = "id"
@@ -2903,6 +3012,8 @@ const workflowFieldDescription workflowPrismaFields = "description"
 const workflowFieldVersions workflowPrismaFields = "versions"
 
 const workflowFieldTags workflowPrismaFields = "tags"
+
+const workflowFieldWebhookWorkerWorkflows workflowPrismaFields = "webhookWorkerWorkflows"
 
 type workflowVersionPrismaFields = prismaFields
 
@@ -3762,6 +3873,14 @@ func NewMock() (*PrismaClient, *Mock, func(t *testing.T)) {
 		mock: m,
 	}
 
+	m.WebhookWorker = webhookWorkerMock{
+		mock: m,
+	}
+
+	m.WebhookWorkerWorkflow = webhookWorkerWorkflowMock{
+		mock: m,
+	}
+
 	m.Tenant = tenantMock{
 		mock: m,
 	}
@@ -3939,6 +4058,10 @@ type Mock struct {
 	UserPassword userPasswordMock
 
 	UserSession userSessionMock
+
+	WebhookWorker webhookWorkerMock
+
+	WebhookWorkerWorkflow webhookWorkerWorkflowMock
 
 	Tenant tenantMock
 
@@ -4185,6 +4308,90 @@ func (m *userSessionMockExec) ReturnsMany(v []UserSessionModel) {
 }
 
 func (m *userSessionMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
+type webhookWorkerMock struct {
+	mock *Mock
+}
+
+type WebhookWorkerMockExpectParam interface {
+	ExtractQuery() builder.Query
+	webhookWorkerModel()
+}
+
+func (m *webhookWorkerMock) Expect(query WebhookWorkerMockExpectParam) *webhookWorkerMockExec {
+	return &webhookWorkerMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type webhookWorkerMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *webhookWorkerMockExec) Returns(v WebhookWorkerModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *webhookWorkerMockExec) ReturnsMany(v []WebhookWorkerModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *webhookWorkerMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
+type webhookWorkerWorkflowMock struct {
+	mock *Mock
+}
+
+type WebhookWorkerWorkflowMockExpectParam interface {
+	ExtractQuery() builder.Query
+	webhookWorkerWorkflowModel()
+}
+
+func (m *webhookWorkerWorkflowMock) Expect(query WebhookWorkerWorkflowMockExpectParam) *webhookWorkerWorkflowMockExec {
+	return &webhookWorkerWorkflowMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type webhookWorkerWorkflowMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *webhookWorkerWorkflowMockExec) Returns(v WebhookWorkerWorkflowModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *webhookWorkerWorkflowMockExec) ReturnsMany(v []WebhookWorkerWorkflowModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *webhookWorkerWorkflowMockExec) Errors(err error) {
 	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
 		Query:   m.query,
 		WantErr: err,
@@ -6133,6 +6340,122 @@ func (r UserSessionModel) Data() (value JSON, ok bool) {
 	return *r.InnerUserSession.Data, true
 }
 
+// WebhookWorkerModel represents the WebhookWorker model and is a wrapper for accessing fields and methods
+type WebhookWorkerModel struct {
+	InnerWebhookWorker
+	RelationsWebhookWorker
+}
+
+// InnerWebhookWorker holds the actual data
+type InnerWebhookWorker struct {
+	ID         string   `json:"id"`
+	CreatedAt  DateTime `json:"createdAt"`
+	UpdatedAt  DateTime `json:"updatedAt"`
+	Name       string   `json:"name"`
+	Secret     string   `json:"secret"`
+	URL        string   `json:"url"`
+	TokenValue *string  `json:"tokenValue,omitempty"`
+	Deleted    bool     `json:"deleted"`
+	TokenID    *string  `json:"tokenId,omitempty"`
+	TenantID   string   `json:"tenantId"`
+}
+
+// RawWebhookWorkerModel is a struct for WebhookWorker when used in raw queries
+type RawWebhookWorkerModel struct {
+	ID         RawString   `json:"id"`
+	CreatedAt  RawDateTime `json:"createdAt"`
+	UpdatedAt  RawDateTime `json:"updatedAt"`
+	Name       RawString   `json:"name"`
+	Secret     RawString   `json:"secret"`
+	URL        RawString   `json:"url"`
+	TokenValue *RawString  `json:"tokenValue,omitempty"`
+	Deleted    RawBoolean  `json:"deleted"`
+	TokenID    *RawString  `json:"tokenId,omitempty"`
+	TenantID   RawString   `json:"tenantId"`
+}
+
+// RelationsWebhookWorker holds the relation data separately
+type RelationsWebhookWorker struct {
+	Token                  *APITokenModel               `json:"token,omitempty"`
+	Tenant                 *TenantModel                 `json:"tenant,omitempty"`
+	WebhookWorkerWorkflows []WebhookWorkerWorkflowModel `json:"webhookWorkerWorkflows,omitempty"`
+}
+
+func (r WebhookWorkerModel) TokenValue() (value String, ok bool) {
+	if r.InnerWebhookWorker.TokenValue == nil {
+		return value, false
+	}
+	return *r.InnerWebhookWorker.TokenValue, true
+}
+
+func (r WebhookWorkerModel) TokenID() (value String, ok bool) {
+	if r.InnerWebhookWorker.TokenID == nil {
+		return value, false
+	}
+	return *r.InnerWebhookWorker.TokenID, true
+}
+
+func (r WebhookWorkerModel) Token() (value *APITokenModel, ok bool) {
+	if r.RelationsWebhookWorker.Token == nil {
+		return value, false
+	}
+	return r.RelationsWebhookWorker.Token, true
+}
+
+func (r WebhookWorkerModel) Tenant() (value *TenantModel) {
+	if r.RelationsWebhookWorker.Tenant == nil {
+		panic("attempted to access tenant but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsWebhookWorker.Tenant
+}
+
+func (r WebhookWorkerModel) WebhookWorkerWorkflows() (value []WebhookWorkerWorkflowModel) {
+	if r.RelationsWebhookWorker.WebhookWorkerWorkflows == nil {
+		panic("attempted to access webhookWorkerWorkflows but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsWebhookWorker.WebhookWorkerWorkflows
+}
+
+// WebhookWorkerWorkflowModel represents the WebhookWorkerWorkflow model and is a wrapper for accessing fields and methods
+type WebhookWorkerWorkflowModel struct {
+	InnerWebhookWorkerWorkflow
+	RelationsWebhookWorkerWorkflow
+}
+
+// InnerWebhookWorkerWorkflow holds the actual data
+type InnerWebhookWorkerWorkflow struct {
+	ID              string `json:"id"`
+	WebhookWorkerID string `json:"webhookWorkerId"`
+	WorkflowID      string `json:"workflowId"`
+}
+
+// RawWebhookWorkerWorkflowModel is a struct for WebhookWorkerWorkflow when used in raw queries
+type RawWebhookWorkerWorkflowModel struct {
+	ID              RawString `json:"id"`
+	WebhookWorkerID RawString `json:"webhookWorkerId"`
+	WorkflowID      RawString `json:"workflowId"`
+}
+
+// RelationsWebhookWorkerWorkflow holds the relation data separately
+type RelationsWebhookWorkerWorkflow struct {
+	WebhookWorker *WebhookWorkerModel `json:"webhookWorker,omitempty"`
+	Workflow      *WorkflowModel      `json:"workflow,omitempty"`
+}
+
+func (r WebhookWorkerWorkflowModel) WebhookWorker() (value *WebhookWorkerModel) {
+	if r.RelationsWebhookWorkerWorkflow.WebhookWorker == nil {
+		panic("attempted to access webhookWorker but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsWebhookWorkerWorkflow.WebhookWorker
+}
+
+func (r WebhookWorkerWorkflowModel) Workflow() (value *WorkflowModel) {
+	if r.RelationsWebhookWorkerWorkflow.Workflow == nil {
+		panic("attempted to access workflow but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsWebhookWorkerWorkflow.Workflow
+}
+
 // TenantModel represents the Tenant model and is a wrapper for accessing fields and methods
 type TenantModel struct {
 	InnerTenant
@@ -6194,6 +6517,7 @@ type RelationsTenant struct {
 	AlertingSettings    *TenantAlertingSettingsModel    `json:"alertingSettings,omitempty"`
 	Limits              []TenantResourceLimitModel      `json:"limits,omitempty"`
 	LimitAlerts         []TenantResourceLimitAlertModel `json:"limitAlerts,omitempty"`
+	WebhookWorkers      []WebhookWorkerModel            `json:"webhookWorkers,omitempty"`
 }
 
 func (r TenantModel) DeletedAt() (value DateTime, ok bool) {
@@ -6404,6 +6728,13 @@ func (r TenantModel) LimitAlerts() (value []TenantResourceLimitAlertModel) {
 		panic("attempted to access limitAlerts but did not fetch it using the .With() syntax")
 	}
 	return r.RelationsTenant.LimitAlerts
+}
+
+func (r TenantModel) WebhookWorkers() (value []WebhookWorkerModel) {
+	if r.RelationsTenant.WebhookWorkers == nil {
+		panic("attempted to access webhookWorkers but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsTenant.WebhookWorkers
 }
 
 // TenantResourceLimitModel represents the TenantResourceLimit model and is a wrapper for accessing fields and methods
@@ -6727,7 +7058,8 @@ type RawAPITokenModel struct {
 
 // RelationsAPIToken holds the relation data separately
 type RelationsAPIToken struct {
-	Tenant *TenantModel `json:"tenant,omitempty"`
+	Tenant         *TenantModel         `json:"tenant,omitempty"`
+	WebhookWorkers []WebhookWorkerModel `json:"webhookWorkers,omitempty"`
 }
 
 func (r APITokenModel) ExpiresAt() (value DateTime, ok bool) {
@@ -6763,6 +7095,13 @@ func (r APITokenModel) TenantID() (value String, ok bool) {
 		return value, false
 	}
 	return *r.InnerAPIToken.TenantID, true
+}
+
+func (r APITokenModel) WebhookWorkers() (value []WebhookWorkerModel) {
+	if r.RelationsAPIToken.WebhookWorkers == nil {
+		panic("attempted to access webhookWorkers but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsAPIToken.WebhookWorkers
 }
 
 // EventModel represents the Event model and is a wrapper for accessing fields and methods
@@ -6937,9 +7276,10 @@ type RawWorkflowModel struct {
 
 // RelationsWorkflow holds the relation data separately
 type RelationsWorkflow struct {
-	Tenant   *TenantModel           `json:"tenant,omitempty"`
-	Versions []WorkflowVersionModel `json:"versions,omitempty"`
-	Tags     []WorkflowTagModel     `json:"tags,omitempty"`
+	Tenant                 *TenantModel                 `json:"tenant,omitempty"`
+	Versions               []WorkflowVersionModel       `json:"versions,omitempty"`
+	Tags                   []WorkflowTagModel           `json:"tags,omitempty"`
+	WebhookWorkerWorkflows []WebhookWorkerWorkflowModel `json:"webhookWorkerWorkflows,omitempty"`
 }
 
 func (r WorkflowModel) DeletedAt() (value DateTime, ok bool) {
@@ -6975,6 +7315,13 @@ func (r WorkflowModel) Tags() (value []WorkflowTagModel) {
 		panic("attempted to access tags but did not fetch it using the .With() syntax")
 	}
 	return r.RelationsWorkflow.Tags
+}
+
+func (r WorkflowModel) WebhookWorkerWorkflows() (value []WebhookWorkerWorkflowModel) {
+	if r.RelationsWorkflow.WebhookWorkerWorkflows == nil {
+		panic("attempted to access webhookWorkerWorkflows but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsWorkflow.WebhookWorkerWorkflows
 }
 
 // WorkflowVersionModel represents the WorkflowVersion model and is a wrapper for accessing fields and methods
@@ -18539,6 +18886,4990 @@ func (r userSessionQueryExpiresAtDateTime) Field() userSessionPrismaFields {
 	return userSessionFieldExpiresAt
 }
 
+// WebhookWorker acts as a namespaces to access query methods for the WebhookWorker model
+var WebhookWorker = webhookWorkerQuery{}
+
+// webhookWorkerQuery exposes query functions for the webhookWorker model
+type webhookWorkerQuery struct {
+
+	// ID
+	//
+	// @required
+	ID webhookWorkerQueryIDString
+
+	// CreatedAt
+	//
+	// @required
+	CreatedAt webhookWorkerQueryCreatedAtDateTime
+
+	// UpdatedAt
+	//
+	// @required
+	UpdatedAt webhookWorkerQueryUpdatedAtDateTime
+
+	// Name
+	//
+	// @required
+	Name webhookWorkerQueryNameString
+
+	// Secret
+	//
+	// @required
+	Secret webhookWorkerQuerySecretString
+
+	// URL
+	//
+	// @required
+	// @unique
+	URL webhookWorkerQueryURLString
+
+	// TokenValue
+	//
+	// @optional
+	TokenValue webhookWorkerQueryTokenValueString
+
+	// Deleted
+	//
+	// @required
+	Deleted webhookWorkerQueryDeletedBoolean
+
+	// TokenID
+	//
+	// @optional
+	TokenID webhookWorkerQueryTokenIDString
+
+	Token webhookWorkerQueryTokenRelations
+
+	// TenantID
+	//
+	// @required
+	TenantID webhookWorkerQueryTenantIDString
+
+	Tenant webhookWorkerQueryTenantRelations
+
+	WebhookWorkerWorkflows webhookWorkerQueryWebhookWorkerWorkflowsRelations
+}
+
+func (webhookWorkerQuery) Not(params ...WebhookWorkerWhereParam) webhookWorkerDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (webhookWorkerQuery) Or(params ...WebhookWorkerWhereParam) webhookWorkerDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (webhookWorkerQuery) And(params ...WebhookWorkerWhereParam) webhookWorkerDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+// base struct
+type webhookWorkerQueryIDString struct{}
+
+// Set the required value of ID
+func (r webhookWorkerQueryIDString) Set(value string) webhookWorkerSetParam {
+
+	return webhookWorkerSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r webhookWorkerQueryIDString) SetIfPresent(value *String) webhookWorkerSetParam {
+	if value == nil {
+		return webhookWorkerSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r webhookWorkerQueryIDString) Equals(value string) webhookWorkerWithPrismaIDEqualsUniqueParam {
+
+	return webhookWorkerWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryIDString) EqualsIfPresent(value *string) webhookWorkerWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return webhookWorkerWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r webhookWorkerQueryIDString) Order(direction SortOrder) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r webhookWorkerQueryIDString) Cursor(cursor string) webhookWorkerCursorParam {
+	return webhookWorkerCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r webhookWorkerQueryIDString) In(value []string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryIDString) InIfPresent(value []string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r webhookWorkerQueryIDString) NotIn(value []string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryIDString) NotInIfPresent(value []string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r webhookWorkerQueryIDString) Lt(value string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryIDString) LtIfPresent(value *string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r webhookWorkerQueryIDString) Lte(value string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryIDString) LteIfPresent(value *string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r webhookWorkerQueryIDString) Gt(value string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryIDString) GtIfPresent(value *string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r webhookWorkerQueryIDString) Gte(value string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryIDString) GteIfPresent(value *string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r webhookWorkerQueryIDString) Contains(value string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryIDString) ContainsIfPresent(value *string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.Contains(*value)
+}
+
+func (r webhookWorkerQueryIDString) StartsWith(value string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryIDString) StartsWithIfPresent(value *string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r webhookWorkerQueryIDString) EndsWith(value string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryIDString) EndsWithIfPresent(value *string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r webhookWorkerQueryIDString) Mode(value QueryMode) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryIDString) ModeIfPresent(value *QueryMode) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.Mode(*value)
+}
+
+func (r webhookWorkerQueryIDString) Not(value string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryIDString) NotIfPresent(value *string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r webhookWorkerQueryIDString) HasPrefix(value string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r webhookWorkerQueryIDString) HasPrefixIfPresent(value *string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r webhookWorkerQueryIDString) HasSuffix(value string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r webhookWorkerQueryIDString) HasSuffixIfPresent(value *string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r webhookWorkerQueryIDString) Field() webhookWorkerPrismaFields {
+	return webhookWorkerFieldID
+}
+
+// base struct
+type webhookWorkerQueryCreatedAtDateTime struct{}
+
+// Set the required value of CreatedAt
+func (r webhookWorkerQueryCreatedAtDateTime) Set(value DateTime) webhookWorkerSetParam {
+
+	return webhookWorkerSetParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of CreatedAt dynamically
+func (r webhookWorkerQueryCreatedAtDateTime) SetIfPresent(value *DateTime) webhookWorkerSetParam {
+	if value == nil {
+		return webhookWorkerSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r webhookWorkerQueryCreatedAtDateTime) Equals(value DateTime) webhookWorkerWithPrismaCreatedAtEqualsParam {
+
+	return webhookWorkerWithPrismaCreatedAtEqualsParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryCreatedAtDateTime) EqualsIfPresent(value *DateTime) webhookWorkerWithPrismaCreatedAtEqualsParam {
+	if value == nil {
+		return webhookWorkerWithPrismaCreatedAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r webhookWorkerQueryCreatedAtDateTime) Order(direction SortOrder) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r webhookWorkerQueryCreatedAtDateTime) Cursor(cursor DateTime) webhookWorkerCursorParam {
+	return webhookWorkerCursorParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r webhookWorkerQueryCreatedAtDateTime) In(value []DateTime) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryCreatedAtDateTime) InIfPresent(value []DateTime) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r webhookWorkerQueryCreatedAtDateTime) NotIn(value []DateTime) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryCreatedAtDateTime) NotInIfPresent(value []DateTime) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r webhookWorkerQueryCreatedAtDateTime) Lt(value DateTime) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryCreatedAtDateTime) LtIfPresent(value *DateTime) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r webhookWorkerQueryCreatedAtDateTime) Lte(value DateTime) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryCreatedAtDateTime) LteIfPresent(value *DateTime) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r webhookWorkerQueryCreatedAtDateTime) Gt(value DateTime) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryCreatedAtDateTime) GtIfPresent(value *DateTime) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r webhookWorkerQueryCreatedAtDateTime) Gte(value DateTime) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryCreatedAtDateTime) GteIfPresent(value *DateTime) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r webhookWorkerQueryCreatedAtDateTime) Not(value DateTime) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryCreatedAtDateTime) NotIfPresent(value *DateTime) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r webhookWorkerQueryCreatedAtDateTime) Before(value DateTime) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r webhookWorkerQueryCreatedAtDateTime) BeforeIfPresent(value *DateTime) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r webhookWorkerQueryCreatedAtDateTime) After(value DateTime) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r webhookWorkerQueryCreatedAtDateTime) AfterIfPresent(value *DateTime) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r webhookWorkerQueryCreatedAtDateTime) BeforeEquals(value DateTime) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r webhookWorkerQueryCreatedAtDateTime) BeforeEqualsIfPresent(value *DateTime) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r webhookWorkerQueryCreatedAtDateTime) AfterEquals(value DateTime) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r webhookWorkerQueryCreatedAtDateTime) AfterEqualsIfPresent(value *DateTime) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r webhookWorkerQueryCreatedAtDateTime) Field() webhookWorkerPrismaFields {
+	return webhookWorkerFieldCreatedAt
+}
+
+// base struct
+type webhookWorkerQueryUpdatedAtDateTime struct{}
+
+// Set the required value of UpdatedAt
+func (r webhookWorkerQueryUpdatedAtDateTime) Set(value DateTime) webhookWorkerSetParam {
+
+	return webhookWorkerSetParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of UpdatedAt dynamically
+func (r webhookWorkerQueryUpdatedAtDateTime) SetIfPresent(value *DateTime) webhookWorkerSetParam {
+	if value == nil {
+		return webhookWorkerSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r webhookWorkerQueryUpdatedAtDateTime) Equals(value DateTime) webhookWorkerWithPrismaUpdatedAtEqualsParam {
+
+	return webhookWorkerWithPrismaUpdatedAtEqualsParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryUpdatedAtDateTime) EqualsIfPresent(value *DateTime) webhookWorkerWithPrismaUpdatedAtEqualsParam {
+	if value == nil {
+		return webhookWorkerWithPrismaUpdatedAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r webhookWorkerQueryUpdatedAtDateTime) Order(direction SortOrder) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r webhookWorkerQueryUpdatedAtDateTime) Cursor(cursor DateTime) webhookWorkerCursorParam {
+	return webhookWorkerCursorParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r webhookWorkerQueryUpdatedAtDateTime) In(value []DateTime) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryUpdatedAtDateTime) InIfPresent(value []DateTime) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r webhookWorkerQueryUpdatedAtDateTime) NotIn(value []DateTime) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryUpdatedAtDateTime) NotInIfPresent(value []DateTime) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r webhookWorkerQueryUpdatedAtDateTime) Lt(value DateTime) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryUpdatedAtDateTime) LtIfPresent(value *DateTime) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r webhookWorkerQueryUpdatedAtDateTime) Lte(value DateTime) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryUpdatedAtDateTime) LteIfPresent(value *DateTime) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r webhookWorkerQueryUpdatedAtDateTime) Gt(value DateTime) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryUpdatedAtDateTime) GtIfPresent(value *DateTime) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r webhookWorkerQueryUpdatedAtDateTime) Gte(value DateTime) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryUpdatedAtDateTime) GteIfPresent(value *DateTime) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r webhookWorkerQueryUpdatedAtDateTime) Not(value DateTime) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryUpdatedAtDateTime) NotIfPresent(value *DateTime) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r webhookWorkerQueryUpdatedAtDateTime) Before(value DateTime) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r webhookWorkerQueryUpdatedAtDateTime) BeforeIfPresent(value *DateTime) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r webhookWorkerQueryUpdatedAtDateTime) After(value DateTime) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r webhookWorkerQueryUpdatedAtDateTime) AfterIfPresent(value *DateTime) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r webhookWorkerQueryUpdatedAtDateTime) BeforeEquals(value DateTime) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r webhookWorkerQueryUpdatedAtDateTime) BeforeEqualsIfPresent(value *DateTime) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r webhookWorkerQueryUpdatedAtDateTime) AfterEquals(value DateTime) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r webhookWorkerQueryUpdatedAtDateTime) AfterEqualsIfPresent(value *DateTime) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r webhookWorkerQueryUpdatedAtDateTime) Field() webhookWorkerPrismaFields {
+	return webhookWorkerFieldUpdatedAt
+}
+
+// base struct
+type webhookWorkerQueryNameString struct{}
+
+// Set the required value of Name
+func (r webhookWorkerQueryNameString) Set(value string) webhookWorkerWithPrismaNameSetParam {
+
+	return webhookWorkerWithPrismaNameSetParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Name dynamically
+func (r webhookWorkerQueryNameString) SetIfPresent(value *String) webhookWorkerWithPrismaNameSetParam {
+	if value == nil {
+		return webhookWorkerWithPrismaNameSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r webhookWorkerQueryNameString) Equals(value string) webhookWorkerWithPrismaNameEqualsParam {
+
+	return webhookWorkerWithPrismaNameEqualsParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryNameString) EqualsIfPresent(value *string) webhookWorkerWithPrismaNameEqualsParam {
+	if value == nil {
+		return webhookWorkerWithPrismaNameEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r webhookWorkerQueryNameString) Order(direction SortOrder) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: direction,
+		},
+	}
+}
+
+func (r webhookWorkerQueryNameString) Cursor(cursor string) webhookWorkerCursorParam {
+	return webhookWorkerCursorParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: cursor,
+		},
+	}
+}
+
+func (r webhookWorkerQueryNameString) In(value []string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryNameString) InIfPresent(value []string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r webhookWorkerQueryNameString) NotIn(value []string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryNameString) NotInIfPresent(value []string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r webhookWorkerQueryNameString) Lt(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryNameString) LtIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r webhookWorkerQueryNameString) Lte(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryNameString) LteIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r webhookWorkerQueryNameString) Gt(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryNameString) GtIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r webhookWorkerQueryNameString) Gte(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryNameString) GteIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r webhookWorkerQueryNameString) Contains(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryNameString) ContainsIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r webhookWorkerQueryNameString) StartsWith(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryNameString) StartsWithIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r webhookWorkerQueryNameString) EndsWith(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryNameString) EndsWithIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r webhookWorkerQueryNameString) Mode(value QueryMode) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryNameString) ModeIfPresent(value *QueryMode) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r webhookWorkerQueryNameString) Not(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryNameString) NotIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r webhookWorkerQueryNameString) HasPrefix(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r webhookWorkerQueryNameString) HasPrefixIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r webhookWorkerQueryNameString) HasSuffix(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r webhookWorkerQueryNameString) HasSuffixIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r webhookWorkerQueryNameString) Field() webhookWorkerPrismaFields {
+	return webhookWorkerFieldName
+}
+
+// base struct
+type webhookWorkerQuerySecretString struct{}
+
+// Set the required value of Secret
+func (r webhookWorkerQuerySecretString) Set(value string) webhookWorkerWithPrismaSecretSetParam {
+
+	return webhookWorkerWithPrismaSecretSetParam{
+		data: builder.Field{
+			Name:  "secret",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Secret dynamically
+func (r webhookWorkerQuerySecretString) SetIfPresent(value *String) webhookWorkerWithPrismaSecretSetParam {
+	if value == nil {
+		return webhookWorkerWithPrismaSecretSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r webhookWorkerQuerySecretString) Equals(value string) webhookWorkerWithPrismaSecretEqualsParam {
+
+	return webhookWorkerWithPrismaSecretEqualsParam{
+		data: builder.Field{
+			Name: "secret",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQuerySecretString) EqualsIfPresent(value *string) webhookWorkerWithPrismaSecretEqualsParam {
+	if value == nil {
+		return webhookWorkerWithPrismaSecretEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r webhookWorkerQuerySecretString) Order(direction SortOrder) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name:  "secret",
+			Value: direction,
+		},
+	}
+}
+
+func (r webhookWorkerQuerySecretString) Cursor(cursor string) webhookWorkerCursorParam {
+	return webhookWorkerCursorParam{
+		data: builder.Field{
+			Name:  "secret",
+			Value: cursor,
+		},
+	}
+}
+
+func (r webhookWorkerQuerySecretString) In(value []string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "secret",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQuerySecretString) InIfPresent(value []string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r webhookWorkerQuerySecretString) NotIn(value []string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "secret",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQuerySecretString) NotInIfPresent(value []string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r webhookWorkerQuerySecretString) Lt(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "secret",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQuerySecretString) LtIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r webhookWorkerQuerySecretString) Lte(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "secret",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQuerySecretString) LteIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r webhookWorkerQuerySecretString) Gt(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "secret",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQuerySecretString) GtIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r webhookWorkerQuerySecretString) Gte(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "secret",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQuerySecretString) GteIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r webhookWorkerQuerySecretString) Contains(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "secret",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQuerySecretString) ContainsIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r webhookWorkerQuerySecretString) StartsWith(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "secret",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQuerySecretString) StartsWithIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r webhookWorkerQuerySecretString) EndsWith(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "secret",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQuerySecretString) EndsWithIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r webhookWorkerQuerySecretString) Mode(value QueryMode) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "secret",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQuerySecretString) ModeIfPresent(value *QueryMode) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r webhookWorkerQuerySecretString) Not(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "secret",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQuerySecretString) NotIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r webhookWorkerQuerySecretString) HasPrefix(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "secret",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r webhookWorkerQuerySecretString) HasPrefixIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r webhookWorkerQuerySecretString) HasSuffix(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "secret",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r webhookWorkerQuerySecretString) HasSuffixIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r webhookWorkerQuerySecretString) Field() webhookWorkerPrismaFields {
+	return webhookWorkerFieldSecret
+}
+
+// base struct
+type webhookWorkerQueryURLString struct{}
+
+// Set the required value of URL
+func (r webhookWorkerQueryURLString) Set(value string) webhookWorkerWithPrismaURLSetParam {
+
+	return webhookWorkerWithPrismaURLSetParam{
+		data: builder.Field{
+			Name:  "url",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of URL dynamically
+func (r webhookWorkerQueryURLString) SetIfPresent(value *String) webhookWorkerWithPrismaURLSetParam {
+	if value == nil {
+		return webhookWorkerWithPrismaURLSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r webhookWorkerQueryURLString) Equals(value string) webhookWorkerWithPrismaURLEqualsUniqueParam {
+
+	return webhookWorkerWithPrismaURLEqualsUniqueParam{
+		data: builder.Field{
+			Name: "url",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryURLString) EqualsIfPresent(value *string) webhookWorkerWithPrismaURLEqualsUniqueParam {
+	if value == nil {
+		return webhookWorkerWithPrismaURLEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r webhookWorkerQueryURLString) Order(direction SortOrder) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name:  "url",
+			Value: direction,
+		},
+	}
+}
+
+func (r webhookWorkerQueryURLString) Cursor(cursor string) webhookWorkerCursorParam {
+	return webhookWorkerCursorParam{
+		data: builder.Field{
+			Name:  "url",
+			Value: cursor,
+		},
+	}
+}
+
+func (r webhookWorkerQueryURLString) In(value []string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "url",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryURLString) InIfPresent(value []string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r webhookWorkerQueryURLString) NotIn(value []string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "url",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryURLString) NotInIfPresent(value []string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r webhookWorkerQueryURLString) Lt(value string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "url",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryURLString) LtIfPresent(value *string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r webhookWorkerQueryURLString) Lte(value string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "url",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryURLString) LteIfPresent(value *string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r webhookWorkerQueryURLString) Gt(value string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "url",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryURLString) GtIfPresent(value *string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r webhookWorkerQueryURLString) Gte(value string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "url",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryURLString) GteIfPresent(value *string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r webhookWorkerQueryURLString) Contains(value string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "url",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryURLString) ContainsIfPresent(value *string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.Contains(*value)
+}
+
+func (r webhookWorkerQueryURLString) StartsWith(value string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "url",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryURLString) StartsWithIfPresent(value *string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r webhookWorkerQueryURLString) EndsWith(value string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "url",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryURLString) EndsWithIfPresent(value *string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r webhookWorkerQueryURLString) Mode(value QueryMode) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "url",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryURLString) ModeIfPresent(value *QueryMode) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.Mode(*value)
+}
+
+func (r webhookWorkerQueryURLString) Not(value string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "url",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryURLString) NotIfPresent(value *string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r webhookWorkerQueryURLString) HasPrefix(value string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "url",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r webhookWorkerQueryURLString) HasPrefixIfPresent(value *string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r webhookWorkerQueryURLString) HasSuffix(value string) webhookWorkerParamUnique {
+	return webhookWorkerParamUnique{
+		data: builder.Field{
+			Name: "url",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r webhookWorkerQueryURLString) HasSuffixIfPresent(value *string) webhookWorkerParamUnique {
+	if value == nil {
+		return webhookWorkerParamUnique{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r webhookWorkerQueryURLString) Field() webhookWorkerPrismaFields {
+	return webhookWorkerFieldURL
+}
+
+// base struct
+type webhookWorkerQueryTokenValueString struct{}
+
+// Set the optional value of TokenValue
+func (r webhookWorkerQueryTokenValueString) Set(value string) webhookWorkerSetParam {
+
+	return webhookWorkerSetParam{
+		data: builder.Field{
+			Name:  "tokenValue",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of TokenValue dynamically
+func (r webhookWorkerQueryTokenValueString) SetIfPresent(value *String) webhookWorkerSetParam {
+	if value == nil {
+		return webhookWorkerSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of TokenValue dynamically
+func (r webhookWorkerQueryTokenValueString) SetOptional(value *String) webhookWorkerSetParam {
+	if value == nil {
+
+		var v *string
+		return webhookWorkerSetParam{
+			data: builder.Field{
+				Name:  "tokenValue",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r webhookWorkerQueryTokenValueString) Equals(value string) webhookWorkerWithPrismaTokenValueEqualsParam {
+
+	return webhookWorkerWithPrismaTokenValueEqualsParam{
+		data: builder.Field{
+			Name: "tokenValue",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenValueString) EqualsIfPresent(value *string) webhookWorkerWithPrismaTokenValueEqualsParam {
+	if value == nil {
+		return webhookWorkerWithPrismaTokenValueEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r webhookWorkerQueryTokenValueString) EqualsOptional(value *String) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenValue",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenValueString) IsNull() webhookWorkerDefaultParam {
+	var str *string = nil
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenValue",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenValueString) Order(direction SortOrder) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name:  "tokenValue",
+			Value: direction,
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenValueString) Cursor(cursor string) webhookWorkerCursorParam {
+	return webhookWorkerCursorParam{
+		data: builder.Field{
+			Name:  "tokenValue",
+			Value: cursor,
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenValueString) In(value []string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenValue",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenValueString) InIfPresent(value []string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r webhookWorkerQueryTokenValueString) NotIn(value []string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenValue",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenValueString) NotInIfPresent(value []string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r webhookWorkerQueryTokenValueString) Lt(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenValue",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenValueString) LtIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r webhookWorkerQueryTokenValueString) Lte(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenValue",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenValueString) LteIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r webhookWorkerQueryTokenValueString) Gt(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenValue",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenValueString) GtIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r webhookWorkerQueryTokenValueString) Gte(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenValue",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenValueString) GteIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r webhookWorkerQueryTokenValueString) Contains(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenValue",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenValueString) ContainsIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r webhookWorkerQueryTokenValueString) StartsWith(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenValue",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenValueString) StartsWithIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r webhookWorkerQueryTokenValueString) EndsWith(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenValue",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenValueString) EndsWithIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r webhookWorkerQueryTokenValueString) Mode(value QueryMode) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenValue",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenValueString) ModeIfPresent(value *QueryMode) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r webhookWorkerQueryTokenValueString) Not(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenValue",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenValueString) NotIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r webhookWorkerQueryTokenValueString) HasPrefix(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenValue",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r webhookWorkerQueryTokenValueString) HasPrefixIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r webhookWorkerQueryTokenValueString) HasSuffix(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenValue",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r webhookWorkerQueryTokenValueString) HasSuffixIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r webhookWorkerQueryTokenValueString) Field() webhookWorkerPrismaFields {
+	return webhookWorkerFieldTokenValue
+}
+
+// base struct
+type webhookWorkerQueryDeletedBoolean struct{}
+
+// Set the required value of Deleted
+func (r webhookWorkerQueryDeletedBoolean) Set(value bool) webhookWorkerSetParam {
+
+	return webhookWorkerSetParam{
+		data: builder.Field{
+			Name:  "deleted",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Deleted dynamically
+func (r webhookWorkerQueryDeletedBoolean) SetIfPresent(value *Boolean) webhookWorkerSetParam {
+	if value == nil {
+		return webhookWorkerSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r webhookWorkerQueryDeletedBoolean) Equals(value bool) webhookWorkerWithPrismaDeletedEqualsParam {
+
+	return webhookWorkerWithPrismaDeletedEqualsParam{
+		data: builder.Field{
+			Name: "deleted",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryDeletedBoolean) EqualsIfPresent(value *bool) webhookWorkerWithPrismaDeletedEqualsParam {
+	if value == nil {
+		return webhookWorkerWithPrismaDeletedEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r webhookWorkerQueryDeletedBoolean) Order(direction SortOrder) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name:  "deleted",
+			Value: direction,
+		},
+	}
+}
+
+func (r webhookWorkerQueryDeletedBoolean) Cursor(cursor bool) webhookWorkerCursorParam {
+	return webhookWorkerCursorParam{
+		data: builder.Field{
+			Name:  "deleted",
+			Value: cursor,
+		},
+	}
+}
+
+func (r webhookWorkerQueryDeletedBoolean) Field() webhookWorkerPrismaFields {
+	return webhookWorkerFieldDeleted
+}
+
+// base struct
+type webhookWorkerQueryTokenIDString struct{}
+
+// Set the optional value of TokenID
+func (r webhookWorkerQueryTokenIDString) Set(value string) webhookWorkerSetParam {
+
+	return webhookWorkerSetParam{
+		data: builder.Field{
+			Name:  "tokenId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of TokenID dynamically
+func (r webhookWorkerQueryTokenIDString) SetIfPresent(value *String) webhookWorkerSetParam {
+	if value == nil {
+		return webhookWorkerSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of TokenID dynamically
+func (r webhookWorkerQueryTokenIDString) SetOptional(value *String) webhookWorkerSetParam {
+	if value == nil {
+
+		var v *string
+		return webhookWorkerSetParam{
+			data: builder.Field{
+				Name:  "tokenId",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r webhookWorkerQueryTokenIDString) Equals(value string) webhookWorkerWithPrismaTokenIDEqualsParam {
+
+	return webhookWorkerWithPrismaTokenIDEqualsParam{
+		data: builder.Field{
+			Name: "tokenId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenIDString) EqualsIfPresent(value *string) webhookWorkerWithPrismaTokenIDEqualsParam {
+	if value == nil {
+		return webhookWorkerWithPrismaTokenIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r webhookWorkerQueryTokenIDString) EqualsOptional(value *String) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenIDString) IsNull() webhookWorkerDefaultParam {
+	var str *string = nil
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenIDString) Order(direction SortOrder) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name:  "tokenId",
+			Value: direction,
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenIDString) Cursor(cursor string) webhookWorkerCursorParam {
+	return webhookWorkerCursorParam{
+		data: builder.Field{
+			Name:  "tokenId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenIDString) In(value []string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenIDString) InIfPresent(value []string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r webhookWorkerQueryTokenIDString) NotIn(value []string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenIDString) NotInIfPresent(value []string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r webhookWorkerQueryTokenIDString) Lt(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenIDString) LtIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r webhookWorkerQueryTokenIDString) Lte(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenIDString) LteIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r webhookWorkerQueryTokenIDString) Gt(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenIDString) GtIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r webhookWorkerQueryTokenIDString) Gte(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenIDString) GteIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r webhookWorkerQueryTokenIDString) Contains(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenIDString) ContainsIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r webhookWorkerQueryTokenIDString) StartsWith(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenIDString) StartsWithIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r webhookWorkerQueryTokenIDString) EndsWith(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenIDString) EndsWithIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r webhookWorkerQueryTokenIDString) Mode(value QueryMode) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenIDString) ModeIfPresent(value *QueryMode) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r webhookWorkerQueryTokenIDString) Not(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenIDString) NotIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r webhookWorkerQueryTokenIDString) HasPrefix(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r webhookWorkerQueryTokenIDString) HasPrefixIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r webhookWorkerQueryTokenIDString) HasSuffix(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tokenId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r webhookWorkerQueryTokenIDString) HasSuffixIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r webhookWorkerQueryTokenIDString) Field() webhookWorkerPrismaFields {
+	return webhookWorkerFieldTokenID
+}
+
+// base struct
+type webhookWorkerQueryTokenAPIToken struct{}
+
+type webhookWorkerQueryTokenRelations struct{}
+
+// WebhookWorker -> Token
+//
+// @relation
+// @optional
+func (webhookWorkerQueryTokenRelations) Where(
+	params ...APITokenWhereParam,
+) webhookWorkerDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "token",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (webhookWorkerQueryTokenRelations) Fetch() webhookWorkerToTokenFindUnique {
+	var v webhookWorkerToTokenFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "token"
+	v.query.Outputs = aPITokenOutput
+
+	return v
+}
+
+func (r webhookWorkerQueryTokenRelations) Link(
+	params APITokenWhereParam,
+) webhookWorkerSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return webhookWorkerSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return webhookWorkerSetParam{
+		data: builder.Field{
+			Name: "token",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTokenRelations) Unlink() webhookWorkerSetParam {
+	var v webhookWorkerSetParam
+
+	v = webhookWorkerSetParam{
+		data: builder.Field{
+			Name: "token",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r webhookWorkerQueryTokenAPIToken) Field() webhookWorkerPrismaFields {
+	return webhookWorkerFieldToken
+}
+
+// base struct
+type webhookWorkerQueryTenantIDString struct{}
+
+// Set the required value of TenantID
+func (r webhookWorkerQueryTenantIDString) Set(value string) webhookWorkerSetParam {
+
+	return webhookWorkerSetParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of TenantID dynamically
+func (r webhookWorkerQueryTenantIDString) SetIfPresent(value *String) webhookWorkerSetParam {
+	if value == nil {
+		return webhookWorkerSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r webhookWorkerQueryTenantIDString) Equals(value string) webhookWorkerWithPrismaTenantIDEqualsParam {
+
+	return webhookWorkerWithPrismaTenantIDEqualsParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTenantIDString) EqualsIfPresent(value *string) webhookWorkerWithPrismaTenantIDEqualsParam {
+	if value == nil {
+		return webhookWorkerWithPrismaTenantIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r webhookWorkerQueryTenantIDString) Order(direction SortOrder) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: direction,
+		},
+	}
+}
+
+func (r webhookWorkerQueryTenantIDString) Cursor(cursor string) webhookWorkerCursorParam {
+	return webhookWorkerCursorParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r webhookWorkerQueryTenantIDString) In(value []string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTenantIDString) InIfPresent(value []string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r webhookWorkerQueryTenantIDString) NotIn(value []string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTenantIDString) NotInIfPresent(value []string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r webhookWorkerQueryTenantIDString) Lt(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTenantIDString) LtIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r webhookWorkerQueryTenantIDString) Lte(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTenantIDString) LteIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r webhookWorkerQueryTenantIDString) Gt(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTenantIDString) GtIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r webhookWorkerQueryTenantIDString) Gte(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTenantIDString) GteIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r webhookWorkerQueryTenantIDString) Contains(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTenantIDString) ContainsIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r webhookWorkerQueryTenantIDString) StartsWith(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTenantIDString) StartsWithIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r webhookWorkerQueryTenantIDString) EndsWith(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTenantIDString) EndsWithIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r webhookWorkerQueryTenantIDString) Mode(value QueryMode) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTenantIDString) ModeIfPresent(value *QueryMode) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r webhookWorkerQueryTenantIDString) Not(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTenantIDString) NotIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r webhookWorkerQueryTenantIDString) HasPrefix(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r webhookWorkerQueryTenantIDString) HasPrefixIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r webhookWorkerQueryTenantIDString) HasSuffix(value string) webhookWorkerDefaultParam {
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r webhookWorkerQueryTenantIDString) HasSuffixIfPresent(value *string) webhookWorkerDefaultParam {
+	if value == nil {
+		return webhookWorkerDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r webhookWorkerQueryTenantIDString) Field() webhookWorkerPrismaFields {
+	return webhookWorkerFieldTenantID
+}
+
+// base struct
+type webhookWorkerQueryTenantTenant struct{}
+
+type webhookWorkerQueryTenantRelations struct{}
+
+// WebhookWorker -> Tenant
+//
+// @relation
+// @required
+func (webhookWorkerQueryTenantRelations) Where(
+	params ...TenantWhereParam,
+) webhookWorkerDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "tenant",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (webhookWorkerQueryTenantRelations) Fetch() webhookWorkerToTenantFindUnique {
+	var v webhookWorkerToTenantFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "tenant"
+	v.query.Outputs = tenantOutput
+
+	return v
+}
+
+func (r webhookWorkerQueryTenantRelations) Link(
+	params TenantWhereParam,
+) webhookWorkerWithPrismaTenantSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return webhookWorkerWithPrismaTenantSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return webhookWorkerWithPrismaTenantSetParam{
+		data: builder.Field{
+			Name: "tenant",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryTenantRelations) Unlink() webhookWorkerWithPrismaTenantSetParam {
+	var v webhookWorkerWithPrismaTenantSetParam
+
+	v = webhookWorkerWithPrismaTenantSetParam{
+		data: builder.Field{
+			Name: "tenant",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r webhookWorkerQueryTenantTenant) Field() webhookWorkerPrismaFields {
+	return webhookWorkerFieldTenant
+}
+
+// base struct
+type webhookWorkerQueryWebhookWorkerWorkflowsWebhookWorkerWorkflow struct{}
+
+type webhookWorkerQueryWebhookWorkerWorkflowsRelations struct{}
+
+// WebhookWorker -> WebhookWorkerWorkflows
+//
+// @relation
+// @required
+func (webhookWorkerQueryWebhookWorkerWorkflowsRelations) Some(
+	params ...WebhookWorkerWorkflowWhereParam,
+) webhookWorkerDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkerWorkflows",
+			Fields: []builder.Field{
+				{
+					Name:   "some",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// WebhookWorker -> WebhookWorkerWorkflows
+//
+// @relation
+// @required
+func (webhookWorkerQueryWebhookWorkerWorkflowsRelations) Every(
+	params ...WebhookWorkerWorkflowWhereParam,
+) webhookWorkerDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkerWorkflows",
+			Fields: []builder.Field{
+				{
+					Name:   "every",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// WebhookWorker -> WebhookWorkerWorkflows
+//
+// @relation
+// @required
+func (webhookWorkerQueryWebhookWorkerWorkflowsRelations) None(
+	params ...WebhookWorkerWorkflowWhereParam,
+) webhookWorkerDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return webhookWorkerDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkerWorkflows",
+			Fields: []builder.Field{
+				{
+					Name:   "none",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (webhookWorkerQueryWebhookWorkerWorkflowsRelations) Fetch(
+
+	params ...WebhookWorkerWorkflowWhereParam,
+
+) webhookWorkerToWebhookWorkerWorkflowsFindMany {
+	var v webhookWorkerToWebhookWorkerWorkflowsFindMany
+
+	v.query.Operation = "query"
+	v.query.Method = "webhookWorkerWorkflows"
+	v.query.Outputs = webhookWorkerWorkflowOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r webhookWorkerQueryWebhookWorkerWorkflowsRelations) Link(
+	params ...WebhookWorkerWorkflowWhereParam,
+) webhookWorkerSetParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return webhookWorkerSetParam{
+		data: builder.Field{
+			Name: "webhookWorkerWorkflows",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+
+					List:     true,
+					WrapList: true,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerQueryWebhookWorkerWorkflowsRelations) Unlink(
+	params ...WebhookWorkerWorkflowWhereParam,
+) webhookWorkerSetParam {
+	var v webhookWorkerSetParam
+
+	var fields []builder.Field
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+	v = webhookWorkerSetParam{
+		data: builder.Field{
+			Name: "webhookWorkerWorkflows",
+			Fields: []builder.Field{
+				{
+					Name:     "disconnect",
+					List:     true,
+					WrapList: true,
+					Fields:   builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r webhookWorkerQueryWebhookWorkerWorkflowsWebhookWorkerWorkflow) Field() webhookWorkerPrismaFields {
+	return webhookWorkerFieldWebhookWorkerWorkflows
+}
+
+// WebhookWorkerWorkflow acts as a namespaces to access query methods for the WebhookWorkerWorkflow model
+var WebhookWorkerWorkflow = webhookWorkerWorkflowQuery{}
+
+// webhookWorkerWorkflowQuery exposes query functions for the webhookWorkerWorkflow model
+type webhookWorkerWorkflowQuery struct {
+
+	// ID
+	//
+	// @required
+	ID webhookWorkerWorkflowQueryIDString
+
+	WebhookWorker webhookWorkerWorkflowQueryWebhookWorkerRelations
+
+	// WebhookWorkerID
+	//
+	// @required
+	WebhookWorkerID webhookWorkerWorkflowQueryWebhookWorkerIDString
+
+	Workflow webhookWorkerWorkflowQueryWorkflowRelations
+
+	// WorkflowID
+	//
+	// @required
+	WorkflowID webhookWorkerWorkflowQueryWorkflowIDString
+}
+
+func (webhookWorkerWorkflowQuery) Not(params ...WebhookWorkerWorkflowWhereParam) webhookWorkerWorkflowDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (webhookWorkerWorkflowQuery) Or(params ...WebhookWorkerWorkflowWhereParam) webhookWorkerWorkflowDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (webhookWorkerWorkflowQuery) And(params ...WebhookWorkerWorkflowWhereParam) webhookWorkerWorkflowDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (webhookWorkerWorkflowQuery) WebhookWorkerIDWorkflowID(
+	_webhookWorkerID WebhookWorkerWorkflowWithPrismaWebhookWorkerIDWhereParam,
+
+	_workflowID WebhookWorkerWorkflowWithPrismaWorkflowIDWhereParam,
+) WebhookWorkerWorkflowEqualsUniqueWhereParam {
+	var fields []builder.Field
+
+	fields = append(fields, _webhookWorkerID.field())
+	fields = append(fields, _workflowID.field())
+
+	return webhookWorkerWorkflowEqualsUniqueParam{
+		data: builder.Field{
+			Name:   "webhookWorkerId_workflowId",
+			Fields: builder.TransformEquals(fields),
+		},
+	}
+}
+
+// base struct
+type webhookWorkerWorkflowQueryIDString struct{}
+
+// Set the required value of ID
+func (r webhookWorkerWorkflowQueryIDString) Set(value string) webhookWorkerWorkflowSetParam {
+
+	return webhookWorkerWorkflowSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r webhookWorkerWorkflowQueryIDString) SetIfPresent(value *String) webhookWorkerWorkflowSetParam {
+	if value == nil {
+		return webhookWorkerWorkflowSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r webhookWorkerWorkflowQueryIDString) Equals(value string) webhookWorkerWorkflowWithPrismaIDEqualsUniqueParam {
+
+	return webhookWorkerWorkflowWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryIDString) EqualsIfPresent(value *string) webhookWorkerWorkflowWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return webhookWorkerWorkflowWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r webhookWorkerWorkflowQueryIDString) Order(direction SortOrder) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryIDString) Cursor(cursor string) webhookWorkerWorkflowCursorParam {
+	return webhookWorkerWorkflowCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryIDString) In(value []string) webhookWorkerWorkflowParamUnique {
+	return webhookWorkerWorkflowParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryIDString) InIfPresent(value []string) webhookWorkerWorkflowParamUnique {
+	if value == nil {
+		return webhookWorkerWorkflowParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r webhookWorkerWorkflowQueryIDString) NotIn(value []string) webhookWorkerWorkflowParamUnique {
+	return webhookWorkerWorkflowParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryIDString) NotInIfPresent(value []string) webhookWorkerWorkflowParamUnique {
+	if value == nil {
+		return webhookWorkerWorkflowParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r webhookWorkerWorkflowQueryIDString) Lt(value string) webhookWorkerWorkflowParamUnique {
+	return webhookWorkerWorkflowParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryIDString) LtIfPresent(value *string) webhookWorkerWorkflowParamUnique {
+	if value == nil {
+		return webhookWorkerWorkflowParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r webhookWorkerWorkflowQueryIDString) Lte(value string) webhookWorkerWorkflowParamUnique {
+	return webhookWorkerWorkflowParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryIDString) LteIfPresent(value *string) webhookWorkerWorkflowParamUnique {
+	if value == nil {
+		return webhookWorkerWorkflowParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r webhookWorkerWorkflowQueryIDString) Gt(value string) webhookWorkerWorkflowParamUnique {
+	return webhookWorkerWorkflowParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryIDString) GtIfPresent(value *string) webhookWorkerWorkflowParamUnique {
+	if value == nil {
+		return webhookWorkerWorkflowParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r webhookWorkerWorkflowQueryIDString) Gte(value string) webhookWorkerWorkflowParamUnique {
+	return webhookWorkerWorkflowParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryIDString) GteIfPresent(value *string) webhookWorkerWorkflowParamUnique {
+	if value == nil {
+		return webhookWorkerWorkflowParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r webhookWorkerWorkflowQueryIDString) Contains(value string) webhookWorkerWorkflowParamUnique {
+	return webhookWorkerWorkflowParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryIDString) ContainsIfPresent(value *string) webhookWorkerWorkflowParamUnique {
+	if value == nil {
+		return webhookWorkerWorkflowParamUnique{}
+	}
+	return r.Contains(*value)
+}
+
+func (r webhookWorkerWorkflowQueryIDString) StartsWith(value string) webhookWorkerWorkflowParamUnique {
+	return webhookWorkerWorkflowParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryIDString) StartsWithIfPresent(value *string) webhookWorkerWorkflowParamUnique {
+	if value == nil {
+		return webhookWorkerWorkflowParamUnique{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r webhookWorkerWorkflowQueryIDString) EndsWith(value string) webhookWorkerWorkflowParamUnique {
+	return webhookWorkerWorkflowParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryIDString) EndsWithIfPresent(value *string) webhookWorkerWorkflowParamUnique {
+	if value == nil {
+		return webhookWorkerWorkflowParamUnique{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r webhookWorkerWorkflowQueryIDString) Mode(value QueryMode) webhookWorkerWorkflowParamUnique {
+	return webhookWorkerWorkflowParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryIDString) ModeIfPresent(value *QueryMode) webhookWorkerWorkflowParamUnique {
+	if value == nil {
+		return webhookWorkerWorkflowParamUnique{}
+	}
+	return r.Mode(*value)
+}
+
+func (r webhookWorkerWorkflowQueryIDString) Not(value string) webhookWorkerWorkflowParamUnique {
+	return webhookWorkerWorkflowParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryIDString) NotIfPresent(value *string) webhookWorkerWorkflowParamUnique {
+	if value == nil {
+		return webhookWorkerWorkflowParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r webhookWorkerWorkflowQueryIDString) HasPrefix(value string) webhookWorkerWorkflowParamUnique {
+	return webhookWorkerWorkflowParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r webhookWorkerWorkflowQueryIDString) HasPrefixIfPresent(value *string) webhookWorkerWorkflowParamUnique {
+	if value == nil {
+		return webhookWorkerWorkflowParamUnique{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r webhookWorkerWorkflowQueryIDString) HasSuffix(value string) webhookWorkerWorkflowParamUnique {
+	return webhookWorkerWorkflowParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r webhookWorkerWorkflowQueryIDString) HasSuffixIfPresent(value *string) webhookWorkerWorkflowParamUnique {
+	if value == nil {
+		return webhookWorkerWorkflowParamUnique{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r webhookWorkerWorkflowQueryIDString) Field() webhookWorkerWorkflowPrismaFields {
+	return webhookWorkerWorkflowFieldID
+}
+
+// base struct
+type webhookWorkerWorkflowQueryWebhookWorkerWebhookWorker struct{}
+
+type webhookWorkerWorkflowQueryWebhookWorkerRelations struct{}
+
+// WebhookWorkerWorkflow -> WebhookWorker
+//
+// @relation
+// @required
+func (webhookWorkerWorkflowQueryWebhookWorkerRelations) Where(
+	params ...WebhookWorkerWhereParam,
+) webhookWorkerWorkflowDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorker",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (webhookWorkerWorkflowQueryWebhookWorkerRelations) Fetch() webhookWorkerWorkflowToWebhookWorkerFindUnique {
+	var v webhookWorkerWorkflowToWebhookWorkerFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "webhookWorker"
+	v.query.Outputs = webhookWorkerOutput
+
+	return v
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerRelations) Link(
+	params WebhookWorkerWhereParam,
+) webhookWorkerWorkflowWithPrismaWebhookWorkerSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return webhookWorkerWorkflowWithPrismaWebhookWorkerSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return webhookWorkerWorkflowWithPrismaWebhookWorkerSetParam{
+		data: builder.Field{
+			Name: "webhookWorker",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerRelations) Unlink() webhookWorkerWorkflowWithPrismaWebhookWorkerSetParam {
+	var v webhookWorkerWorkflowWithPrismaWebhookWorkerSetParam
+
+	v = webhookWorkerWorkflowWithPrismaWebhookWorkerSetParam{
+		data: builder.Field{
+			Name: "webhookWorker",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerWebhookWorker) Field() webhookWorkerWorkflowPrismaFields {
+	return webhookWorkerWorkflowFieldWebhookWorker
+}
+
+// base struct
+type webhookWorkerWorkflowQueryWebhookWorkerIDString struct{}
+
+// Set the required value of WebhookWorkerID
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) Set(value string) webhookWorkerWorkflowSetParam {
+
+	return webhookWorkerWorkflowSetParam{
+		data: builder.Field{
+			Name:  "webhookWorkerId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of WebhookWorkerID dynamically
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) SetIfPresent(value *String) webhookWorkerWorkflowSetParam {
+	if value == nil {
+		return webhookWorkerWorkflowSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) Equals(value string) webhookWorkerWorkflowWithPrismaWebhookWorkerIDEqualsParam {
+
+	return webhookWorkerWorkflowWithPrismaWebhookWorkerIDEqualsParam{
+		data: builder.Field{
+			Name: "webhookWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) EqualsIfPresent(value *string) webhookWorkerWorkflowWithPrismaWebhookWorkerIDEqualsParam {
+	if value == nil {
+		return webhookWorkerWorkflowWithPrismaWebhookWorkerIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) Order(direction SortOrder) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name:  "webhookWorkerId",
+			Value: direction,
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) Cursor(cursor string) webhookWorkerWorkflowCursorParam {
+	return webhookWorkerWorkflowCursorParam{
+		data: builder.Field{
+			Name:  "webhookWorkerId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) In(value []string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) InIfPresent(value []string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) NotIn(value []string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) NotInIfPresent(value []string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) Lt(value string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) LtIfPresent(value *string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) Lte(value string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) LteIfPresent(value *string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) Gt(value string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) GtIfPresent(value *string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) Gte(value string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) GteIfPresent(value *string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) Contains(value string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) ContainsIfPresent(value *string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) StartsWith(value string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) StartsWithIfPresent(value *string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) EndsWith(value string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) EndsWithIfPresent(value *string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) Mode(value QueryMode) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) ModeIfPresent(value *QueryMode) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) Not(value string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) NotIfPresent(value *string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) HasPrefix(value string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) HasPrefixIfPresent(value *string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) HasSuffix(value string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) HasSuffixIfPresent(value *string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r webhookWorkerWorkflowQueryWebhookWorkerIDString) Field() webhookWorkerWorkflowPrismaFields {
+	return webhookWorkerWorkflowFieldWebhookWorkerID
+}
+
+// base struct
+type webhookWorkerWorkflowQueryWorkflowWorkflow struct{}
+
+type webhookWorkerWorkflowQueryWorkflowRelations struct{}
+
+// WebhookWorkerWorkflow -> Workflow
+//
+// @relation
+// @required
+func (webhookWorkerWorkflowQueryWorkflowRelations) Where(
+	params ...WorkflowWhereParam,
+) webhookWorkerWorkflowDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "workflow",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (webhookWorkerWorkflowQueryWorkflowRelations) Fetch() webhookWorkerWorkflowToWorkflowFindUnique {
+	var v webhookWorkerWorkflowToWorkflowFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "workflow"
+	v.query.Outputs = workflowOutput
+
+	return v
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowRelations) Link(
+	params WorkflowWhereParam,
+) webhookWorkerWorkflowWithPrismaWorkflowSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return webhookWorkerWorkflowWithPrismaWorkflowSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return webhookWorkerWorkflowWithPrismaWorkflowSetParam{
+		data: builder.Field{
+			Name: "workflow",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowRelations) Unlink() webhookWorkerWorkflowWithPrismaWorkflowSetParam {
+	var v webhookWorkerWorkflowWithPrismaWorkflowSetParam
+
+	v = webhookWorkerWorkflowWithPrismaWorkflowSetParam{
+		data: builder.Field{
+			Name: "workflow",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowWorkflow) Field() webhookWorkerWorkflowPrismaFields {
+	return webhookWorkerWorkflowFieldWorkflow
+}
+
+// base struct
+type webhookWorkerWorkflowQueryWorkflowIDString struct{}
+
+// Set the required value of WorkflowID
+func (r webhookWorkerWorkflowQueryWorkflowIDString) Set(value string) webhookWorkerWorkflowSetParam {
+
+	return webhookWorkerWorkflowSetParam{
+		data: builder.Field{
+			Name:  "workflowId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of WorkflowID dynamically
+func (r webhookWorkerWorkflowQueryWorkflowIDString) SetIfPresent(value *String) webhookWorkerWorkflowSetParam {
+	if value == nil {
+		return webhookWorkerWorkflowSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) Equals(value string) webhookWorkerWorkflowWithPrismaWorkflowIDEqualsParam {
+
+	return webhookWorkerWorkflowWithPrismaWorkflowIDEqualsParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) EqualsIfPresent(value *string) webhookWorkerWorkflowWithPrismaWorkflowIDEqualsParam {
+	if value == nil {
+		return webhookWorkerWorkflowWithPrismaWorkflowIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) Order(direction SortOrder) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name:  "workflowId",
+			Value: direction,
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) Cursor(cursor string) webhookWorkerWorkflowCursorParam {
+	return webhookWorkerWorkflowCursorParam{
+		data: builder.Field{
+			Name:  "workflowId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) In(value []string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) InIfPresent(value []string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) NotIn(value []string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) NotInIfPresent(value []string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) Lt(value string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) LtIfPresent(value *string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) Lte(value string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) LteIfPresent(value *string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) Gt(value string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) GtIfPresent(value *string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) Gte(value string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) GteIfPresent(value *string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) Contains(value string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) ContainsIfPresent(value *string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) StartsWith(value string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) StartsWithIfPresent(value *string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) EndsWith(value string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) EndsWithIfPresent(value *string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) Mode(value QueryMode) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) ModeIfPresent(value *QueryMode) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) Not(value string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) NotIfPresent(value *string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) HasPrefix(value string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r webhookWorkerWorkflowQueryWorkflowIDString) HasPrefixIfPresent(value *string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) HasSuffix(value string) webhookWorkerWorkflowDefaultParam {
+	return webhookWorkerWorkflowDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r webhookWorkerWorkflowQueryWorkflowIDString) HasSuffixIfPresent(value *string) webhookWorkerWorkflowDefaultParam {
+	if value == nil {
+		return webhookWorkerWorkflowDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r webhookWorkerWorkflowQueryWorkflowIDString) Field() webhookWorkerWorkflowPrismaFields {
+	return webhookWorkerWorkflowFieldWorkflowID
+}
+
 // Tenant acts as a namespaces to access query methods for the Tenant model
 var Tenant = tenantQuery{}
 
@@ -18643,6 +23974,8 @@ type tenantQuery struct {
 	Limits tenantQueryLimitsRelations
 
 	LimitAlerts tenantQueryLimitAlertsRelations
+
+	WebhookWorkers tenantQueryWebhookWorkersRelations
 }
 
 func (tenantQuery) Not(params ...TenantWhereParam) tenantDefaultParam {
@@ -25753,6 +31086,178 @@ func (r tenantQueryLimitAlertsRelations) Unlink(
 
 func (r tenantQueryLimitAlertsTenantResourceLimitAlert) Field() tenantPrismaFields {
 	return tenantFieldLimitAlerts
+}
+
+// base struct
+type tenantQueryWebhookWorkersWebhookWorker struct{}
+
+type tenantQueryWebhookWorkersRelations struct{}
+
+// Tenant -> WebhookWorkers
+//
+// @relation
+// @required
+func (tenantQueryWebhookWorkersRelations) Some(
+	params ...WebhookWorkerWhereParam,
+) tenantDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkers",
+			Fields: []builder.Field{
+				{
+					Name:   "some",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Tenant -> WebhookWorkers
+//
+// @relation
+// @required
+func (tenantQueryWebhookWorkersRelations) Every(
+	params ...WebhookWorkerWhereParam,
+) tenantDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkers",
+			Fields: []builder.Field{
+				{
+					Name:   "every",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Tenant -> WebhookWorkers
+//
+// @relation
+// @required
+func (tenantQueryWebhookWorkersRelations) None(
+	params ...WebhookWorkerWhereParam,
+) tenantDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkers",
+			Fields: []builder.Field{
+				{
+					Name:   "none",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (tenantQueryWebhookWorkersRelations) Fetch(
+
+	params ...WebhookWorkerWhereParam,
+
+) tenantToWebhookWorkersFindMany {
+	var v tenantToWebhookWorkersFindMany
+
+	v.query.Operation = "query"
+	v.query.Method = "webhookWorkers"
+	v.query.Outputs = webhookWorkerOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r tenantQueryWebhookWorkersRelations) Link(
+	params ...WebhookWorkerWhereParam,
+) tenantSetParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tenantSetParam{
+		data: builder.Field{
+			Name: "webhookWorkers",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+
+					List:     true,
+					WrapList: true,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryWebhookWorkersRelations) Unlink(
+	params ...WebhookWorkerWhereParam,
+) tenantSetParam {
+	var v tenantSetParam
+
+	var fields []builder.Field
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+	v = tenantSetParam{
+		data: builder.Field{
+			Name: "webhookWorkers",
+			Fields: []builder.Field{
+				{
+					Name:     "disconnect",
+					List:     true,
+					WrapList: true,
+					Fields:   builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r tenantQueryWebhookWorkersWebhookWorker) Field() tenantPrismaFields {
+	return tenantFieldWebhookWorkers
 }
 
 // TenantResourceLimit acts as a namespaces to access query methods for the TenantResourceLimit model
@@ -40784,6 +46289,8 @@ type aPITokenQuery struct {
 	//
 	// @optional
 	TenantID aPITokenQueryTenantIDString
+
+	WebhookWorkers aPITokenQueryWebhookWorkersRelations
 }
 
 func (aPITokenQuery) Not(params ...APITokenWhereParam) aPITokenDefaultParam {
@@ -43456,6 +48963,178 @@ func (r aPITokenQueryTenantIDString) HasSuffixIfPresent(value *string) aPITokenD
 
 func (r aPITokenQueryTenantIDString) Field() aPITokenPrismaFields {
 	return aPITokenFieldTenantID
+}
+
+// base struct
+type aPITokenQueryWebhookWorkersWebhookWorker struct{}
+
+type aPITokenQueryWebhookWorkersRelations struct{}
+
+// APIToken -> WebhookWorkers
+//
+// @relation
+// @required
+func (aPITokenQueryWebhookWorkersRelations) Some(
+	params ...WebhookWorkerWhereParam,
+) aPITokenDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return aPITokenDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkers",
+			Fields: []builder.Field{
+				{
+					Name:   "some",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// APIToken -> WebhookWorkers
+//
+// @relation
+// @required
+func (aPITokenQueryWebhookWorkersRelations) Every(
+	params ...WebhookWorkerWhereParam,
+) aPITokenDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return aPITokenDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkers",
+			Fields: []builder.Field{
+				{
+					Name:   "every",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// APIToken -> WebhookWorkers
+//
+// @relation
+// @required
+func (aPITokenQueryWebhookWorkersRelations) None(
+	params ...WebhookWorkerWhereParam,
+) aPITokenDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return aPITokenDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkers",
+			Fields: []builder.Field{
+				{
+					Name:   "none",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (aPITokenQueryWebhookWorkersRelations) Fetch(
+
+	params ...WebhookWorkerWhereParam,
+
+) aPITokenToWebhookWorkersFindMany {
+	var v aPITokenToWebhookWorkersFindMany
+
+	v.query.Operation = "query"
+	v.query.Method = "webhookWorkers"
+	v.query.Outputs = webhookWorkerOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r aPITokenQueryWebhookWorkersRelations) Link(
+	params ...WebhookWorkerWhereParam,
+) aPITokenSetParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return aPITokenSetParam{
+		data: builder.Field{
+			Name: "webhookWorkers",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+
+					List:     true,
+					WrapList: true,
+				},
+			},
+		},
+	}
+}
+
+func (r aPITokenQueryWebhookWorkersRelations) Unlink(
+	params ...WebhookWorkerWhereParam,
+) aPITokenSetParam {
+	var v aPITokenSetParam
+
+	var fields []builder.Field
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+	v = aPITokenSetParam{
+		data: builder.Field{
+			Name: "webhookWorkers",
+			Fields: []builder.Field{
+				{
+					Name:     "disconnect",
+					List:     true,
+					WrapList: true,
+					Fields:   builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r aPITokenQueryWebhookWorkersWebhookWorker) Field() aPITokenPrismaFields {
+	return aPITokenFieldWebhookWorkers
 }
 
 // Event acts as a namespaces to access query methods for the Event model
@@ -49656,6 +55335,8 @@ type workflowQuery struct {
 	Versions workflowQueryVersionsRelations
 
 	Tags workflowQueryTagsRelations
+
+	WebhookWorkerWorkflows workflowQueryWebhookWorkerWorkflowsRelations
 }
 
 func (workflowQuery) Not(params ...WorkflowWhereParam) workflowDefaultParam {
@@ -52568,6 +58249,178 @@ func (r workflowQueryTagsRelations) Unlink(
 
 func (r workflowQueryTagsWorkflowTag) Field() workflowPrismaFields {
 	return workflowFieldTags
+}
+
+// base struct
+type workflowQueryWebhookWorkerWorkflowsWebhookWorkerWorkflow struct{}
+
+type workflowQueryWebhookWorkerWorkflowsRelations struct{}
+
+// Workflow -> WebhookWorkerWorkflows
+//
+// @relation
+// @required
+func (workflowQueryWebhookWorkerWorkflowsRelations) Some(
+	params ...WebhookWorkerWorkflowWhereParam,
+) workflowDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workflowDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkerWorkflows",
+			Fields: []builder.Field{
+				{
+					Name:   "some",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Workflow -> WebhookWorkerWorkflows
+//
+// @relation
+// @required
+func (workflowQueryWebhookWorkerWorkflowsRelations) Every(
+	params ...WebhookWorkerWorkflowWhereParam,
+) workflowDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workflowDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkerWorkflows",
+			Fields: []builder.Field{
+				{
+					Name:   "every",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Workflow -> WebhookWorkerWorkflows
+//
+// @relation
+// @required
+func (workflowQueryWebhookWorkerWorkflowsRelations) None(
+	params ...WebhookWorkerWorkflowWhereParam,
+) workflowDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workflowDefaultParam{
+		data: builder.Field{
+			Name: "webhookWorkerWorkflows",
+			Fields: []builder.Field{
+				{
+					Name:   "none",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (workflowQueryWebhookWorkerWorkflowsRelations) Fetch(
+
+	params ...WebhookWorkerWorkflowWhereParam,
+
+) workflowToWebhookWorkerWorkflowsFindMany {
+	var v workflowToWebhookWorkerWorkflowsFindMany
+
+	v.query.Operation = "query"
+	v.query.Method = "webhookWorkerWorkflows"
+	v.query.Outputs = webhookWorkerWorkflowOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r workflowQueryWebhookWorkerWorkflowsRelations) Link(
+	params ...WebhookWorkerWorkflowWhereParam,
+) workflowSetParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workflowSetParam{
+		data: builder.Field{
+			Name: "webhookWorkerWorkflows",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+
+					List:     true,
+					WrapList: true,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowQueryWebhookWorkerWorkflowsRelations) Unlink(
+	params ...WebhookWorkerWorkflowWhereParam,
+) workflowSetParam {
+	var v workflowSetParam
+
+	var fields []builder.Field
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+	v = workflowSetParam{
+		data: builder.Field{
+			Name: "webhookWorkerWorkflows",
+			Fields: []builder.Field{
+				{
+					Name:     "disconnect",
+					List:     true,
+					WrapList: true,
+					Fields:   builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r workflowQueryWebhookWorkerWorkflowsWebhookWorkerWorkflow) Field() workflowPrismaFields {
+	return workflowFieldWebhookWorkerWorkflows
 }
 
 // WorkflowVersion acts as a namespaces to access query methods for the WorkflowVersion model
@@ -164664,6 +170517,1769 @@ func (p userSessionWithPrismaExpiresAtEqualsUniqueParam) expiresAtField()   {}
 func (userSessionWithPrismaExpiresAtEqualsUniqueParam) unique() {}
 func (userSessionWithPrismaExpiresAtEqualsUniqueParam) equals() {}
 
+type webhookWorkerActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var webhookWorkerOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "createdAt"},
+	{Name: "updatedAt"},
+	{Name: "name"},
+	{Name: "secret"},
+	{Name: "url"},
+	{Name: "tokenValue"},
+	{Name: "deleted"},
+	{Name: "tokenId"},
+	{Name: "tenantId"},
+}
+
+type WebhookWorkerRelationWith interface {
+	getQuery() builder.Query
+	with()
+	webhookWorkerRelation()
+}
+
+type WebhookWorkerWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+}
+
+type webhookWorkerDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerDefaultParam) webhookWorkerModel() {}
+
+type WebhookWorkerOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+}
+
+type webhookWorkerOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerOrderByParam) webhookWorkerModel() {}
+
+type WebhookWorkerCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	isCursor()
+}
+
+type webhookWorkerCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerCursorParam) isCursor() {}
+
+func (p webhookWorkerCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerCursorParam) webhookWorkerModel() {}
+
+type WebhookWorkerParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	webhookWorkerModel()
+}
+
+type webhookWorkerParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerParamUnique) webhookWorkerModel() {}
+
+func (webhookWorkerParamUnique) unique() {}
+
+func (p webhookWorkerParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type WebhookWorkerEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	webhookWorkerModel()
+}
+
+type webhookWorkerEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerEqualsParam) webhookWorkerModel() {}
+
+func (webhookWorkerEqualsParam) equals() {}
+
+func (p webhookWorkerEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type WebhookWorkerEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	webhookWorkerModel()
+}
+
+type webhookWorkerEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerEqualsUniqueParam) webhookWorkerModel() {}
+
+func (webhookWorkerEqualsUniqueParam) unique() {}
+func (webhookWorkerEqualsUniqueParam) equals() {}
+
+func (p webhookWorkerEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type WebhookWorkerSetParam interface {
+	field() builder.Field
+	settable()
+	webhookWorkerModel()
+}
+
+type webhookWorkerSetParam struct {
+	data builder.Field
+}
+
+func (webhookWorkerSetParam) settable() {}
+
+func (p webhookWorkerSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerSetParam) webhookWorkerModel() {}
+
+type WebhookWorkerWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	webhookWorkerModel()
+	idField()
+}
+
+type WebhookWorkerWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	idField()
+}
+
+type webhookWorkerWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaIDSetParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaIDSetParam) idField() {}
+
+type WebhookWorkerWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	idField()
+}
+
+type webhookWorkerWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaIDEqualsParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaIDEqualsParam) idField() {}
+
+func (webhookWorkerWithPrismaIDSetParam) settable()  {}
+func (webhookWorkerWithPrismaIDEqualsParam) equals() {}
+
+type webhookWorkerWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaIDEqualsUniqueParam) webhookWorkerModel() {}
+func (p webhookWorkerWithPrismaIDEqualsUniqueParam) idField()            {}
+
+func (webhookWorkerWithPrismaIDEqualsUniqueParam) unique() {}
+func (webhookWorkerWithPrismaIDEqualsUniqueParam) equals() {}
+
+type WebhookWorkerWithPrismaCreatedAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	webhookWorkerModel()
+	createdAtField()
+}
+
+type WebhookWorkerWithPrismaCreatedAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	createdAtField()
+}
+
+type webhookWorkerWithPrismaCreatedAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaCreatedAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaCreatedAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaCreatedAtSetParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaCreatedAtSetParam) createdAtField() {}
+
+type WebhookWorkerWithPrismaCreatedAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	createdAtField()
+}
+
+type webhookWorkerWithPrismaCreatedAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaCreatedAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaCreatedAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaCreatedAtEqualsParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaCreatedAtEqualsParam) createdAtField() {}
+
+func (webhookWorkerWithPrismaCreatedAtSetParam) settable()  {}
+func (webhookWorkerWithPrismaCreatedAtEqualsParam) equals() {}
+
+type webhookWorkerWithPrismaCreatedAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaCreatedAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaCreatedAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaCreatedAtEqualsUniqueParam) webhookWorkerModel() {}
+func (p webhookWorkerWithPrismaCreatedAtEqualsUniqueParam) createdAtField()     {}
+
+func (webhookWorkerWithPrismaCreatedAtEqualsUniqueParam) unique() {}
+func (webhookWorkerWithPrismaCreatedAtEqualsUniqueParam) equals() {}
+
+type WebhookWorkerWithPrismaUpdatedAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	webhookWorkerModel()
+	updatedAtField()
+}
+
+type WebhookWorkerWithPrismaUpdatedAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	updatedAtField()
+}
+
+type webhookWorkerWithPrismaUpdatedAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaUpdatedAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaUpdatedAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaUpdatedAtSetParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaUpdatedAtSetParam) updatedAtField() {}
+
+type WebhookWorkerWithPrismaUpdatedAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	updatedAtField()
+}
+
+type webhookWorkerWithPrismaUpdatedAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaUpdatedAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaUpdatedAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaUpdatedAtEqualsParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaUpdatedAtEqualsParam) updatedAtField() {}
+
+func (webhookWorkerWithPrismaUpdatedAtSetParam) settable()  {}
+func (webhookWorkerWithPrismaUpdatedAtEqualsParam) equals() {}
+
+type webhookWorkerWithPrismaUpdatedAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaUpdatedAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaUpdatedAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaUpdatedAtEqualsUniqueParam) webhookWorkerModel() {}
+func (p webhookWorkerWithPrismaUpdatedAtEqualsUniqueParam) updatedAtField()     {}
+
+func (webhookWorkerWithPrismaUpdatedAtEqualsUniqueParam) unique() {}
+func (webhookWorkerWithPrismaUpdatedAtEqualsUniqueParam) equals() {}
+
+type WebhookWorkerWithPrismaNameEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	webhookWorkerModel()
+	nameField()
+}
+
+type WebhookWorkerWithPrismaNameSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	nameField()
+}
+
+type webhookWorkerWithPrismaNameSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaNameSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaNameSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaNameSetParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaNameSetParam) nameField() {}
+
+type WebhookWorkerWithPrismaNameWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	nameField()
+}
+
+type webhookWorkerWithPrismaNameEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaNameEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaNameEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaNameEqualsParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaNameEqualsParam) nameField() {}
+
+func (webhookWorkerWithPrismaNameSetParam) settable()  {}
+func (webhookWorkerWithPrismaNameEqualsParam) equals() {}
+
+type webhookWorkerWithPrismaNameEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaNameEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaNameEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaNameEqualsUniqueParam) webhookWorkerModel() {}
+func (p webhookWorkerWithPrismaNameEqualsUniqueParam) nameField()          {}
+
+func (webhookWorkerWithPrismaNameEqualsUniqueParam) unique() {}
+func (webhookWorkerWithPrismaNameEqualsUniqueParam) equals() {}
+
+type WebhookWorkerWithPrismaSecretEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	webhookWorkerModel()
+	secretField()
+}
+
+type WebhookWorkerWithPrismaSecretSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	secretField()
+}
+
+type webhookWorkerWithPrismaSecretSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaSecretSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaSecretSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaSecretSetParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaSecretSetParam) secretField() {}
+
+type WebhookWorkerWithPrismaSecretWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	secretField()
+}
+
+type webhookWorkerWithPrismaSecretEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaSecretEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaSecretEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaSecretEqualsParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaSecretEqualsParam) secretField() {}
+
+func (webhookWorkerWithPrismaSecretSetParam) settable()  {}
+func (webhookWorkerWithPrismaSecretEqualsParam) equals() {}
+
+type webhookWorkerWithPrismaSecretEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaSecretEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaSecretEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaSecretEqualsUniqueParam) webhookWorkerModel() {}
+func (p webhookWorkerWithPrismaSecretEqualsUniqueParam) secretField()        {}
+
+func (webhookWorkerWithPrismaSecretEqualsUniqueParam) unique() {}
+func (webhookWorkerWithPrismaSecretEqualsUniqueParam) equals() {}
+
+type WebhookWorkerWithPrismaURLEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	webhookWorkerModel()
+	urlField()
+}
+
+type WebhookWorkerWithPrismaURLSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	urlField()
+}
+
+type webhookWorkerWithPrismaURLSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaURLSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaURLSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaURLSetParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaURLSetParam) urlField() {}
+
+type WebhookWorkerWithPrismaURLWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	urlField()
+}
+
+type webhookWorkerWithPrismaURLEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaURLEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaURLEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaURLEqualsParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaURLEqualsParam) urlField() {}
+
+func (webhookWorkerWithPrismaURLSetParam) settable()  {}
+func (webhookWorkerWithPrismaURLEqualsParam) equals() {}
+
+type webhookWorkerWithPrismaURLEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaURLEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaURLEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaURLEqualsUniqueParam) webhookWorkerModel() {}
+func (p webhookWorkerWithPrismaURLEqualsUniqueParam) urlField()           {}
+
+func (webhookWorkerWithPrismaURLEqualsUniqueParam) unique() {}
+func (webhookWorkerWithPrismaURLEqualsUniqueParam) equals() {}
+
+type WebhookWorkerWithPrismaTokenValueEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	webhookWorkerModel()
+	tokenValueField()
+}
+
+type WebhookWorkerWithPrismaTokenValueSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	tokenValueField()
+}
+
+type webhookWorkerWithPrismaTokenValueSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaTokenValueSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaTokenValueSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaTokenValueSetParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaTokenValueSetParam) tokenValueField() {}
+
+type WebhookWorkerWithPrismaTokenValueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	tokenValueField()
+}
+
+type webhookWorkerWithPrismaTokenValueEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaTokenValueEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaTokenValueEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaTokenValueEqualsParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaTokenValueEqualsParam) tokenValueField() {}
+
+func (webhookWorkerWithPrismaTokenValueSetParam) settable()  {}
+func (webhookWorkerWithPrismaTokenValueEqualsParam) equals() {}
+
+type webhookWorkerWithPrismaTokenValueEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaTokenValueEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaTokenValueEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaTokenValueEqualsUniqueParam) webhookWorkerModel() {}
+func (p webhookWorkerWithPrismaTokenValueEqualsUniqueParam) tokenValueField()    {}
+
+func (webhookWorkerWithPrismaTokenValueEqualsUniqueParam) unique() {}
+func (webhookWorkerWithPrismaTokenValueEqualsUniqueParam) equals() {}
+
+type WebhookWorkerWithPrismaDeletedEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	webhookWorkerModel()
+	deletedField()
+}
+
+type WebhookWorkerWithPrismaDeletedSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	deletedField()
+}
+
+type webhookWorkerWithPrismaDeletedSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaDeletedSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaDeletedSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaDeletedSetParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaDeletedSetParam) deletedField() {}
+
+type WebhookWorkerWithPrismaDeletedWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	deletedField()
+}
+
+type webhookWorkerWithPrismaDeletedEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaDeletedEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaDeletedEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaDeletedEqualsParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaDeletedEqualsParam) deletedField() {}
+
+func (webhookWorkerWithPrismaDeletedSetParam) settable()  {}
+func (webhookWorkerWithPrismaDeletedEqualsParam) equals() {}
+
+type webhookWorkerWithPrismaDeletedEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaDeletedEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaDeletedEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaDeletedEqualsUniqueParam) webhookWorkerModel() {}
+func (p webhookWorkerWithPrismaDeletedEqualsUniqueParam) deletedField()       {}
+
+func (webhookWorkerWithPrismaDeletedEqualsUniqueParam) unique() {}
+func (webhookWorkerWithPrismaDeletedEqualsUniqueParam) equals() {}
+
+type WebhookWorkerWithPrismaTokenIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	webhookWorkerModel()
+	tokenIDField()
+}
+
+type WebhookWorkerWithPrismaTokenIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	tokenIDField()
+}
+
+type webhookWorkerWithPrismaTokenIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaTokenIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaTokenIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaTokenIDSetParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaTokenIDSetParam) tokenIDField() {}
+
+type WebhookWorkerWithPrismaTokenIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	tokenIDField()
+}
+
+type webhookWorkerWithPrismaTokenIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaTokenIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaTokenIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaTokenIDEqualsParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaTokenIDEqualsParam) tokenIDField() {}
+
+func (webhookWorkerWithPrismaTokenIDSetParam) settable()  {}
+func (webhookWorkerWithPrismaTokenIDEqualsParam) equals() {}
+
+type webhookWorkerWithPrismaTokenIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaTokenIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaTokenIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaTokenIDEqualsUniqueParam) webhookWorkerModel() {}
+func (p webhookWorkerWithPrismaTokenIDEqualsUniqueParam) tokenIDField()       {}
+
+func (webhookWorkerWithPrismaTokenIDEqualsUniqueParam) unique() {}
+func (webhookWorkerWithPrismaTokenIDEqualsUniqueParam) equals() {}
+
+type WebhookWorkerWithPrismaTokenEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	webhookWorkerModel()
+	tokenField()
+}
+
+type WebhookWorkerWithPrismaTokenSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	tokenField()
+}
+
+type webhookWorkerWithPrismaTokenSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaTokenSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaTokenSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaTokenSetParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaTokenSetParam) tokenField() {}
+
+type WebhookWorkerWithPrismaTokenWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	tokenField()
+}
+
+type webhookWorkerWithPrismaTokenEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaTokenEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaTokenEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaTokenEqualsParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaTokenEqualsParam) tokenField() {}
+
+func (webhookWorkerWithPrismaTokenSetParam) settable()  {}
+func (webhookWorkerWithPrismaTokenEqualsParam) equals() {}
+
+type webhookWorkerWithPrismaTokenEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaTokenEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaTokenEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaTokenEqualsUniqueParam) webhookWorkerModel() {}
+func (p webhookWorkerWithPrismaTokenEqualsUniqueParam) tokenField()         {}
+
+func (webhookWorkerWithPrismaTokenEqualsUniqueParam) unique() {}
+func (webhookWorkerWithPrismaTokenEqualsUniqueParam) equals() {}
+
+type WebhookWorkerWithPrismaTenantIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	webhookWorkerModel()
+	tenantIDField()
+}
+
+type WebhookWorkerWithPrismaTenantIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	tenantIDField()
+}
+
+type webhookWorkerWithPrismaTenantIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaTenantIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaTenantIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaTenantIDSetParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaTenantIDSetParam) tenantIDField() {}
+
+type WebhookWorkerWithPrismaTenantIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	tenantIDField()
+}
+
+type webhookWorkerWithPrismaTenantIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaTenantIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaTenantIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaTenantIDEqualsParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaTenantIDEqualsParam) tenantIDField() {}
+
+func (webhookWorkerWithPrismaTenantIDSetParam) settable()  {}
+func (webhookWorkerWithPrismaTenantIDEqualsParam) equals() {}
+
+type webhookWorkerWithPrismaTenantIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaTenantIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaTenantIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaTenantIDEqualsUniqueParam) webhookWorkerModel() {}
+func (p webhookWorkerWithPrismaTenantIDEqualsUniqueParam) tenantIDField()      {}
+
+func (webhookWorkerWithPrismaTenantIDEqualsUniqueParam) unique() {}
+func (webhookWorkerWithPrismaTenantIDEqualsUniqueParam) equals() {}
+
+type WebhookWorkerWithPrismaTenantEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	webhookWorkerModel()
+	tenantField()
+}
+
+type WebhookWorkerWithPrismaTenantSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	tenantField()
+}
+
+type webhookWorkerWithPrismaTenantSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaTenantSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaTenantSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaTenantSetParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaTenantSetParam) tenantField() {}
+
+type WebhookWorkerWithPrismaTenantWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	tenantField()
+}
+
+type webhookWorkerWithPrismaTenantEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaTenantEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaTenantEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaTenantEqualsParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaTenantEqualsParam) tenantField() {}
+
+func (webhookWorkerWithPrismaTenantSetParam) settable()  {}
+func (webhookWorkerWithPrismaTenantEqualsParam) equals() {}
+
+type webhookWorkerWithPrismaTenantEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaTenantEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaTenantEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaTenantEqualsUniqueParam) webhookWorkerModel() {}
+func (p webhookWorkerWithPrismaTenantEqualsUniqueParam) tenantField()        {}
+
+func (webhookWorkerWithPrismaTenantEqualsUniqueParam) unique() {}
+func (webhookWorkerWithPrismaTenantEqualsUniqueParam) equals() {}
+
+type WebhookWorkerWithPrismaWebhookWorkerWorkflowsEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	webhookWorkerModel()
+	webhookWorkerWorkflowsField()
+}
+
+type WebhookWorkerWithPrismaWebhookWorkerWorkflowsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	webhookWorkerWorkflowsField()
+}
+
+type webhookWorkerWithPrismaWebhookWorkerWorkflowsSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaWebhookWorkerWorkflowsSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaWebhookWorkerWorkflowsSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaWebhookWorkerWorkflowsSetParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaWebhookWorkerWorkflowsSetParam) webhookWorkerWorkflowsField() {}
+
+type WebhookWorkerWithPrismaWebhookWorkerWorkflowsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerModel()
+	webhookWorkerWorkflowsField()
+}
+
+type webhookWorkerWithPrismaWebhookWorkerWorkflowsEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaWebhookWorkerWorkflowsEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaWebhookWorkerWorkflowsEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaWebhookWorkerWorkflowsEqualsParam) webhookWorkerModel() {}
+
+func (p webhookWorkerWithPrismaWebhookWorkerWorkflowsEqualsParam) webhookWorkerWorkflowsField() {}
+
+func (webhookWorkerWithPrismaWebhookWorkerWorkflowsSetParam) settable()  {}
+func (webhookWorkerWithPrismaWebhookWorkerWorkflowsEqualsParam) equals() {}
+
+type webhookWorkerWithPrismaWebhookWorkerWorkflowsEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWithPrismaWebhookWorkerWorkflowsEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWithPrismaWebhookWorkerWorkflowsEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWithPrismaWebhookWorkerWorkflowsEqualsUniqueParam) webhookWorkerModel() {}
+func (p webhookWorkerWithPrismaWebhookWorkerWorkflowsEqualsUniqueParam) webhookWorkerWorkflowsField() {
+}
+
+func (webhookWorkerWithPrismaWebhookWorkerWorkflowsEqualsUniqueParam) unique() {}
+func (webhookWorkerWithPrismaWebhookWorkerWorkflowsEqualsUniqueParam) equals() {}
+
+type webhookWorkerWorkflowActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var webhookWorkerWorkflowOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "webhookWorkerId"},
+	{Name: "workflowId"},
+}
+
+type WebhookWorkerWorkflowRelationWith interface {
+	getQuery() builder.Query
+	with()
+	webhookWorkerWorkflowRelation()
+}
+
+type WebhookWorkerWorkflowWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerWorkflowModel()
+}
+
+type webhookWorkerWorkflowDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWorkflowDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWorkflowDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWorkflowDefaultParam) webhookWorkerWorkflowModel() {}
+
+type WebhookWorkerWorkflowOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerWorkflowModel()
+}
+
+type webhookWorkerWorkflowOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWorkflowOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWorkflowOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWorkflowOrderByParam) webhookWorkerWorkflowModel() {}
+
+type WebhookWorkerWorkflowCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerWorkflowModel()
+	isCursor()
+}
+
+type webhookWorkerWorkflowCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWorkflowCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWorkflowCursorParam) isCursor() {}
+
+func (p webhookWorkerWorkflowCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWorkflowCursorParam) webhookWorkerWorkflowModel() {}
+
+type WebhookWorkerWorkflowParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	webhookWorkerWorkflowModel()
+}
+
+type webhookWorkerWorkflowParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWorkflowParamUnique) webhookWorkerWorkflowModel() {}
+
+func (webhookWorkerWorkflowParamUnique) unique() {}
+
+func (p webhookWorkerWorkflowParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWorkflowParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type WebhookWorkerWorkflowEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	webhookWorkerWorkflowModel()
+}
+
+type webhookWorkerWorkflowEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWorkflowEqualsParam) webhookWorkerWorkflowModel() {}
+
+func (webhookWorkerWorkflowEqualsParam) equals() {}
+
+func (p webhookWorkerWorkflowEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWorkflowEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type WebhookWorkerWorkflowEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	webhookWorkerWorkflowModel()
+}
+
+type webhookWorkerWorkflowEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWorkflowEqualsUniqueParam) webhookWorkerWorkflowModel() {}
+
+func (webhookWorkerWorkflowEqualsUniqueParam) unique() {}
+func (webhookWorkerWorkflowEqualsUniqueParam) equals() {}
+
+func (p webhookWorkerWorkflowEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWorkflowEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type WebhookWorkerWorkflowSetParam interface {
+	field() builder.Field
+	settable()
+	webhookWorkerWorkflowModel()
+}
+
+type webhookWorkerWorkflowSetParam struct {
+	data builder.Field
+}
+
+func (webhookWorkerWorkflowSetParam) settable() {}
+
+func (p webhookWorkerWorkflowSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWorkflowSetParam) webhookWorkerWorkflowModel() {}
+
+type WebhookWorkerWorkflowWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	webhookWorkerWorkflowModel()
+	idField()
+}
+
+type WebhookWorkerWorkflowWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerWorkflowModel()
+	idField()
+}
+
+type webhookWorkerWorkflowWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWorkflowWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWorkflowWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWorkflowWithPrismaIDSetParam) webhookWorkerWorkflowModel() {}
+
+func (p webhookWorkerWorkflowWithPrismaIDSetParam) idField() {}
+
+type WebhookWorkerWorkflowWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerWorkflowModel()
+	idField()
+}
+
+type webhookWorkerWorkflowWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWorkflowWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWorkflowWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWorkflowWithPrismaIDEqualsParam) webhookWorkerWorkflowModel() {}
+
+func (p webhookWorkerWorkflowWithPrismaIDEqualsParam) idField() {}
+
+func (webhookWorkerWorkflowWithPrismaIDSetParam) settable()  {}
+func (webhookWorkerWorkflowWithPrismaIDEqualsParam) equals() {}
+
+type webhookWorkerWorkflowWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWorkflowWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWorkflowWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWorkflowWithPrismaIDEqualsUniqueParam) webhookWorkerWorkflowModel() {}
+func (p webhookWorkerWorkflowWithPrismaIDEqualsUniqueParam) idField()                    {}
+
+func (webhookWorkerWorkflowWithPrismaIDEqualsUniqueParam) unique() {}
+func (webhookWorkerWorkflowWithPrismaIDEqualsUniqueParam) equals() {}
+
+type WebhookWorkerWorkflowWithPrismaWebhookWorkerEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	webhookWorkerWorkflowModel()
+	webhookWorkerField()
+}
+
+type WebhookWorkerWorkflowWithPrismaWebhookWorkerSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerWorkflowModel()
+	webhookWorkerField()
+}
+
+type webhookWorkerWorkflowWithPrismaWebhookWorkerSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerSetParam) webhookWorkerWorkflowModel() {}
+
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerSetParam) webhookWorkerField() {}
+
+type WebhookWorkerWorkflowWithPrismaWebhookWorkerWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerWorkflowModel()
+	webhookWorkerField()
+}
+
+type webhookWorkerWorkflowWithPrismaWebhookWorkerEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerEqualsParam) webhookWorkerWorkflowModel() {}
+
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerEqualsParam) webhookWorkerField() {}
+
+func (webhookWorkerWorkflowWithPrismaWebhookWorkerSetParam) settable()  {}
+func (webhookWorkerWorkflowWithPrismaWebhookWorkerEqualsParam) equals() {}
+
+type webhookWorkerWorkflowWithPrismaWebhookWorkerEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerEqualsUniqueParam) webhookWorkerWorkflowModel() {}
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerEqualsUniqueParam) webhookWorkerField()         {}
+
+func (webhookWorkerWorkflowWithPrismaWebhookWorkerEqualsUniqueParam) unique() {}
+func (webhookWorkerWorkflowWithPrismaWebhookWorkerEqualsUniqueParam) equals() {}
+
+type WebhookWorkerWorkflowWithPrismaWebhookWorkerIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	webhookWorkerWorkflowModel()
+	webhookWorkerIDField()
+}
+
+type WebhookWorkerWorkflowWithPrismaWebhookWorkerIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerWorkflowModel()
+	webhookWorkerIDField()
+}
+
+type webhookWorkerWorkflowWithPrismaWebhookWorkerIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerIDSetParam) webhookWorkerWorkflowModel() {}
+
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerIDSetParam) webhookWorkerIDField() {}
+
+type WebhookWorkerWorkflowWithPrismaWebhookWorkerIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerWorkflowModel()
+	webhookWorkerIDField()
+}
+
+type webhookWorkerWorkflowWithPrismaWebhookWorkerIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerIDEqualsParam) webhookWorkerWorkflowModel() {}
+
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerIDEqualsParam) webhookWorkerIDField() {}
+
+func (webhookWorkerWorkflowWithPrismaWebhookWorkerIDSetParam) settable()  {}
+func (webhookWorkerWorkflowWithPrismaWebhookWorkerIDEqualsParam) equals() {}
+
+type webhookWorkerWorkflowWithPrismaWebhookWorkerIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerIDEqualsUniqueParam) webhookWorkerWorkflowModel() {
+}
+func (p webhookWorkerWorkflowWithPrismaWebhookWorkerIDEqualsUniqueParam) webhookWorkerIDField() {}
+
+func (webhookWorkerWorkflowWithPrismaWebhookWorkerIDEqualsUniqueParam) unique() {}
+func (webhookWorkerWorkflowWithPrismaWebhookWorkerIDEqualsUniqueParam) equals() {}
+
+type WebhookWorkerWorkflowWithPrismaWorkflowEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	webhookWorkerWorkflowModel()
+	workflowField()
+}
+
+type WebhookWorkerWorkflowWithPrismaWorkflowSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerWorkflowModel()
+	workflowField()
+}
+
+type webhookWorkerWorkflowWithPrismaWorkflowSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWorkflowSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWorkflowWithPrismaWorkflowSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWorkflowSetParam) webhookWorkerWorkflowModel() {}
+
+func (p webhookWorkerWorkflowWithPrismaWorkflowSetParam) workflowField() {}
+
+type WebhookWorkerWorkflowWithPrismaWorkflowWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerWorkflowModel()
+	workflowField()
+}
+
+type webhookWorkerWorkflowWithPrismaWorkflowEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWorkflowEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWorkflowWithPrismaWorkflowEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWorkflowEqualsParam) webhookWorkerWorkflowModel() {}
+
+func (p webhookWorkerWorkflowWithPrismaWorkflowEqualsParam) workflowField() {}
+
+func (webhookWorkerWorkflowWithPrismaWorkflowSetParam) settable()  {}
+func (webhookWorkerWorkflowWithPrismaWorkflowEqualsParam) equals() {}
+
+type webhookWorkerWorkflowWithPrismaWorkflowEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWorkflowEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWorkflowWithPrismaWorkflowEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWorkflowEqualsUniqueParam) webhookWorkerWorkflowModel() {}
+func (p webhookWorkerWorkflowWithPrismaWorkflowEqualsUniqueParam) workflowField()              {}
+
+func (webhookWorkerWorkflowWithPrismaWorkflowEqualsUniqueParam) unique() {}
+func (webhookWorkerWorkflowWithPrismaWorkflowEqualsUniqueParam) equals() {}
+
+type WebhookWorkerWorkflowWithPrismaWorkflowIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	webhookWorkerWorkflowModel()
+	workflowIDField()
+}
+
+type WebhookWorkerWorkflowWithPrismaWorkflowIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerWorkflowModel()
+	workflowIDField()
+}
+
+type webhookWorkerWorkflowWithPrismaWorkflowIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWorkflowIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWorkflowWithPrismaWorkflowIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWorkflowIDSetParam) webhookWorkerWorkflowModel() {}
+
+func (p webhookWorkerWorkflowWithPrismaWorkflowIDSetParam) workflowIDField() {}
+
+type WebhookWorkerWorkflowWithPrismaWorkflowIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	webhookWorkerWorkflowModel()
+	workflowIDField()
+}
+
+type webhookWorkerWorkflowWithPrismaWorkflowIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWorkflowIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWorkflowWithPrismaWorkflowIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWorkflowIDEqualsParam) webhookWorkerWorkflowModel() {}
+
+func (p webhookWorkerWorkflowWithPrismaWorkflowIDEqualsParam) workflowIDField() {}
+
+func (webhookWorkerWorkflowWithPrismaWorkflowIDSetParam) settable()  {}
+func (webhookWorkerWorkflowWithPrismaWorkflowIDEqualsParam) equals() {}
+
+type webhookWorkerWorkflowWithPrismaWorkflowIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWorkflowIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p webhookWorkerWorkflowWithPrismaWorkflowIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWorkflowWithPrismaWorkflowIDEqualsUniqueParam) webhookWorkerWorkflowModel() {}
+func (p webhookWorkerWorkflowWithPrismaWorkflowIDEqualsUniqueParam) workflowIDField()            {}
+
+func (webhookWorkerWorkflowWithPrismaWorkflowIDEqualsUniqueParam) unique() {}
+func (webhookWorkerWorkflowWithPrismaWorkflowIDEqualsUniqueParam) equals() {}
+
 type tenantActions struct {
 	// client holds the prisma client
 	client *PrismaClient
@@ -167729,6 +175345,84 @@ func (p tenantWithPrismaLimitAlertsEqualsUniqueParam) limitAlertsField() {}
 
 func (tenantWithPrismaLimitAlertsEqualsUniqueParam) unique() {}
 func (tenantWithPrismaLimitAlertsEqualsUniqueParam) equals() {}
+
+type TenantWithPrismaWebhookWorkersEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tenantModel()
+	webhookWorkersField()
+}
+
+type TenantWithPrismaWebhookWorkersSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantModel()
+	webhookWorkersField()
+}
+
+type tenantWithPrismaWebhookWorkersSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaWebhookWorkersSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaWebhookWorkersSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaWebhookWorkersSetParam) tenantModel() {}
+
+func (p tenantWithPrismaWebhookWorkersSetParam) webhookWorkersField() {}
+
+type TenantWithPrismaWebhookWorkersWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantModel()
+	webhookWorkersField()
+}
+
+type tenantWithPrismaWebhookWorkersEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaWebhookWorkersEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaWebhookWorkersEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaWebhookWorkersEqualsParam) tenantModel() {}
+
+func (p tenantWithPrismaWebhookWorkersEqualsParam) webhookWorkersField() {}
+
+func (tenantWithPrismaWebhookWorkersSetParam) settable()  {}
+func (tenantWithPrismaWebhookWorkersEqualsParam) equals() {}
+
+type tenantWithPrismaWebhookWorkersEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaWebhookWorkersEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaWebhookWorkersEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaWebhookWorkersEqualsUniqueParam) tenantModel()         {}
+func (p tenantWithPrismaWebhookWorkersEqualsUniqueParam) webhookWorkersField() {}
+
+func (tenantWithPrismaWebhookWorkersEqualsUniqueParam) unique() {}
+func (tenantWithPrismaWebhookWorkersEqualsUniqueParam) equals() {}
 
 type tenantResourceLimitActions struct {
 	// client holds the prisma client
@@ -173836,6 +181530,84 @@ func (p aPITokenWithPrismaTenantIDEqualsUniqueParam) tenantIDField() {}
 func (aPITokenWithPrismaTenantIDEqualsUniqueParam) unique() {}
 func (aPITokenWithPrismaTenantIDEqualsUniqueParam) equals() {}
 
+type APITokenWithPrismaWebhookWorkersEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	aPITokenModel()
+	webhookWorkersField()
+}
+
+type APITokenWithPrismaWebhookWorkersSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	aPITokenModel()
+	webhookWorkersField()
+}
+
+type aPITokenWithPrismaWebhookWorkersSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p aPITokenWithPrismaWebhookWorkersSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p aPITokenWithPrismaWebhookWorkersSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p aPITokenWithPrismaWebhookWorkersSetParam) aPITokenModel() {}
+
+func (p aPITokenWithPrismaWebhookWorkersSetParam) webhookWorkersField() {}
+
+type APITokenWithPrismaWebhookWorkersWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	aPITokenModel()
+	webhookWorkersField()
+}
+
+type aPITokenWithPrismaWebhookWorkersEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p aPITokenWithPrismaWebhookWorkersEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p aPITokenWithPrismaWebhookWorkersEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p aPITokenWithPrismaWebhookWorkersEqualsParam) aPITokenModel() {}
+
+func (p aPITokenWithPrismaWebhookWorkersEqualsParam) webhookWorkersField() {}
+
+func (aPITokenWithPrismaWebhookWorkersSetParam) settable()  {}
+func (aPITokenWithPrismaWebhookWorkersEqualsParam) equals() {}
+
+type aPITokenWithPrismaWebhookWorkersEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p aPITokenWithPrismaWebhookWorkersEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p aPITokenWithPrismaWebhookWorkersEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p aPITokenWithPrismaWebhookWorkersEqualsUniqueParam) aPITokenModel()       {}
+func (p aPITokenWithPrismaWebhookWorkersEqualsUniqueParam) webhookWorkersField() {}
+
+func (aPITokenWithPrismaWebhookWorkersEqualsUniqueParam) unique() {}
+func (aPITokenWithPrismaWebhookWorkersEqualsUniqueParam) equals() {}
+
 type eventActions struct {
 	// client holds the prisma client
 	client *PrismaClient
@@ -176791,6 +184563,84 @@ func (p workflowWithPrismaTagsEqualsUniqueParam) tagsField()     {}
 
 func (workflowWithPrismaTagsEqualsUniqueParam) unique() {}
 func (workflowWithPrismaTagsEqualsUniqueParam) equals() {}
+
+type WorkflowWithPrismaWebhookWorkerWorkflowsEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowModel()
+	webhookWorkerWorkflowsField()
+}
+
+type WorkflowWithPrismaWebhookWorkerWorkflowsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowModel()
+	webhookWorkerWorkflowsField()
+}
+
+type workflowWithPrismaWebhookWorkerWorkflowsSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowWithPrismaWebhookWorkerWorkflowsSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowWithPrismaWebhookWorkerWorkflowsSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowWithPrismaWebhookWorkerWorkflowsSetParam) workflowModel() {}
+
+func (p workflowWithPrismaWebhookWorkerWorkflowsSetParam) webhookWorkerWorkflowsField() {}
+
+type WorkflowWithPrismaWebhookWorkerWorkflowsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowModel()
+	webhookWorkerWorkflowsField()
+}
+
+type workflowWithPrismaWebhookWorkerWorkflowsEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowWithPrismaWebhookWorkerWorkflowsEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowWithPrismaWebhookWorkerWorkflowsEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowWithPrismaWebhookWorkerWorkflowsEqualsParam) workflowModel() {}
+
+func (p workflowWithPrismaWebhookWorkerWorkflowsEqualsParam) webhookWorkerWorkflowsField() {}
+
+func (workflowWithPrismaWebhookWorkerWorkflowsSetParam) settable()  {}
+func (workflowWithPrismaWebhookWorkerWorkflowsEqualsParam) equals() {}
+
+type workflowWithPrismaWebhookWorkerWorkflowsEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowWithPrismaWebhookWorkerWorkflowsEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowWithPrismaWebhookWorkerWorkflowsEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowWithPrismaWebhookWorkerWorkflowsEqualsUniqueParam) workflowModel()               {}
+func (p workflowWithPrismaWebhookWorkerWorkflowsEqualsUniqueParam) webhookWorkerWorkflowsField() {}
+
+func (workflowWithPrismaWebhookWorkerWorkflowsEqualsUniqueParam) unique() {}
+func (workflowWithPrismaWebhookWorkerWorkflowsEqualsUniqueParam) equals() {}
 
 type workflowVersionActions struct {
 	// client holds the prisma client
@@ -212747,6 +220597,150 @@ func (r userSessionCreateOne) Tx() UserSessionUniqueTxResult {
 	return v
 }
 
+// Creates a single webhookWorker.
+func (r webhookWorkerActions) CreateOne(
+	_name WebhookWorkerWithPrismaNameSetParam,
+	_secret WebhookWorkerWithPrismaSecretSetParam,
+	_url WebhookWorkerWithPrismaURLSetParam,
+	_tenant WebhookWorkerWithPrismaTenantSetParam,
+
+	optional ...WebhookWorkerSetParam,
+) webhookWorkerCreateOne {
+	var v webhookWorkerCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "WebhookWorker"
+	v.query.Outputs = webhookWorkerOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _name.field())
+	fields = append(fields, _secret.field())
+	fields = append(fields, _url.field())
+	fields = append(fields, _tenant.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r webhookWorkerCreateOne) With(params ...WebhookWorkerRelationWith) webhookWorkerCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type webhookWorkerCreateOne struct {
+	query builder.Query
+}
+
+func (p webhookWorkerCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerCreateOne) webhookWorkerModel() {}
+
+func (r webhookWorkerCreateOne) Exec(ctx context.Context) (*WebhookWorkerModel, error) {
+	var v WebhookWorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerCreateOne) Tx() WebhookWorkerUniqueTxResult {
+	v := newWebhookWorkerUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+// Creates a single webhookWorkerWorkflow.
+func (r webhookWorkerWorkflowActions) CreateOne(
+	_webhookWorker WebhookWorkerWorkflowWithPrismaWebhookWorkerSetParam,
+	_workflow WebhookWorkerWorkflowWithPrismaWorkflowSetParam,
+
+	optional ...WebhookWorkerWorkflowSetParam,
+) webhookWorkerWorkflowCreateOne {
+	var v webhookWorkerWorkflowCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "WebhookWorkerWorkflow"
+	v.query.Outputs = webhookWorkerWorkflowOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _webhookWorker.field())
+	fields = append(fields, _workflow.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r webhookWorkerWorkflowCreateOne) With(params ...WebhookWorkerWorkflowRelationWith) webhookWorkerWorkflowCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type webhookWorkerWorkflowCreateOne struct {
+	query builder.Query
+}
+
+func (p webhookWorkerWorkflowCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p webhookWorkerWorkflowCreateOne) webhookWorkerWorkflowModel() {}
+
+func (r webhookWorkerWorkflowCreateOne) Exec(ctx context.Context) (*WebhookWorkerWorkflowModel, error) {
+	var v WebhookWorkerWorkflowModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerWorkflowCreateOne) Tx() WebhookWorkerWorkflowUniqueTxResult {
+	v := newWebhookWorkerWorkflowUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 // Creates a single tenant.
 func (r tenantActions) CreateOne(
 	_name TenantWithPrismaNameSetParam,
@@ -222117,6 +230111,4076 @@ func (r userSessionDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
 
 func (r userSessionDeleteMany) Tx() UserSessionManyTxResult {
 	v := newUserSessionManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type webhookWorkerToTokenFindUnique struct {
+	query builder.Query
+}
+
+func (r webhookWorkerToTokenFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToTokenFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToTokenFindUnique) with()                  {}
+func (r webhookWorkerToTokenFindUnique) webhookWorkerModel()    {}
+func (r webhookWorkerToTokenFindUnique) webhookWorkerRelation() {}
+
+func (r webhookWorkerToTokenFindUnique) With(params ...APITokenRelationWith) webhookWorkerToTokenFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r webhookWorkerToTokenFindUnique) Select(params ...webhookWorkerPrismaFields) webhookWorkerToTokenFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerToTokenFindUnique) Omit(params ...webhookWorkerPrismaFields) webhookWorkerToTokenFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range webhookWorkerOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerToTokenFindUnique) Exec(ctx context.Context) (
+	*WebhookWorkerModel,
+	error,
+) {
+	var v *WebhookWorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerToTokenFindUnique) ExecInner(ctx context.Context) (
+	*InnerWebhookWorker,
+	error,
+) {
+	var v *InnerWebhookWorker
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerToTokenFindUnique) Update(params ...WebhookWorkerSetParam) webhookWorkerToTokenUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "WebhookWorker"
+
+	var v webhookWorkerToTokenUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type webhookWorkerToTokenUpdateUnique struct {
+	query builder.Query
+}
+
+func (r webhookWorkerToTokenUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToTokenUpdateUnique) webhookWorkerModel() {}
+
+func (r webhookWorkerToTokenUpdateUnique) Exec(ctx context.Context) (*WebhookWorkerModel, error) {
+	var v WebhookWorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerToTokenUpdateUnique) Tx() WebhookWorkerUniqueTxResult {
+	v := newWebhookWorkerUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r webhookWorkerToTokenFindUnique) Delete() webhookWorkerToTokenDeleteUnique {
+	var v webhookWorkerToTokenDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "WebhookWorker"
+
+	return v
+}
+
+type webhookWorkerToTokenDeleteUnique struct {
+	query builder.Query
+}
+
+func (r webhookWorkerToTokenDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p webhookWorkerToTokenDeleteUnique) webhookWorkerModel() {}
+
+func (r webhookWorkerToTokenDeleteUnique) Exec(ctx context.Context) (*WebhookWorkerModel, error) {
+	var v WebhookWorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerToTokenDeleteUnique) Tx() WebhookWorkerUniqueTxResult {
+	v := newWebhookWorkerUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type webhookWorkerToTokenFindFirst struct {
+	query builder.Query
+}
+
+func (r webhookWorkerToTokenFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToTokenFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToTokenFindFirst) with()                  {}
+func (r webhookWorkerToTokenFindFirst) webhookWorkerModel()    {}
+func (r webhookWorkerToTokenFindFirst) webhookWorkerRelation() {}
+
+func (r webhookWorkerToTokenFindFirst) With(params ...APITokenRelationWith) webhookWorkerToTokenFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r webhookWorkerToTokenFindFirst) Select(params ...webhookWorkerPrismaFields) webhookWorkerToTokenFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerToTokenFindFirst) Omit(params ...webhookWorkerPrismaFields) webhookWorkerToTokenFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range webhookWorkerOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerToTokenFindFirst) OrderBy(params ...APITokenOrderByParam) webhookWorkerToTokenFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r webhookWorkerToTokenFindFirst) Skip(count int) webhookWorkerToTokenFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerToTokenFindFirst) Take(count int) webhookWorkerToTokenFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerToTokenFindFirst) Cursor(cursor WebhookWorkerCursorParam) webhookWorkerToTokenFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r webhookWorkerToTokenFindFirst) Exec(ctx context.Context) (
+	*WebhookWorkerModel,
+	error,
+) {
+	var v *WebhookWorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerToTokenFindFirst) ExecInner(ctx context.Context) (
+	*InnerWebhookWorker,
+	error,
+) {
+	var v *InnerWebhookWorker
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type webhookWorkerToTokenFindMany struct {
+	query builder.Query
+}
+
+func (r webhookWorkerToTokenFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToTokenFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToTokenFindMany) with()                  {}
+func (r webhookWorkerToTokenFindMany) webhookWorkerModel()    {}
+func (r webhookWorkerToTokenFindMany) webhookWorkerRelation() {}
+
+func (r webhookWorkerToTokenFindMany) With(params ...APITokenRelationWith) webhookWorkerToTokenFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r webhookWorkerToTokenFindMany) Select(params ...webhookWorkerPrismaFields) webhookWorkerToTokenFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerToTokenFindMany) Omit(params ...webhookWorkerPrismaFields) webhookWorkerToTokenFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range webhookWorkerOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerToTokenFindMany) OrderBy(params ...APITokenOrderByParam) webhookWorkerToTokenFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r webhookWorkerToTokenFindMany) Skip(count int) webhookWorkerToTokenFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerToTokenFindMany) Take(count int) webhookWorkerToTokenFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerToTokenFindMany) Cursor(cursor WebhookWorkerCursorParam) webhookWorkerToTokenFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r webhookWorkerToTokenFindMany) Exec(ctx context.Context) (
+	[]WebhookWorkerModel,
+	error,
+) {
+	var v []WebhookWorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerToTokenFindMany) ExecInner(ctx context.Context) (
+	[]InnerWebhookWorker,
+	error,
+) {
+	var v []InnerWebhookWorker
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerToTokenFindMany) Update(params ...WebhookWorkerSetParam) webhookWorkerToTokenUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "WebhookWorker"
+
+	r.query.Outputs = countOutput
+
+	var v webhookWorkerToTokenUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type webhookWorkerToTokenUpdateMany struct {
+	query builder.Query
+}
+
+func (r webhookWorkerToTokenUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToTokenUpdateMany) webhookWorkerModel() {}
+
+func (r webhookWorkerToTokenUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerToTokenUpdateMany) Tx() WebhookWorkerManyTxResult {
+	v := newWebhookWorkerManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r webhookWorkerToTokenFindMany) Delete() webhookWorkerToTokenDeleteMany {
+	var v webhookWorkerToTokenDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "WebhookWorker"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type webhookWorkerToTokenDeleteMany struct {
+	query builder.Query
+}
+
+func (r webhookWorkerToTokenDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p webhookWorkerToTokenDeleteMany) webhookWorkerModel() {}
+
+func (r webhookWorkerToTokenDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerToTokenDeleteMany) Tx() WebhookWorkerManyTxResult {
+	v := newWebhookWorkerManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type webhookWorkerToTenantFindUnique struct {
+	query builder.Query
+}
+
+func (r webhookWorkerToTenantFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToTenantFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToTenantFindUnique) with()                  {}
+func (r webhookWorkerToTenantFindUnique) webhookWorkerModel()    {}
+func (r webhookWorkerToTenantFindUnique) webhookWorkerRelation() {}
+
+func (r webhookWorkerToTenantFindUnique) With(params ...TenantRelationWith) webhookWorkerToTenantFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r webhookWorkerToTenantFindUnique) Select(params ...webhookWorkerPrismaFields) webhookWorkerToTenantFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerToTenantFindUnique) Omit(params ...webhookWorkerPrismaFields) webhookWorkerToTenantFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range webhookWorkerOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerToTenantFindUnique) Exec(ctx context.Context) (
+	*WebhookWorkerModel,
+	error,
+) {
+	var v *WebhookWorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerToTenantFindUnique) ExecInner(ctx context.Context) (
+	*InnerWebhookWorker,
+	error,
+) {
+	var v *InnerWebhookWorker
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerToTenantFindUnique) Update(params ...WebhookWorkerSetParam) webhookWorkerToTenantUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "WebhookWorker"
+
+	var v webhookWorkerToTenantUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type webhookWorkerToTenantUpdateUnique struct {
+	query builder.Query
+}
+
+func (r webhookWorkerToTenantUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToTenantUpdateUnique) webhookWorkerModel() {}
+
+func (r webhookWorkerToTenantUpdateUnique) Exec(ctx context.Context) (*WebhookWorkerModel, error) {
+	var v WebhookWorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerToTenantUpdateUnique) Tx() WebhookWorkerUniqueTxResult {
+	v := newWebhookWorkerUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r webhookWorkerToTenantFindUnique) Delete() webhookWorkerToTenantDeleteUnique {
+	var v webhookWorkerToTenantDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "WebhookWorker"
+
+	return v
+}
+
+type webhookWorkerToTenantDeleteUnique struct {
+	query builder.Query
+}
+
+func (r webhookWorkerToTenantDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p webhookWorkerToTenantDeleteUnique) webhookWorkerModel() {}
+
+func (r webhookWorkerToTenantDeleteUnique) Exec(ctx context.Context) (*WebhookWorkerModel, error) {
+	var v WebhookWorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerToTenantDeleteUnique) Tx() WebhookWorkerUniqueTxResult {
+	v := newWebhookWorkerUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type webhookWorkerToTenantFindFirst struct {
+	query builder.Query
+}
+
+func (r webhookWorkerToTenantFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToTenantFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToTenantFindFirst) with()                  {}
+func (r webhookWorkerToTenantFindFirst) webhookWorkerModel()    {}
+func (r webhookWorkerToTenantFindFirst) webhookWorkerRelation() {}
+
+func (r webhookWorkerToTenantFindFirst) With(params ...TenantRelationWith) webhookWorkerToTenantFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r webhookWorkerToTenantFindFirst) Select(params ...webhookWorkerPrismaFields) webhookWorkerToTenantFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerToTenantFindFirst) Omit(params ...webhookWorkerPrismaFields) webhookWorkerToTenantFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range webhookWorkerOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerToTenantFindFirst) OrderBy(params ...TenantOrderByParam) webhookWorkerToTenantFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r webhookWorkerToTenantFindFirst) Skip(count int) webhookWorkerToTenantFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerToTenantFindFirst) Take(count int) webhookWorkerToTenantFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerToTenantFindFirst) Cursor(cursor WebhookWorkerCursorParam) webhookWorkerToTenantFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r webhookWorkerToTenantFindFirst) Exec(ctx context.Context) (
+	*WebhookWorkerModel,
+	error,
+) {
+	var v *WebhookWorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerToTenantFindFirst) ExecInner(ctx context.Context) (
+	*InnerWebhookWorker,
+	error,
+) {
+	var v *InnerWebhookWorker
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type webhookWorkerToTenantFindMany struct {
+	query builder.Query
+}
+
+func (r webhookWorkerToTenantFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToTenantFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToTenantFindMany) with()                  {}
+func (r webhookWorkerToTenantFindMany) webhookWorkerModel()    {}
+func (r webhookWorkerToTenantFindMany) webhookWorkerRelation() {}
+
+func (r webhookWorkerToTenantFindMany) With(params ...TenantRelationWith) webhookWorkerToTenantFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r webhookWorkerToTenantFindMany) Select(params ...webhookWorkerPrismaFields) webhookWorkerToTenantFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerToTenantFindMany) Omit(params ...webhookWorkerPrismaFields) webhookWorkerToTenantFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range webhookWorkerOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerToTenantFindMany) OrderBy(params ...TenantOrderByParam) webhookWorkerToTenantFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r webhookWorkerToTenantFindMany) Skip(count int) webhookWorkerToTenantFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerToTenantFindMany) Take(count int) webhookWorkerToTenantFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerToTenantFindMany) Cursor(cursor WebhookWorkerCursorParam) webhookWorkerToTenantFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r webhookWorkerToTenantFindMany) Exec(ctx context.Context) (
+	[]WebhookWorkerModel,
+	error,
+) {
+	var v []WebhookWorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerToTenantFindMany) ExecInner(ctx context.Context) (
+	[]InnerWebhookWorker,
+	error,
+) {
+	var v []InnerWebhookWorker
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerToTenantFindMany) Update(params ...WebhookWorkerSetParam) webhookWorkerToTenantUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "WebhookWorker"
+
+	r.query.Outputs = countOutput
+
+	var v webhookWorkerToTenantUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type webhookWorkerToTenantUpdateMany struct {
+	query builder.Query
+}
+
+func (r webhookWorkerToTenantUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToTenantUpdateMany) webhookWorkerModel() {}
+
+func (r webhookWorkerToTenantUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerToTenantUpdateMany) Tx() WebhookWorkerManyTxResult {
+	v := newWebhookWorkerManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r webhookWorkerToTenantFindMany) Delete() webhookWorkerToTenantDeleteMany {
+	var v webhookWorkerToTenantDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "WebhookWorker"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type webhookWorkerToTenantDeleteMany struct {
+	query builder.Query
+}
+
+func (r webhookWorkerToTenantDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p webhookWorkerToTenantDeleteMany) webhookWorkerModel() {}
+
+func (r webhookWorkerToTenantDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerToTenantDeleteMany) Tx() WebhookWorkerManyTxResult {
+	v := newWebhookWorkerManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type webhookWorkerToWebhookWorkerWorkflowsFindUnique struct {
+	query builder.Query
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindUnique) with()                  {}
+func (r webhookWorkerToWebhookWorkerWorkflowsFindUnique) webhookWorkerModel()    {}
+func (r webhookWorkerToWebhookWorkerWorkflowsFindUnique) webhookWorkerRelation() {}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindUnique) With(params ...WebhookWorkerWorkflowRelationWith) webhookWorkerToWebhookWorkerWorkflowsFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindUnique) Select(params ...webhookWorkerPrismaFields) webhookWorkerToWebhookWorkerWorkflowsFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindUnique) Omit(params ...webhookWorkerPrismaFields) webhookWorkerToWebhookWorkerWorkflowsFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range webhookWorkerOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindUnique) Exec(ctx context.Context) (
+	*WebhookWorkerModel,
+	error,
+) {
+	var v *WebhookWorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindUnique) ExecInner(ctx context.Context) (
+	*InnerWebhookWorker,
+	error,
+) {
+	var v *InnerWebhookWorker
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindUnique) Update(params ...WebhookWorkerSetParam) webhookWorkerToWebhookWorkerWorkflowsUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "WebhookWorker"
+
+	var v webhookWorkerToWebhookWorkerWorkflowsUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type webhookWorkerToWebhookWorkerWorkflowsUpdateUnique struct {
+	query builder.Query
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsUpdateUnique) webhookWorkerModel() {}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsUpdateUnique) Exec(ctx context.Context) (*WebhookWorkerModel, error) {
+	var v WebhookWorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsUpdateUnique) Tx() WebhookWorkerUniqueTxResult {
+	v := newWebhookWorkerUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindUnique) Delete() webhookWorkerToWebhookWorkerWorkflowsDeleteUnique {
+	var v webhookWorkerToWebhookWorkerWorkflowsDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "WebhookWorker"
+
+	return v
+}
+
+type webhookWorkerToWebhookWorkerWorkflowsDeleteUnique struct {
+	query builder.Query
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p webhookWorkerToWebhookWorkerWorkflowsDeleteUnique) webhookWorkerModel() {}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsDeleteUnique) Exec(ctx context.Context) (*WebhookWorkerModel, error) {
+	var v WebhookWorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsDeleteUnique) Tx() WebhookWorkerUniqueTxResult {
+	v := newWebhookWorkerUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type webhookWorkerToWebhookWorkerWorkflowsFindFirst struct {
+	query builder.Query
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindFirst) with()                  {}
+func (r webhookWorkerToWebhookWorkerWorkflowsFindFirst) webhookWorkerModel()    {}
+func (r webhookWorkerToWebhookWorkerWorkflowsFindFirst) webhookWorkerRelation() {}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindFirst) With(params ...WebhookWorkerWorkflowRelationWith) webhookWorkerToWebhookWorkerWorkflowsFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindFirst) Select(params ...webhookWorkerPrismaFields) webhookWorkerToWebhookWorkerWorkflowsFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindFirst) Omit(params ...webhookWorkerPrismaFields) webhookWorkerToWebhookWorkerWorkflowsFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range webhookWorkerOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindFirst) OrderBy(params ...WebhookWorkerWorkflowOrderByParam) webhookWorkerToWebhookWorkerWorkflowsFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindFirst) Skip(count int) webhookWorkerToWebhookWorkerWorkflowsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindFirst) Take(count int) webhookWorkerToWebhookWorkerWorkflowsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindFirst) Cursor(cursor WebhookWorkerCursorParam) webhookWorkerToWebhookWorkerWorkflowsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindFirst) Exec(ctx context.Context) (
+	*WebhookWorkerModel,
+	error,
+) {
+	var v *WebhookWorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindFirst) ExecInner(ctx context.Context) (
+	*InnerWebhookWorker,
+	error,
+) {
+	var v *InnerWebhookWorker
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type webhookWorkerToWebhookWorkerWorkflowsFindMany struct {
+	query builder.Query
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindMany) with()                  {}
+func (r webhookWorkerToWebhookWorkerWorkflowsFindMany) webhookWorkerModel()    {}
+func (r webhookWorkerToWebhookWorkerWorkflowsFindMany) webhookWorkerRelation() {}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindMany) With(params ...WebhookWorkerWorkflowRelationWith) webhookWorkerToWebhookWorkerWorkflowsFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindMany) Select(params ...webhookWorkerPrismaFields) webhookWorkerToWebhookWorkerWorkflowsFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindMany) Omit(params ...webhookWorkerPrismaFields) webhookWorkerToWebhookWorkerWorkflowsFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range webhookWorkerOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindMany) OrderBy(params ...WebhookWorkerWorkflowOrderByParam) webhookWorkerToWebhookWorkerWorkflowsFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindMany) Skip(count int) webhookWorkerToWebhookWorkerWorkflowsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindMany) Take(count int) webhookWorkerToWebhookWorkerWorkflowsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindMany) Cursor(cursor WebhookWorkerCursorParam) webhookWorkerToWebhookWorkerWorkflowsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindMany) Exec(ctx context.Context) (
+	[]WebhookWorkerModel,
+	error,
+) {
+	var v []WebhookWorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindMany) ExecInner(ctx context.Context) (
+	[]InnerWebhookWorker,
+	error,
+) {
+	var v []InnerWebhookWorker
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindMany) Update(params ...WebhookWorkerSetParam) webhookWorkerToWebhookWorkerWorkflowsUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "WebhookWorker"
+
+	r.query.Outputs = countOutput
+
+	var v webhookWorkerToWebhookWorkerWorkflowsUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type webhookWorkerToWebhookWorkerWorkflowsUpdateMany struct {
+	query builder.Query
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsUpdateMany) webhookWorkerModel() {}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsUpdateMany) Tx() WebhookWorkerManyTxResult {
+	v := newWebhookWorkerManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsFindMany) Delete() webhookWorkerToWebhookWorkerWorkflowsDeleteMany {
+	var v webhookWorkerToWebhookWorkerWorkflowsDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "WebhookWorker"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type webhookWorkerToWebhookWorkerWorkflowsDeleteMany struct {
+	query builder.Query
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p webhookWorkerToWebhookWorkerWorkflowsDeleteMany) webhookWorkerModel() {}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerToWebhookWorkerWorkflowsDeleteMany) Tx() WebhookWorkerManyTxResult {
+	v := newWebhookWorkerManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type webhookWorkerFindUnique struct {
+	query builder.Query
+}
+
+func (r webhookWorkerFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerFindUnique) with()                  {}
+func (r webhookWorkerFindUnique) webhookWorkerModel()    {}
+func (r webhookWorkerFindUnique) webhookWorkerRelation() {}
+
+func (r webhookWorkerActions) FindUnique(
+	params WebhookWorkerEqualsUniqueWhereParam,
+) webhookWorkerFindUnique {
+	var v webhookWorkerFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "WebhookWorker"
+	v.query.Outputs = webhookWorkerOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r webhookWorkerFindUnique) With(params ...WebhookWorkerRelationWith) webhookWorkerFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r webhookWorkerFindUnique) Select(params ...webhookWorkerPrismaFields) webhookWorkerFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerFindUnique) Omit(params ...webhookWorkerPrismaFields) webhookWorkerFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range webhookWorkerOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerFindUnique) Exec(ctx context.Context) (
+	*WebhookWorkerModel,
+	error,
+) {
+	var v *WebhookWorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerFindUnique) ExecInner(ctx context.Context) (
+	*InnerWebhookWorker,
+	error,
+) {
+	var v *InnerWebhookWorker
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerFindUnique) Update(params ...WebhookWorkerSetParam) webhookWorkerUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "WebhookWorker"
+
+	var v webhookWorkerUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type webhookWorkerUpdateUnique struct {
+	query builder.Query
+}
+
+func (r webhookWorkerUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerUpdateUnique) webhookWorkerModel() {}
+
+func (r webhookWorkerUpdateUnique) Exec(ctx context.Context) (*WebhookWorkerModel, error) {
+	var v WebhookWorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerUpdateUnique) Tx() WebhookWorkerUniqueTxResult {
+	v := newWebhookWorkerUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r webhookWorkerFindUnique) Delete() webhookWorkerDeleteUnique {
+	var v webhookWorkerDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "WebhookWorker"
+
+	return v
+}
+
+type webhookWorkerDeleteUnique struct {
+	query builder.Query
+}
+
+func (r webhookWorkerDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p webhookWorkerDeleteUnique) webhookWorkerModel() {}
+
+func (r webhookWorkerDeleteUnique) Exec(ctx context.Context) (*WebhookWorkerModel, error) {
+	var v WebhookWorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerDeleteUnique) Tx() WebhookWorkerUniqueTxResult {
+	v := newWebhookWorkerUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type webhookWorkerFindFirst struct {
+	query builder.Query
+}
+
+func (r webhookWorkerFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerFindFirst) with()                  {}
+func (r webhookWorkerFindFirst) webhookWorkerModel()    {}
+func (r webhookWorkerFindFirst) webhookWorkerRelation() {}
+
+func (r webhookWorkerActions) FindFirst(
+	params ...WebhookWorkerWhereParam,
+) webhookWorkerFindFirst {
+	var v webhookWorkerFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "WebhookWorker"
+	v.query.Outputs = webhookWorkerOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r webhookWorkerFindFirst) With(params ...WebhookWorkerRelationWith) webhookWorkerFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r webhookWorkerFindFirst) Select(params ...webhookWorkerPrismaFields) webhookWorkerFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerFindFirst) Omit(params ...webhookWorkerPrismaFields) webhookWorkerFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range webhookWorkerOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerFindFirst) OrderBy(params ...WebhookWorkerOrderByParam) webhookWorkerFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r webhookWorkerFindFirst) Skip(count int) webhookWorkerFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerFindFirst) Take(count int) webhookWorkerFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerFindFirst) Cursor(cursor WebhookWorkerCursorParam) webhookWorkerFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r webhookWorkerFindFirst) Exec(ctx context.Context) (
+	*WebhookWorkerModel,
+	error,
+) {
+	var v *WebhookWorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerFindFirst) ExecInner(ctx context.Context) (
+	*InnerWebhookWorker,
+	error,
+) {
+	var v *InnerWebhookWorker
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type webhookWorkerFindMany struct {
+	query builder.Query
+}
+
+func (r webhookWorkerFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerFindMany) with()                  {}
+func (r webhookWorkerFindMany) webhookWorkerModel()    {}
+func (r webhookWorkerFindMany) webhookWorkerRelation() {}
+
+func (r webhookWorkerActions) FindMany(
+	params ...WebhookWorkerWhereParam,
+) webhookWorkerFindMany {
+	var v webhookWorkerFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "WebhookWorker"
+	v.query.Outputs = webhookWorkerOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r webhookWorkerFindMany) With(params ...WebhookWorkerRelationWith) webhookWorkerFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r webhookWorkerFindMany) Select(params ...webhookWorkerPrismaFields) webhookWorkerFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerFindMany) Omit(params ...webhookWorkerPrismaFields) webhookWorkerFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range webhookWorkerOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerFindMany) OrderBy(params ...WebhookWorkerOrderByParam) webhookWorkerFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r webhookWorkerFindMany) Skip(count int) webhookWorkerFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerFindMany) Take(count int) webhookWorkerFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerFindMany) Cursor(cursor WebhookWorkerCursorParam) webhookWorkerFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r webhookWorkerFindMany) Exec(ctx context.Context) (
+	[]WebhookWorkerModel,
+	error,
+) {
+	var v []WebhookWorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerFindMany) ExecInner(ctx context.Context) (
+	[]InnerWebhookWorker,
+	error,
+) {
+	var v []InnerWebhookWorker
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerFindMany) Update(params ...WebhookWorkerSetParam) webhookWorkerUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "WebhookWorker"
+
+	r.query.Outputs = countOutput
+
+	var v webhookWorkerUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type webhookWorkerUpdateMany struct {
+	query builder.Query
+}
+
+func (r webhookWorkerUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerUpdateMany) webhookWorkerModel() {}
+
+func (r webhookWorkerUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerUpdateMany) Tx() WebhookWorkerManyTxResult {
+	v := newWebhookWorkerManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r webhookWorkerFindMany) Delete() webhookWorkerDeleteMany {
+	var v webhookWorkerDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "WebhookWorker"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type webhookWorkerDeleteMany struct {
+	query builder.Query
+}
+
+func (r webhookWorkerDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p webhookWorkerDeleteMany) webhookWorkerModel() {}
+
+func (r webhookWorkerDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerDeleteMany) Tx() WebhookWorkerManyTxResult {
+	v := newWebhookWorkerManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type webhookWorkerWorkflowToWebhookWorkerFindUnique struct {
+	query builder.Query
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindUnique) with()                          {}
+func (r webhookWorkerWorkflowToWebhookWorkerFindUnique) webhookWorkerWorkflowModel()    {}
+func (r webhookWorkerWorkflowToWebhookWorkerFindUnique) webhookWorkerWorkflowRelation() {}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindUnique) With(params ...WebhookWorkerRelationWith) webhookWorkerWorkflowToWebhookWorkerFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindUnique) Select(params ...webhookWorkerWorkflowPrismaFields) webhookWorkerWorkflowToWebhookWorkerFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindUnique) Omit(params ...webhookWorkerWorkflowPrismaFields) webhookWorkerWorkflowToWebhookWorkerFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range webhookWorkerWorkflowOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindUnique) Exec(ctx context.Context) (
+	*WebhookWorkerWorkflowModel,
+	error,
+) {
+	var v *WebhookWorkerWorkflowModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindUnique) ExecInner(ctx context.Context) (
+	*InnerWebhookWorkerWorkflow,
+	error,
+) {
+	var v *InnerWebhookWorkerWorkflow
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindUnique) Update(params ...WebhookWorkerWorkflowSetParam) webhookWorkerWorkflowToWebhookWorkerUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "WebhookWorkerWorkflow"
+
+	var v webhookWorkerWorkflowToWebhookWorkerUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type webhookWorkerWorkflowToWebhookWorkerUpdateUnique struct {
+	query builder.Query
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerUpdateUnique) webhookWorkerWorkflowModel() {}
+
+func (r webhookWorkerWorkflowToWebhookWorkerUpdateUnique) Exec(ctx context.Context) (*WebhookWorkerWorkflowModel, error) {
+	var v WebhookWorkerWorkflowModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerUpdateUnique) Tx() WebhookWorkerWorkflowUniqueTxResult {
+	v := newWebhookWorkerWorkflowUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindUnique) Delete() webhookWorkerWorkflowToWebhookWorkerDeleteUnique {
+	var v webhookWorkerWorkflowToWebhookWorkerDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "WebhookWorkerWorkflow"
+
+	return v
+}
+
+type webhookWorkerWorkflowToWebhookWorkerDeleteUnique struct {
+	query builder.Query
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p webhookWorkerWorkflowToWebhookWorkerDeleteUnique) webhookWorkerWorkflowModel() {}
+
+func (r webhookWorkerWorkflowToWebhookWorkerDeleteUnique) Exec(ctx context.Context) (*WebhookWorkerWorkflowModel, error) {
+	var v WebhookWorkerWorkflowModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerDeleteUnique) Tx() WebhookWorkerWorkflowUniqueTxResult {
+	v := newWebhookWorkerWorkflowUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type webhookWorkerWorkflowToWebhookWorkerFindFirst struct {
+	query builder.Query
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindFirst) with()                          {}
+func (r webhookWorkerWorkflowToWebhookWorkerFindFirst) webhookWorkerWorkflowModel()    {}
+func (r webhookWorkerWorkflowToWebhookWorkerFindFirst) webhookWorkerWorkflowRelation() {}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindFirst) With(params ...WebhookWorkerRelationWith) webhookWorkerWorkflowToWebhookWorkerFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindFirst) Select(params ...webhookWorkerWorkflowPrismaFields) webhookWorkerWorkflowToWebhookWorkerFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindFirst) Omit(params ...webhookWorkerWorkflowPrismaFields) webhookWorkerWorkflowToWebhookWorkerFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range webhookWorkerWorkflowOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindFirst) OrderBy(params ...WebhookWorkerOrderByParam) webhookWorkerWorkflowToWebhookWorkerFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindFirst) Skip(count int) webhookWorkerWorkflowToWebhookWorkerFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindFirst) Take(count int) webhookWorkerWorkflowToWebhookWorkerFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindFirst) Cursor(cursor WebhookWorkerWorkflowCursorParam) webhookWorkerWorkflowToWebhookWorkerFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindFirst) Exec(ctx context.Context) (
+	*WebhookWorkerWorkflowModel,
+	error,
+) {
+	var v *WebhookWorkerWorkflowModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindFirst) ExecInner(ctx context.Context) (
+	*InnerWebhookWorkerWorkflow,
+	error,
+) {
+	var v *InnerWebhookWorkerWorkflow
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type webhookWorkerWorkflowToWebhookWorkerFindMany struct {
+	query builder.Query
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindMany) with()                          {}
+func (r webhookWorkerWorkflowToWebhookWorkerFindMany) webhookWorkerWorkflowModel()    {}
+func (r webhookWorkerWorkflowToWebhookWorkerFindMany) webhookWorkerWorkflowRelation() {}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindMany) With(params ...WebhookWorkerRelationWith) webhookWorkerWorkflowToWebhookWorkerFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindMany) Select(params ...webhookWorkerWorkflowPrismaFields) webhookWorkerWorkflowToWebhookWorkerFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindMany) Omit(params ...webhookWorkerWorkflowPrismaFields) webhookWorkerWorkflowToWebhookWorkerFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range webhookWorkerWorkflowOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindMany) OrderBy(params ...WebhookWorkerOrderByParam) webhookWorkerWorkflowToWebhookWorkerFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindMany) Skip(count int) webhookWorkerWorkflowToWebhookWorkerFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindMany) Take(count int) webhookWorkerWorkflowToWebhookWorkerFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindMany) Cursor(cursor WebhookWorkerWorkflowCursorParam) webhookWorkerWorkflowToWebhookWorkerFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindMany) Exec(ctx context.Context) (
+	[]WebhookWorkerWorkflowModel,
+	error,
+) {
+	var v []WebhookWorkerWorkflowModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindMany) ExecInner(ctx context.Context) (
+	[]InnerWebhookWorkerWorkflow,
+	error,
+) {
+	var v []InnerWebhookWorkerWorkflow
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindMany) Update(params ...WebhookWorkerWorkflowSetParam) webhookWorkerWorkflowToWebhookWorkerUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "WebhookWorkerWorkflow"
+
+	r.query.Outputs = countOutput
+
+	var v webhookWorkerWorkflowToWebhookWorkerUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type webhookWorkerWorkflowToWebhookWorkerUpdateMany struct {
+	query builder.Query
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerUpdateMany) webhookWorkerWorkflowModel() {}
+
+func (r webhookWorkerWorkflowToWebhookWorkerUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerUpdateMany) Tx() WebhookWorkerWorkflowManyTxResult {
+	v := newWebhookWorkerWorkflowManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerFindMany) Delete() webhookWorkerWorkflowToWebhookWorkerDeleteMany {
+	var v webhookWorkerWorkflowToWebhookWorkerDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "WebhookWorkerWorkflow"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type webhookWorkerWorkflowToWebhookWorkerDeleteMany struct {
+	query builder.Query
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p webhookWorkerWorkflowToWebhookWorkerDeleteMany) webhookWorkerWorkflowModel() {}
+
+func (r webhookWorkerWorkflowToWebhookWorkerDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerWorkflowToWebhookWorkerDeleteMany) Tx() WebhookWorkerWorkflowManyTxResult {
+	v := newWebhookWorkerWorkflowManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type webhookWorkerWorkflowToWorkflowFindUnique struct {
+	query builder.Query
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindUnique) with()                          {}
+func (r webhookWorkerWorkflowToWorkflowFindUnique) webhookWorkerWorkflowModel()    {}
+func (r webhookWorkerWorkflowToWorkflowFindUnique) webhookWorkerWorkflowRelation() {}
+
+func (r webhookWorkerWorkflowToWorkflowFindUnique) With(params ...WorkflowRelationWith) webhookWorkerWorkflowToWorkflowFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindUnique) Select(params ...webhookWorkerWorkflowPrismaFields) webhookWorkerWorkflowToWorkflowFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindUnique) Omit(params ...webhookWorkerWorkflowPrismaFields) webhookWorkerWorkflowToWorkflowFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range webhookWorkerWorkflowOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindUnique) Exec(ctx context.Context) (
+	*WebhookWorkerWorkflowModel,
+	error,
+) {
+	var v *WebhookWorkerWorkflowModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindUnique) ExecInner(ctx context.Context) (
+	*InnerWebhookWorkerWorkflow,
+	error,
+) {
+	var v *InnerWebhookWorkerWorkflow
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindUnique) Update(params ...WebhookWorkerWorkflowSetParam) webhookWorkerWorkflowToWorkflowUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "WebhookWorkerWorkflow"
+
+	var v webhookWorkerWorkflowToWorkflowUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type webhookWorkerWorkflowToWorkflowUpdateUnique struct {
+	query builder.Query
+}
+
+func (r webhookWorkerWorkflowToWorkflowUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowToWorkflowUpdateUnique) webhookWorkerWorkflowModel() {}
+
+func (r webhookWorkerWorkflowToWorkflowUpdateUnique) Exec(ctx context.Context) (*WebhookWorkerWorkflowModel, error) {
+	var v WebhookWorkerWorkflowModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerWorkflowToWorkflowUpdateUnique) Tx() WebhookWorkerWorkflowUniqueTxResult {
+	v := newWebhookWorkerWorkflowUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindUnique) Delete() webhookWorkerWorkflowToWorkflowDeleteUnique {
+	var v webhookWorkerWorkflowToWorkflowDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "WebhookWorkerWorkflow"
+
+	return v
+}
+
+type webhookWorkerWorkflowToWorkflowDeleteUnique struct {
+	query builder.Query
+}
+
+func (r webhookWorkerWorkflowToWorkflowDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p webhookWorkerWorkflowToWorkflowDeleteUnique) webhookWorkerWorkflowModel() {}
+
+func (r webhookWorkerWorkflowToWorkflowDeleteUnique) Exec(ctx context.Context) (*WebhookWorkerWorkflowModel, error) {
+	var v WebhookWorkerWorkflowModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerWorkflowToWorkflowDeleteUnique) Tx() WebhookWorkerWorkflowUniqueTxResult {
+	v := newWebhookWorkerWorkflowUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type webhookWorkerWorkflowToWorkflowFindFirst struct {
+	query builder.Query
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindFirst) with()                          {}
+func (r webhookWorkerWorkflowToWorkflowFindFirst) webhookWorkerWorkflowModel()    {}
+func (r webhookWorkerWorkflowToWorkflowFindFirst) webhookWorkerWorkflowRelation() {}
+
+func (r webhookWorkerWorkflowToWorkflowFindFirst) With(params ...WorkflowRelationWith) webhookWorkerWorkflowToWorkflowFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindFirst) Select(params ...webhookWorkerWorkflowPrismaFields) webhookWorkerWorkflowToWorkflowFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindFirst) Omit(params ...webhookWorkerWorkflowPrismaFields) webhookWorkerWorkflowToWorkflowFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range webhookWorkerWorkflowOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindFirst) OrderBy(params ...WorkflowOrderByParam) webhookWorkerWorkflowToWorkflowFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindFirst) Skip(count int) webhookWorkerWorkflowToWorkflowFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindFirst) Take(count int) webhookWorkerWorkflowToWorkflowFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindFirst) Cursor(cursor WebhookWorkerWorkflowCursorParam) webhookWorkerWorkflowToWorkflowFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindFirst) Exec(ctx context.Context) (
+	*WebhookWorkerWorkflowModel,
+	error,
+) {
+	var v *WebhookWorkerWorkflowModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindFirst) ExecInner(ctx context.Context) (
+	*InnerWebhookWorkerWorkflow,
+	error,
+) {
+	var v *InnerWebhookWorkerWorkflow
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type webhookWorkerWorkflowToWorkflowFindMany struct {
+	query builder.Query
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindMany) with()                          {}
+func (r webhookWorkerWorkflowToWorkflowFindMany) webhookWorkerWorkflowModel()    {}
+func (r webhookWorkerWorkflowToWorkflowFindMany) webhookWorkerWorkflowRelation() {}
+
+func (r webhookWorkerWorkflowToWorkflowFindMany) With(params ...WorkflowRelationWith) webhookWorkerWorkflowToWorkflowFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindMany) Select(params ...webhookWorkerWorkflowPrismaFields) webhookWorkerWorkflowToWorkflowFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindMany) Omit(params ...webhookWorkerWorkflowPrismaFields) webhookWorkerWorkflowToWorkflowFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range webhookWorkerWorkflowOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindMany) OrderBy(params ...WorkflowOrderByParam) webhookWorkerWorkflowToWorkflowFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindMany) Skip(count int) webhookWorkerWorkflowToWorkflowFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindMany) Take(count int) webhookWorkerWorkflowToWorkflowFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindMany) Cursor(cursor WebhookWorkerWorkflowCursorParam) webhookWorkerWorkflowToWorkflowFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindMany) Exec(ctx context.Context) (
+	[]WebhookWorkerWorkflowModel,
+	error,
+) {
+	var v []WebhookWorkerWorkflowModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindMany) ExecInner(ctx context.Context) (
+	[]InnerWebhookWorkerWorkflow,
+	error,
+) {
+	var v []InnerWebhookWorkerWorkflow
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindMany) Update(params ...WebhookWorkerWorkflowSetParam) webhookWorkerWorkflowToWorkflowUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "WebhookWorkerWorkflow"
+
+	r.query.Outputs = countOutput
+
+	var v webhookWorkerWorkflowToWorkflowUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type webhookWorkerWorkflowToWorkflowUpdateMany struct {
+	query builder.Query
+}
+
+func (r webhookWorkerWorkflowToWorkflowUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowToWorkflowUpdateMany) webhookWorkerWorkflowModel() {}
+
+func (r webhookWorkerWorkflowToWorkflowUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerWorkflowToWorkflowUpdateMany) Tx() WebhookWorkerWorkflowManyTxResult {
+	v := newWebhookWorkerWorkflowManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r webhookWorkerWorkflowToWorkflowFindMany) Delete() webhookWorkerWorkflowToWorkflowDeleteMany {
+	var v webhookWorkerWorkflowToWorkflowDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "WebhookWorkerWorkflow"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type webhookWorkerWorkflowToWorkflowDeleteMany struct {
+	query builder.Query
+}
+
+func (r webhookWorkerWorkflowToWorkflowDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p webhookWorkerWorkflowToWorkflowDeleteMany) webhookWorkerWorkflowModel() {}
+
+func (r webhookWorkerWorkflowToWorkflowDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerWorkflowToWorkflowDeleteMany) Tx() WebhookWorkerWorkflowManyTxResult {
+	v := newWebhookWorkerWorkflowManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type webhookWorkerWorkflowFindUnique struct {
+	query builder.Query
+}
+
+func (r webhookWorkerWorkflowFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowFindUnique) with()                          {}
+func (r webhookWorkerWorkflowFindUnique) webhookWorkerWorkflowModel()    {}
+func (r webhookWorkerWorkflowFindUnique) webhookWorkerWorkflowRelation() {}
+
+func (r webhookWorkerWorkflowActions) FindUnique(
+	params WebhookWorkerWorkflowEqualsUniqueWhereParam,
+) webhookWorkerWorkflowFindUnique {
+	var v webhookWorkerWorkflowFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "WebhookWorkerWorkflow"
+	v.query.Outputs = webhookWorkerWorkflowOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r webhookWorkerWorkflowFindUnique) With(params ...WebhookWorkerWorkflowRelationWith) webhookWorkerWorkflowFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r webhookWorkerWorkflowFindUnique) Select(params ...webhookWorkerWorkflowPrismaFields) webhookWorkerWorkflowFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerWorkflowFindUnique) Omit(params ...webhookWorkerWorkflowPrismaFields) webhookWorkerWorkflowFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range webhookWorkerWorkflowOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerWorkflowFindUnique) Exec(ctx context.Context) (
+	*WebhookWorkerWorkflowModel,
+	error,
+) {
+	var v *WebhookWorkerWorkflowModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerWorkflowFindUnique) ExecInner(ctx context.Context) (
+	*InnerWebhookWorkerWorkflow,
+	error,
+) {
+	var v *InnerWebhookWorkerWorkflow
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerWorkflowFindUnique) Update(params ...WebhookWorkerWorkflowSetParam) webhookWorkerWorkflowUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "WebhookWorkerWorkflow"
+
+	var v webhookWorkerWorkflowUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type webhookWorkerWorkflowUpdateUnique struct {
+	query builder.Query
+}
+
+func (r webhookWorkerWorkflowUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowUpdateUnique) webhookWorkerWorkflowModel() {}
+
+func (r webhookWorkerWorkflowUpdateUnique) Exec(ctx context.Context) (*WebhookWorkerWorkflowModel, error) {
+	var v WebhookWorkerWorkflowModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerWorkflowUpdateUnique) Tx() WebhookWorkerWorkflowUniqueTxResult {
+	v := newWebhookWorkerWorkflowUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r webhookWorkerWorkflowFindUnique) Delete() webhookWorkerWorkflowDeleteUnique {
+	var v webhookWorkerWorkflowDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "WebhookWorkerWorkflow"
+
+	return v
+}
+
+type webhookWorkerWorkflowDeleteUnique struct {
+	query builder.Query
+}
+
+func (r webhookWorkerWorkflowDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p webhookWorkerWorkflowDeleteUnique) webhookWorkerWorkflowModel() {}
+
+func (r webhookWorkerWorkflowDeleteUnique) Exec(ctx context.Context) (*WebhookWorkerWorkflowModel, error) {
+	var v WebhookWorkerWorkflowModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerWorkflowDeleteUnique) Tx() WebhookWorkerWorkflowUniqueTxResult {
+	v := newWebhookWorkerWorkflowUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type webhookWorkerWorkflowFindFirst struct {
+	query builder.Query
+}
+
+func (r webhookWorkerWorkflowFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowFindFirst) with()                          {}
+func (r webhookWorkerWorkflowFindFirst) webhookWorkerWorkflowModel()    {}
+func (r webhookWorkerWorkflowFindFirst) webhookWorkerWorkflowRelation() {}
+
+func (r webhookWorkerWorkflowActions) FindFirst(
+	params ...WebhookWorkerWorkflowWhereParam,
+) webhookWorkerWorkflowFindFirst {
+	var v webhookWorkerWorkflowFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "WebhookWorkerWorkflow"
+	v.query.Outputs = webhookWorkerWorkflowOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r webhookWorkerWorkflowFindFirst) With(params ...WebhookWorkerWorkflowRelationWith) webhookWorkerWorkflowFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r webhookWorkerWorkflowFindFirst) Select(params ...webhookWorkerWorkflowPrismaFields) webhookWorkerWorkflowFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerWorkflowFindFirst) Omit(params ...webhookWorkerWorkflowPrismaFields) webhookWorkerWorkflowFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range webhookWorkerWorkflowOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerWorkflowFindFirst) OrderBy(params ...WebhookWorkerWorkflowOrderByParam) webhookWorkerWorkflowFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r webhookWorkerWorkflowFindFirst) Skip(count int) webhookWorkerWorkflowFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerWorkflowFindFirst) Take(count int) webhookWorkerWorkflowFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerWorkflowFindFirst) Cursor(cursor WebhookWorkerWorkflowCursorParam) webhookWorkerWorkflowFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r webhookWorkerWorkflowFindFirst) Exec(ctx context.Context) (
+	*WebhookWorkerWorkflowModel,
+	error,
+) {
+	var v *WebhookWorkerWorkflowModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerWorkflowFindFirst) ExecInner(ctx context.Context) (
+	*InnerWebhookWorkerWorkflow,
+	error,
+) {
+	var v *InnerWebhookWorkerWorkflow
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type webhookWorkerWorkflowFindMany struct {
+	query builder.Query
+}
+
+func (r webhookWorkerWorkflowFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowFindMany) with()                          {}
+func (r webhookWorkerWorkflowFindMany) webhookWorkerWorkflowModel()    {}
+func (r webhookWorkerWorkflowFindMany) webhookWorkerWorkflowRelation() {}
+
+func (r webhookWorkerWorkflowActions) FindMany(
+	params ...WebhookWorkerWorkflowWhereParam,
+) webhookWorkerWorkflowFindMany {
+	var v webhookWorkerWorkflowFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "WebhookWorkerWorkflow"
+	v.query.Outputs = webhookWorkerWorkflowOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r webhookWorkerWorkflowFindMany) With(params ...WebhookWorkerWorkflowRelationWith) webhookWorkerWorkflowFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r webhookWorkerWorkflowFindMany) Select(params ...webhookWorkerWorkflowPrismaFields) webhookWorkerWorkflowFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerWorkflowFindMany) Omit(params ...webhookWorkerWorkflowPrismaFields) webhookWorkerWorkflowFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range webhookWorkerWorkflowOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r webhookWorkerWorkflowFindMany) OrderBy(params ...WebhookWorkerWorkflowOrderByParam) webhookWorkerWorkflowFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r webhookWorkerWorkflowFindMany) Skip(count int) webhookWorkerWorkflowFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerWorkflowFindMany) Take(count int) webhookWorkerWorkflowFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r webhookWorkerWorkflowFindMany) Cursor(cursor WebhookWorkerWorkflowCursorParam) webhookWorkerWorkflowFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r webhookWorkerWorkflowFindMany) Exec(ctx context.Context) (
+	[]WebhookWorkerWorkflowModel,
+	error,
+) {
+	var v []WebhookWorkerWorkflowModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerWorkflowFindMany) ExecInner(ctx context.Context) (
+	[]InnerWebhookWorkerWorkflow,
+	error,
+) {
+	var v []InnerWebhookWorkerWorkflow
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r webhookWorkerWorkflowFindMany) Update(params ...WebhookWorkerWorkflowSetParam) webhookWorkerWorkflowUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "WebhookWorkerWorkflow"
+
+	r.query.Outputs = countOutput
+
+	var v webhookWorkerWorkflowUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type webhookWorkerWorkflowUpdateMany struct {
+	query builder.Query
+}
+
+func (r webhookWorkerWorkflowUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowUpdateMany) webhookWorkerWorkflowModel() {}
+
+func (r webhookWorkerWorkflowUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerWorkflowUpdateMany) Tx() WebhookWorkerWorkflowManyTxResult {
+	v := newWebhookWorkerWorkflowManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r webhookWorkerWorkflowFindMany) Delete() webhookWorkerWorkflowDeleteMany {
+	var v webhookWorkerWorkflowDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "WebhookWorkerWorkflow"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type webhookWorkerWorkflowDeleteMany struct {
+	query builder.Query
+}
+
+func (r webhookWorkerWorkflowDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p webhookWorkerWorkflowDeleteMany) webhookWorkerWorkflowModel() {}
+
+func (r webhookWorkerWorkflowDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerWorkflowDeleteMany) Tx() WebhookWorkerWorkflowManyTxResult {
+	v := newWebhookWorkerWorkflowManyTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -238188,6 +250252,560 @@ func (r tenantToLimitAlertsDeleteMany) Tx() TenantManyTxResult {
 	return v
 }
 
+type tenantToWebhookWorkersFindUnique struct {
+	query builder.Query
+}
+
+func (r tenantToWebhookWorkersFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToWebhookWorkersFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToWebhookWorkersFindUnique) with()           {}
+func (r tenantToWebhookWorkersFindUnique) tenantModel()    {}
+func (r tenantToWebhookWorkersFindUnique) tenantRelation() {}
+
+func (r tenantToWebhookWorkersFindUnique) With(params ...WebhookWorkerRelationWith) tenantToWebhookWorkersFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tenantToWebhookWorkersFindUnique) Select(params ...tenantPrismaFields) tenantToWebhookWorkersFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToWebhookWorkersFindUnique) Omit(params ...tenantPrismaFields) tenantToWebhookWorkersFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tenantOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToWebhookWorkersFindUnique) Exec(ctx context.Context) (
+	*TenantModel,
+	error,
+) {
+	var v *TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tenantToWebhookWorkersFindUnique) ExecInner(ctx context.Context) (
+	*InnerTenant,
+	error,
+) {
+	var v *InnerTenant
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tenantToWebhookWorkersFindUnique) Update(params ...TenantSetParam) tenantToWebhookWorkersUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Tenant"
+
+	var v tenantToWebhookWorkersUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type tenantToWebhookWorkersUpdateUnique struct {
+	query builder.Query
+}
+
+func (r tenantToWebhookWorkersUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToWebhookWorkersUpdateUnique) tenantModel() {}
+
+func (r tenantToWebhookWorkersUpdateUnique) Exec(ctx context.Context) (*TenantModel, error) {
+	var v TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantToWebhookWorkersUpdateUnique) Tx() TenantUniqueTxResult {
+	v := newTenantUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r tenantToWebhookWorkersFindUnique) Delete() tenantToWebhookWorkersDeleteUnique {
+	var v tenantToWebhookWorkersDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Tenant"
+
+	return v
+}
+
+type tenantToWebhookWorkersDeleteUnique struct {
+	query builder.Query
+}
+
+func (r tenantToWebhookWorkersDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p tenantToWebhookWorkersDeleteUnique) tenantModel() {}
+
+func (r tenantToWebhookWorkersDeleteUnique) Exec(ctx context.Context) (*TenantModel, error) {
+	var v TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantToWebhookWorkersDeleteUnique) Tx() TenantUniqueTxResult {
+	v := newTenantUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type tenantToWebhookWorkersFindFirst struct {
+	query builder.Query
+}
+
+func (r tenantToWebhookWorkersFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToWebhookWorkersFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToWebhookWorkersFindFirst) with()           {}
+func (r tenantToWebhookWorkersFindFirst) tenantModel()    {}
+func (r tenantToWebhookWorkersFindFirst) tenantRelation() {}
+
+func (r tenantToWebhookWorkersFindFirst) With(params ...WebhookWorkerRelationWith) tenantToWebhookWorkersFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tenantToWebhookWorkersFindFirst) Select(params ...tenantPrismaFields) tenantToWebhookWorkersFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToWebhookWorkersFindFirst) Omit(params ...tenantPrismaFields) tenantToWebhookWorkersFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tenantOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToWebhookWorkersFindFirst) OrderBy(params ...WebhookWorkerOrderByParam) tenantToWebhookWorkersFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r tenantToWebhookWorkersFindFirst) Skip(count int) tenantToWebhookWorkersFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantToWebhookWorkersFindFirst) Take(count int) tenantToWebhookWorkersFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantToWebhookWorkersFindFirst) Cursor(cursor TenantCursorParam) tenantToWebhookWorkersFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r tenantToWebhookWorkersFindFirst) Exec(ctx context.Context) (
+	*TenantModel,
+	error,
+) {
+	var v *TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tenantToWebhookWorkersFindFirst) ExecInner(ctx context.Context) (
+	*InnerTenant,
+	error,
+) {
+	var v *InnerTenant
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type tenantToWebhookWorkersFindMany struct {
+	query builder.Query
+}
+
+func (r tenantToWebhookWorkersFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToWebhookWorkersFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToWebhookWorkersFindMany) with()           {}
+func (r tenantToWebhookWorkersFindMany) tenantModel()    {}
+func (r tenantToWebhookWorkersFindMany) tenantRelation() {}
+
+func (r tenantToWebhookWorkersFindMany) With(params ...WebhookWorkerRelationWith) tenantToWebhookWorkersFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tenantToWebhookWorkersFindMany) Select(params ...tenantPrismaFields) tenantToWebhookWorkersFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToWebhookWorkersFindMany) Omit(params ...tenantPrismaFields) tenantToWebhookWorkersFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tenantOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToWebhookWorkersFindMany) OrderBy(params ...WebhookWorkerOrderByParam) tenantToWebhookWorkersFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r tenantToWebhookWorkersFindMany) Skip(count int) tenantToWebhookWorkersFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantToWebhookWorkersFindMany) Take(count int) tenantToWebhookWorkersFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantToWebhookWorkersFindMany) Cursor(cursor TenantCursorParam) tenantToWebhookWorkersFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r tenantToWebhookWorkersFindMany) Exec(ctx context.Context) (
+	[]TenantModel,
+	error,
+) {
+	var v []TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r tenantToWebhookWorkersFindMany) ExecInner(ctx context.Context) (
+	[]InnerTenant,
+	error,
+) {
+	var v []InnerTenant
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r tenantToWebhookWorkersFindMany) Update(params ...TenantSetParam) tenantToWebhookWorkersUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Tenant"
+
+	r.query.Outputs = countOutput
+
+	var v tenantToWebhookWorkersUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type tenantToWebhookWorkersUpdateMany struct {
+	query builder.Query
+}
+
+func (r tenantToWebhookWorkersUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToWebhookWorkersUpdateMany) tenantModel() {}
+
+func (r tenantToWebhookWorkersUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantToWebhookWorkersUpdateMany) Tx() TenantManyTxResult {
+	v := newTenantManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r tenantToWebhookWorkersFindMany) Delete() tenantToWebhookWorkersDeleteMany {
+	var v tenantToWebhookWorkersDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Tenant"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type tenantToWebhookWorkersDeleteMany struct {
+	query builder.Query
+}
+
+func (r tenantToWebhookWorkersDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p tenantToWebhookWorkersDeleteMany) tenantModel() {}
+
+func (r tenantToWebhookWorkersDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantToWebhookWorkersDeleteMany) Tx() TenantManyTxResult {
+	v := newTenantManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 type tenantFindUnique struct {
 	query builder.Query
 }
@@ -247628,6 +260246,560 @@ func (r aPITokenToTenantDeleteMany) Tx() APITokenManyTxResult {
 	return v
 }
 
+type aPITokenToWebhookWorkersFindUnique struct {
+	query builder.Query
+}
+
+func (r aPITokenToWebhookWorkersFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r aPITokenToWebhookWorkersFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r aPITokenToWebhookWorkersFindUnique) with()             {}
+func (r aPITokenToWebhookWorkersFindUnique) aPITokenModel()    {}
+func (r aPITokenToWebhookWorkersFindUnique) aPITokenRelation() {}
+
+func (r aPITokenToWebhookWorkersFindUnique) With(params ...WebhookWorkerRelationWith) aPITokenToWebhookWorkersFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r aPITokenToWebhookWorkersFindUnique) Select(params ...aPITokenPrismaFields) aPITokenToWebhookWorkersFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r aPITokenToWebhookWorkersFindUnique) Omit(params ...aPITokenPrismaFields) aPITokenToWebhookWorkersFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range aPITokenOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r aPITokenToWebhookWorkersFindUnique) Exec(ctx context.Context) (
+	*APITokenModel,
+	error,
+) {
+	var v *APITokenModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r aPITokenToWebhookWorkersFindUnique) ExecInner(ctx context.Context) (
+	*InnerAPIToken,
+	error,
+) {
+	var v *InnerAPIToken
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r aPITokenToWebhookWorkersFindUnique) Update(params ...APITokenSetParam) aPITokenToWebhookWorkersUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "APIToken"
+
+	var v aPITokenToWebhookWorkersUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type aPITokenToWebhookWorkersUpdateUnique struct {
+	query builder.Query
+}
+
+func (r aPITokenToWebhookWorkersUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r aPITokenToWebhookWorkersUpdateUnique) aPITokenModel() {}
+
+func (r aPITokenToWebhookWorkersUpdateUnique) Exec(ctx context.Context) (*APITokenModel, error) {
+	var v APITokenModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r aPITokenToWebhookWorkersUpdateUnique) Tx() APITokenUniqueTxResult {
+	v := newAPITokenUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r aPITokenToWebhookWorkersFindUnique) Delete() aPITokenToWebhookWorkersDeleteUnique {
+	var v aPITokenToWebhookWorkersDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "APIToken"
+
+	return v
+}
+
+type aPITokenToWebhookWorkersDeleteUnique struct {
+	query builder.Query
+}
+
+func (r aPITokenToWebhookWorkersDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p aPITokenToWebhookWorkersDeleteUnique) aPITokenModel() {}
+
+func (r aPITokenToWebhookWorkersDeleteUnique) Exec(ctx context.Context) (*APITokenModel, error) {
+	var v APITokenModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r aPITokenToWebhookWorkersDeleteUnique) Tx() APITokenUniqueTxResult {
+	v := newAPITokenUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type aPITokenToWebhookWorkersFindFirst struct {
+	query builder.Query
+}
+
+func (r aPITokenToWebhookWorkersFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r aPITokenToWebhookWorkersFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r aPITokenToWebhookWorkersFindFirst) with()             {}
+func (r aPITokenToWebhookWorkersFindFirst) aPITokenModel()    {}
+func (r aPITokenToWebhookWorkersFindFirst) aPITokenRelation() {}
+
+func (r aPITokenToWebhookWorkersFindFirst) With(params ...WebhookWorkerRelationWith) aPITokenToWebhookWorkersFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r aPITokenToWebhookWorkersFindFirst) Select(params ...aPITokenPrismaFields) aPITokenToWebhookWorkersFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r aPITokenToWebhookWorkersFindFirst) Omit(params ...aPITokenPrismaFields) aPITokenToWebhookWorkersFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range aPITokenOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r aPITokenToWebhookWorkersFindFirst) OrderBy(params ...WebhookWorkerOrderByParam) aPITokenToWebhookWorkersFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r aPITokenToWebhookWorkersFindFirst) Skip(count int) aPITokenToWebhookWorkersFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r aPITokenToWebhookWorkersFindFirst) Take(count int) aPITokenToWebhookWorkersFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r aPITokenToWebhookWorkersFindFirst) Cursor(cursor APITokenCursorParam) aPITokenToWebhookWorkersFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r aPITokenToWebhookWorkersFindFirst) Exec(ctx context.Context) (
+	*APITokenModel,
+	error,
+) {
+	var v *APITokenModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r aPITokenToWebhookWorkersFindFirst) ExecInner(ctx context.Context) (
+	*InnerAPIToken,
+	error,
+) {
+	var v *InnerAPIToken
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type aPITokenToWebhookWorkersFindMany struct {
+	query builder.Query
+}
+
+func (r aPITokenToWebhookWorkersFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r aPITokenToWebhookWorkersFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r aPITokenToWebhookWorkersFindMany) with()             {}
+func (r aPITokenToWebhookWorkersFindMany) aPITokenModel()    {}
+func (r aPITokenToWebhookWorkersFindMany) aPITokenRelation() {}
+
+func (r aPITokenToWebhookWorkersFindMany) With(params ...WebhookWorkerRelationWith) aPITokenToWebhookWorkersFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r aPITokenToWebhookWorkersFindMany) Select(params ...aPITokenPrismaFields) aPITokenToWebhookWorkersFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r aPITokenToWebhookWorkersFindMany) Omit(params ...aPITokenPrismaFields) aPITokenToWebhookWorkersFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range aPITokenOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r aPITokenToWebhookWorkersFindMany) OrderBy(params ...WebhookWorkerOrderByParam) aPITokenToWebhookWorkersFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r aPITokenToWebhookWorkersFindMany) Skip(count int) aPITokenToWebhookWorkersFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r aPITokenToWebhookWorkersFindMany) Take(count int) aPITokenToWebhookWorkersFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r aPITokenToWebhookWorkersFindMany) Cursor(cursor APITokenCursorParam) aPITokenToWebhookWorkersFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r aPITokenToWebhookWorkersFindMany) Exec(ctx context.Context) (
+	[]APITokenModel,
+	error,
+) {
+	var v []APITokenModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r aPITokenToWebhookWorkersFindMany) ExecInner(ctx context.Context) (
+	[]InnerAPIToken,
+	error,
+) {
+	var v []InnerAPIToken
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r aPITokenToWebhookWorkersFindMany) Update(params ...APITokenSetParam) aPITokenToWebhookWorkersUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "APIToken"
+
+	r.query.Outputs = countOutput
+
+	var v aPITokenToWebhookWorkersUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type aPITokenToWebhookWorkersUpdateMany struct {
+	query builder.Query
+}
+
+func (r aPITokenToWebhookWorkersUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r aPITokenToWebhookWorkersUpdateMany) aPITokenModel() {}
+
+func (r aPITokenToWebhookWorkersUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r aPITokenToWebhookWorkersUpdateMany) Tx() APITokenManyTxResult {
+	v := newAPITokenManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r aPITokenToWebhookWorkersFindMany) Delete() aPITokenToWebhookWorkersDeleteMany {
+	var v aPITokenToWebhookWorkersDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "APIToken"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type aPITokenToWebhookWorkersDeleteMany struct {
+	query builder.Query
+}
+
+func (r aPITokenToWebhookWorkersDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p aPITokenToWebhookWorkersDeleteMany) aPITokenModel() {}
+
+func (r aPITokenToWebhookWorkersDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r aPITokenToWebhookWorkersDeleteMany) Tx() APITokenManyTxResult {
+	v := newAPITokenManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 type aPITokenFindUnique struct {
 	query builder.Query
 }
@@ -254558,6 +267730,560 @@ func (r workflowToTagsDeleteMany) Exec(ctx context.Context) (*BatchResult, error
 }
 
 func (r workflowToTagsDeleteMany) Tx() WorkflowManyTxResult {
+	v := newWorkflowManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workflowToWebhookWorkerWorkflowsFindUnique struct {
+	query builder.Query
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindUnique) with()             {}
+func (r workflowToWebhookWorkerWorkflowsFindUnique) workflowModel()    {}
+func (r workflowToWebhookWorkerWorkflowsFindUnique) workflowRelation() {}
+
+func (r workflowToWebhookWorkerWorkflowsFindUnique) With(params ...WebhookWorkerWorkflowRelationWith) workflowToWebhookWorkerWorkflowsFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindUnique) Select(params ...workflowPrismaFields) workflowToWebhookWorkerWorkflowsFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindUnique) Omit(params ...workflowPrismaFields) workflowToWebhookWorkerWorkflowsFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workflowOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindUnique) Exec(ctx context.Context) (
+	*WorkflowModel,
+	error,
+) {
+	var v *WorkflowModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindUnique) ExecInner(ctx context.Context) (
+	*InnerWorkflow,
+	error,
+) {
+	var v *InnerWorkflow
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindUnique) Update(params ...WorkflowSetParam) workflowToWebhookWorkerWorkflowsUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Workflow"
+
+	var v workflowToWebhookWorkerWorkflowsUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workflowToWebhookWorkerWorkflowsUpdateUnique struct {
+	query builder.Query
+}
+
+func (r workflowToWebhookWorkerWorkflowsUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowToWebhookWorkerWorkflowsUpdateUnique) workflowModel() {}
+
+func (r workflowToWebhookWorkerWorkflowsUpdateUnique) Exec(ctx context.Context) (*WorkflowModel, error) {
+	var v WorkflowModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowToWebhookWorkerWorkflowsUpdateUnique) Tx() WorkflowUniqueTxResult {
+	v := newWorkflowUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindUnique) Delete() workflowToWebhookWorkerWorkflowsDeleteUnique {
+	var v workflowToWebhookWorkerWorkflowsDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Workflow"
+
+	return v
+}
+
+type workflowToWebhookWorkerWorkflowsDeleteUnique struct {
+	query builder.Query
+}
+
+func (r workflowToWebhookWorkerWorkflowsDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workflowToWebhookWorkerWorkflowsDeleteUnique) workflowModel() {}
+
+func (r workflowToWebhookWorkerWorkflowsDeleteUnique) Exec(ctx context.Context) (*WorkflowModel, error) {
+	var v WorkflowModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowToWebhookWorkerWorkflowsDeleteUnique) Tx() WorkflowUniqueTxResult {
+	v := newWorkflowUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workflowToWebhookWorkerWorkflowsFindFirst struct {
+	query builder.Query
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindFirst) with()             {}
+func (r workflowToWebhookWorkerWorkflowsFindFirst) workflowModel()    {}
+func (r workflowToWebhookWorkerWorkflowsFindFirst) workflowRelation() {}
+
+func (r workflowToWebhookWorkerWorkflowsFindFirst) With(params ...WebhookWorkerWorkflowRelationWith) workflowToWebhookWorkerWorkflowsFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindFirst) Select(params ...workflowPrismaFields) workflowToWebhookWorkerWorkflowsFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindFirst) Omit(params ...workflowPrismaFields) workflowToWebhookWorkerWorkflowsFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workflowOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindFirst) OrderBy(params ...WebhookWorkerWorkflowOrderByParam) workflowToWebhookWorkerWorkflowsFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindFirst) Skip(count int) workflowToWebhookWorkerWorkflowsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindFirst) Take(count int) workflowToWebhookWorkerWorkflowsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindFirst) Cursor(cursor WorkflowCursorParam) workflowToWebhookWorkerWorkflowsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindFirst) Exec(ctx context.Context) (
+	*WorkflowModel,
+	error,
+) {
+	var v *WorkflowModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindFirst) ExecInner(ctx context.Context) (
+	*InnerWorkflow,
+	error,
+) {
+	var v *InnerWorkflow
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type workflowToWebhookWorkerWorkflowsFindMany struct {
+	query builder.Query
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindMany) with()             {}
+func (r workflowToWebhookWorkerWorkflowsFindMany) workflowModel()    {}
+func (r workflowToWebhookWorkerWorkflowsFindMany) workflowRelation() {}
+
+func (r workflowToWebhookWorkerWorkflowsFindMany) With(params ...WebhookWorkerWorkflowRelationWith) workflowToWebhookWorkerWorkflowsFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindMany) Select(params ...workflowPrismaFields) workflowToWebhookWorkerWorkflowsFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindMany) Omit(params ...workflowPrismaFields) workflowToWebhookWorkerWorkflowsFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workflowOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindMany) OrderBy(params ...WebhookWorkerWorkflowOrderByParam) workflowToWebhookWorkerWorkflowsFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindMany) Skip(count int) workflowToWebhookWorkerWorkflowsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindMany) Take(count int) workflowToWebhookWorkerWorkflowsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindMany) Cursor(cursor WorkflowCursorParam) workflowToWebhookWorkerWorkflowsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindMany) Exec(ctx context.Context) (
+	[]WorkflowModel,
+	error,
+) {
+	var v []WorkflowModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindMany) ExecInner(ctx context.Context) (
+	[]InnerWorkflow,
+	error,
+) {
+	var v []InnerWorkflow
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindMany) Update(params ...WorkflowSetParam) workflowToWebhookWorkerWorkflowsUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Workflow"
+
+	r.query.Outputs = countOutput
+
+	var v workflowToWebhookWorkerWorkflowsUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workflowToWebhookWorkerWorkflowsUpdateMany struct {
+	query builder.Query
+}
+
+func (r workflowToWebhookWorkerWorkflowsUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowToWebhookWorkerWorkflowsUpdateMany) workflowModel() {}
+
+func (r workflowToWebhookWorkerWorkflowsUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowToWebhookWorkerWorkflowsUpdateMany) Tx() WorkflowManyTxResult {
+	v := newWorkflowManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workflowToWebhookWorkerWorkflowsFindMany) Delete() workflowToWebhookWorkerWorkflowsDeleteMany {
+	var v workflowToWebhookWorkerWorkflowsDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Workflow"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type workflowToWebhookWorkerWorkflowsDeleteMany struct {
+	query builder.Query
+}
+
+func (r workflowToWebhookWorkerWorkflowsDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workflowToWebhookWorkerWorkflowsDeleteMany) workflowModel() {}
+
+func (r workflowToWebhookWorkerWorkflowsDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowToWebhookWorkerWorkflowsDeleteMany) Tx() WorkflowManyTxResult {
 	v := newWorkflowManyTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
@@ -338168,6 +351894,102 @@ func (r UserSessionManyTxResult) Result() (v *BatchResult) {
 	return v
 }
 
+func newWebhookWorkerUniqueTxResult() WebhookWorkerUniqueTxResult {
+	return WebhookWorkerUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type WebhookWorkerUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p WebhookWorkerUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p WebhookWorkerUniqueTxResult) IsTx() {}
+
+func (r WebhookWorkerUniqueTxResult) Result() (v *WebhookWorkerModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newWebhookWorkerManyTxResult() WebhookWorkerManyTxResult {
+	return WebhookWorkerManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type WebhookWorkerManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p WebhookWorkerManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p WebhookWorkerManyTxResult) IsTx() {}
+
+func (r WebhookWorkerManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newWebhookWorkerWorkflowUniqueTxResult() WebhookWorkerWorkflowUniqueTxResult {
+	return WebhookWorkerWorkflowUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type WebhookWorkerWorkflowUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p WebhookWorkerWorkflowUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p WebhookWorkerWorkflowUniqueTxResult) IsTx() {}
+
+func (r WebhookWorkerWorkflowUniqueTxResult) Result() (v *WebhookWorkerWorkflowModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newWebhookWorkerWorkflowManyTxResult() WebhookWorkerWorkflowManyTxResult {
+	return WebhookWorkerWorkflowManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type WebhookWorkerWorkflowManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p WebhookWorkerWorkflowManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p WebhookWorkerWorkflowManyTxResult) IsTx() {}
+
+func (r WebhookWorkerWorkflowManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
 func newTenantUniqueTxResult() TenantUniqueTxResult {
 	return TenantUniqueTxResult{
 		result: &transaction.Result{},
@@ -340581,6 +354403,234 @@ func (r userSessionUpsertOne) Exec(ctx context.Context) (*UserSessionModel, erro
 
 func (r userSessionUpsertOne) Tx() UserSessionUniqueTxResult {
 	v := newUserSessionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type webhookWorkerUpsertOne struct {
+	query builder.Query
+}
+
+func (r webhookWorkerUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerUpsertOne) with()                  {}
+func (r webhookWorkerUpsertOne) webhookWorkerModel()    {}
+func (r webhookWorkerUpsertOne) webhookWorkerRelation() {}
+
+func (r webhookWorkerActions) UpsertOne(
+	params WebhookWorkerEqualsUniqueWhereParam,
+) webhookWorkerUpsertOne {
+	var v webhookWorkerUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "WebhookWorker"
+	v.query.Outputs = webhookWorkerOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r webhookWorkerUpsertOne) Create(
+
+	_name WebhookWorkerWithPrismaNameSetParam,
+	_secret WebhookWorkerWithPrismaSecretSetParam,
+	_url WebhookWorkerWithPrismaURLSetParam,
+	_tenant WebhookWorkerWithPrismaTenantSetParam,
+
+	optional ...WebhookWorkerSetParam,
+) webhookWorkerUpsertOne {
+	var v webhookWorkerUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _name.field())
+	fields = append(fields, _secret.field())
+	fields = append(fields, _url.field())
+	fields = append(fields, _tenant.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r webhookWorkerUpsertOne) Update(
+	params ...WebhookWorkerSetParam,
+) webhookWorkerUpsertOne {
+	var v webhookWorkerUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r webhookWorkerUpsertOne) Exec(ctx context.Context) (*WebhookWorkerModel, error) {
+	var v WebhookWorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerUpsertOne) Tx() WebhookWorkerUniqueTxResult {
+	v := newWebhookWorkerUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type webhookWorkerWorkflowUpsertOne struct {
+	query builder.Query
+}
+
+func (r webhookWorkerWorkflowUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r webhookWorkerWorkflowUpsertOne) with()                          {}
+func (r webhookWorkerWorkflowUpsertOne) webhookWorkerWorkflowModel()    {}
+func (r webhookWorkerWorkflowUpsertOne) webhookWorkerWorkflowRelation() {}
+
+func (r webhookWorkerWorkflowActions) UpsertOne(
+	params WebhookWorkerWorkflowEqualsUniqueWhereParam,
+) webhookWorkerWorkflowUpsertOne {
+	var v webhookWorkerWorkflowUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "WebhookWorkerWorkflow"
+	v.query.Outputs = webhookWorkerWorkflowOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r webhookWorkerWorkflowUpsertOne) Create(
+
+	_webhookWorker WebhookWorkerWorkflowWithPrismaWebhookWorkerSetParam,
+	_workflow WebhookWorkerWorkflowWithPrismaWorkflowSetParam,
+
+	optional ...WebhookWorkerWorkflowSetParam,
+) webhookWorkerWorkflowUpsertOne {
+	var v webhookWorkerWorkflowUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _webhookWorker.field())
+	fields = append(fields, _workflow.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r webhookWorkerWorkflowUpsertOne) Update(
+	params ...WebhookWorkerWorkflowSetParam,
+) webhookWorkerWorkflowUpsertOne {
+	var v webhookWorkerWorkflowUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r webhookWorkerWorkflowUpsertOne) Exec(ctx context.Context) (*WebhookWorkerWorkflowModel, error) {
+	var v WebhookWorkerWorkflowModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r webhookWorkerWorkflowUpsertOne) Tx() WebhookWorkerWorkflowUniqueTxResult {
+	v := newWebhookWorkerWorkflowUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
