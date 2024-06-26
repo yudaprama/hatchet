@@ -198,6 +198,30 @@ model WebhookWorkerWorkflow {
   @@unique([webhookWorkerId, workflowId])
 }
 
+// ControllerPartition represents an engine instance that only handles a subset of tenants. This is used for list
+// operations across tenants. If tenants do not have a partition, they are included in all partitions.
+model ControllerPartition {
+  id        String   @id @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  // lastHeartbeat is used for rebalancing partitions
+  lastHeartbeat DateTime?
+
+  tenants Tenant[]
+}
+
+model TenantWorkerPartition {
+  id        String   @id @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  // lastHeartbeat is used for rebalancing partitions
+  lastHeartbeat DateTime?
+
+  tenants Tenant[]
+}
+
 // Tenant represents a unique tenant in the database. Each tenant-scoped resource should have the tenant as
 // an identifier, which makes tenant isolation easier.
 model Tenant {
@@ -212,6 +236,14 @@ model Tenant {
 
   // wheather the user has opted out of analytics
   analyticsOptOut Boolean @default(false)
+
+  // the parent controller partition, if exists
+  controllerPartition   ControllerPartition? @relation(fields: [controllerPartitionId], references: [id], onDelete: SetNull, onUpdate: SetNull)
+  controllerPartitionId String?
+
+  // the parent worker partition, if exists
+  workerPartition   TenantWorkerPartition? @relation(fields: [workerPartitionId], references: [id], onDelete: SetNull, onUpdate: SetNull)
+  workerPartitionId String?
 
   events              Event[]
   workflows           Workflow[]
@@ -239,12 +271,15 @@ model Tenant {
   stepRateLimits      StepRateLimit[]
   alertEmailGroups    TenantAlertEmailGroup[]
   // alertMemberEmails controls whether to send alert emails to tenant members in addition to the alert email groups
-  alertMemberEmails         Boolean                    @default(true)
-  slackWebhooks             SlackAppWebhook[]
-  alertingSettings          TenantAlertingSettings?
-  limits                    TenantResourceLimit[]
-  limitAlerts               TenantResourceLimitAlert[]
-  webhookWorkers            WebhookWorker[]
+  alertMemberEmails   Boolean                    @default(true)
+  slackWebhooks       SlackAppWebhook[]
+  alertingSettings    TenantAlertingSettings?
+  limits              TenantResourceLimit[]
+  limitAlerts         TenantResourceLimitAlert[]
+  webhookWorkers      WebhookWorker[]
+
+  @@index([controllerPartitionId])
+  @@index([workerPartitionId])
 }
 
 enum LimitResource {
@@ -1615,6 +1650,8 @@ func newClient() *PrismaClient {
 	c.UserSession = userSessionActions{client: c}
 	c.WebhookWorker = webhookWorkerActions{client: c}
 	c.WebhookWorkerWorkflow = webhookWorkerWorkflowActions{client: c}
+	c.ControllerPartition = controllerPartitionActions{client: c}
+	c.TenantWorkerPartition = tenantWorkerPartitionActions{client: c}
 	c.Tenant = tenantActions{client: c}
 	c.TenantResourceLimit = tenantResourceLimitActions{client: c}
 	c.TenantResourceLimitAlert = tenantResourceLimitAlertActions{client: c}
@@ -1693,6 +1730,10 @@ type PrismaClient struct {
 	WebhookWorker webhookWorkerActions
 	// WebhookWorkerWorkflow provides access to CRUD methods.
 	WebhookWorkerWorkflow webhookWorkerWorkflowActions
+	// ControllerPartition provides access to CRUD methods.
+	ControllerPartition controllerPartitionActions
+	// TenantWorkerPartition provides access to CRUD methods.
+	TenantWorkerPartition tenantWorkerPartitionActions
 	// Tenant provides access to CRUD methods.
 	Tenant tenantActions
 	// TenantResourceLimit provides access to CRUD methods.
@@ -1994,17 +2035,37 @@ const (
 	WebhookWorkerWorkflowScalarFieldEnumWorkflowID      WebhookWorkerWorkflowScalarFieldEnum = "workflowId"
 )
 
+type ControllerPartitionScalarFieldEnum string
+
+const (
+	ControllerPartitionScalarFieldEnumID            ControllerPartitionScalarFieldEnum = "id"
+	ControllerPartitionScalarFieldEnumCreatedAt     ControllerPartitionScalarFieldEnum = "createdAt"
+	ControllerPartitionScalarFieldEnumUpdatedAt     ControllerPartitionScalarFieldEnum = "updatedAt"
+	ControllerPartitionScalarFieldEnumLastHeartbeat ControllerPartitionScalarFieldEnum = "lastHeartbeat"
+)
+
+type TenantWorkerPartitionScalarFieldEnum string
+
+const (
+	TenantWorkerPartitionScalarFieldEnumID            TenantWorkerPartitionScalarFieldEnum = "id"
+	TenantWorkerPartitionScalarFieldEnumCreatedAt     TenantWorkerPartitionScalarFieldEnum = "createdAt"
+	TenantWorkerPartitionScalarFieldEnumUpdatedAt     TenantWorkerPartitionScalarFieldEnum = "updatedAt"
+	TenantWorkerPartitionScalarFieldEnumLastHeartbeat TenantWorkerPartitionScalarFieldEnum = "lastHeartbeat"
+)
+
 type TenantScalarFieldEnum string
 
 const (
-	TenantScalarFieldEnumID                TenantScalarFieldEnum = "id"
-	TenantScalarFieldEnumCreatedAt         TenantScalarFieldEnum = "createdAt"
-	TenantScalarFieldEnumUpdatedAt         TenantScalarFieldEnum = "updatedAt"
-	TenantScalarFieldEnumDeletedAt         TenantScalarFieldEnum = "deletedAt"
-	TenantScalarFieldEnumName              TenantScalarFieldEnum = "name"
-	TenantScalarFieldEnumSlug              TenantScalarFieldEnum = "slug"
-	TenantScalarFieldEnumAnalyticsOptOut   TenantScalarFieldEnum = "analyticsOptOut"
-	TenantScalarFieldEnumAlertMemberEmails TenantScalarFieldEnum = "alertMemberEmails"
+	TenantScalarFieldEnumID                    TenantScalarFieldEnum = "id"
+	TenantScalarFieldEnumCreatedAt             TenantScalarFieldEnum = "createdAt"
+	TenantScalarFieldEnumUpdatedAt             TenantScalarFieldEnum = "updatedAt"
+	TenantScalarFieldEnumDeletedAt             TenantScalarFieldEnum = "deletedAt"
+	TenantScalarFieldEnumName                  TenantScalarFieldEnum = "name"
+	TenantScalarFieldEnumSlug                  TenantScalarFieldEnum = "slug"
+	TenantScalarFieldEnumAnalyticsOptOut       TenantScalarFieldEnum = "analyticsOptOut"
+	TenantScalarFieldEnumControllerPartitionID TenantScalarFieldEnum = "controllerPartitionId"
+	TenantScalarFieldEnumWorkerPartitionID     TenantScalarFieldEnum = "workerPartitionId"
+	TenantScalarFieldEnumAlertMemberEmails     TenantScalarFieldEnum = "alertMemberEmails"
 )
 
 type TenantResourceLimitScalarFieldEnum string
@@ -2738,6 +2799,30 @@ const webhookWorkerWorkflowFieldWorkflow webhookWorkerWorkflowPrismaFields = "wo
 
 const webhookWorkerWorkflowFieldWorkflowID webhookWorkerWorkflowPrismaFields = "workflowId"
 
+type controllerPartitionPrismaFields = prismaFields
+
+const controllerPartitionFieldID controllerPartitionPrismaFields = "id"
+
+const controllerPartitionFieldCreatedAt controllerPartitionPrismaFields = "createdAt"
+
+const controllerPartitionFieldUpdatedAt controllerPartitionPrismaFields = "updatedAt"
+
+const controllerPartitionFieldLastHeartbeat controllerPartitionPrismaFields = "lastHeartbeat"
+
+const controllerPartitionFieldTenants controllerPartitionPrismaFields = "tenants"
+
+type tenantWorkerPartitionPrismaFields = prismaFields
+
+const tenantWorkerPartitionFieldID tenantWorkerPartitionPrismaFields = "id"
+
+const tenantWorkerPartitionFieldCreatedAt tenantWorkerPartitionPrismaFields = "createdAt"
+
+const tenantWorkerPartitionFieldUpdatedAt tenantWorkerPartitionPrismaFields = "updatedAt"
+
+const tenantWorkerPartitionFieldLastHeartbeat tenantWorkerPartitionPrismaFields = "lastHeartbeat"
+
+const tenantWorkerPartitionFieldTenants tenantWorkerPartitionPrismaFields = "tenants"
+
 type tenantPrismaFields = prismaFields
 
 const tenantFieldID tenantPrismaFields = "id"
@@ -2753,6 +2838,14 @@ const tenantFieldName tenantPrismaFields = "name"
 const tenantFieldSlug tenantPrismaFields = "slug"
 
 const tenantFieldAnalyticsOptOut tenantPrismaFields = "analyticsOptOut"
+
+const tenantFieldControllerPartition tenantPrismaFields = "controllerPartition"
+
+const tenantFieldControllerPartitionID tenantPrismaFields = "controllerPartitionId"
+
+const tenantFieldWorkerPartition tenantPrismaFields = "workerPartition"
+
+const tenantFieldWorkerPartitionID tenantPrismaFields = "workerPartitionId"
 
 const tenantFieldEvents tenantPrismaFields = "events"
 
@@ -3898,6 +3991,14 @@ func NewMock() (*PrismaClient, *Mock, func(t *testing.T)) {
 		mock: m,
 	}
 
+	m.ControllerPartition = controllerPartitionMock{
+		mock: m,
+	}
+
+	m.TenantWorkerPartition = tenantWorkerPartitionMock{
+		mock: m,
+	}
+
 	m.Tenant = tenantMock{
 		mock: m,
 	}
@@ -4083,6 +4184,10 @@ type Mock struct {
 	WebhookWorker webhookWorkerMock
 
 	WebhookWorkerWorkflow webhookWorkerWorkflowMock
+
+	ControllerPartition controllerPartitionMock
+
+	TenantWorkerPartition tenantWorkerPartitionMock
 
 	Tenant tenantMock
 
@@ -4415,6 +4520,90 @@ func (m *webhookWorkerWorkflowMockExec) ReturnsMany(v []WebhookWorkerWorkflowMod
 }
 
 func (m *webhookWorkerWorkflowMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
+type controllerPartitionMock struct {
+	mock *Mock
+}
+
+type ControllerPartitionMockExpectParam interface {
+	ExtractQuery() builder.Query
+	controllerPartitionModel()
+}
+
+func (m *controllerPartitionMock) Expect(query ControllerPartitionMockExpectParam) *controllerPartitionMockExec {
+	return &controllerPartitionMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type controllerPartitionMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *controllerPartitionMockExec) Returns(v ControllerPartitionModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *controllerPartitionMockExec) ReturnsMany(v []ControllerPartitionModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *controllerPartitionMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
+type tenantWorkerPartitionMock struct {
+	mock *Mock
+}
+
+type TenantWorkerPartitionMockExpectParam interface {
+	ExtractQuery() builder.Query
+	tenantWorkerPartitionModel()
+}
+
+func (m *tenantWorkerPartitionMock) Expect(query TenantWorkerPartitionMockExpectParam) *tenantWorkerPartitionMockExec {
+	return &tenantWorkerPartitionMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type tenantWorkerPartitionMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *tenantWorkerPartitionMockExec) Returns(v TenantWorkerPartitionModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *tenantWorkerPartitionMockExec) ReturnsMany(v []TenantWorkerPartitionModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *tenantWorkerPartitionMockExec) Errors(err error) {
 	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
 		Query:   m.query,
 		WantErr: err,
@@ -6521,6 +6710,88 @@ func (r WebhookWorkerWorkflowModel) Workflow() (value *WorkflowModel) {
 	return r.RelationsWebhookWorkerWorkflow.Workflow
 }
 
+// ControllerPartitionModel represents the ControllerPartition model and is a wrapper for accessing fields and methods
+type ControllerPartitionModel struct {
+	InnerControllerPartition
+	RelationsControllerPartition
+}
+
+// InnerControllerPartition holds the actual data
+type InnerControllerPartition struct {
+	ID            string    `json:"id"`
+	CreatedAt     DateTime  `json:"createdAt"`
+	UpdatedAt     DateTime  `json:"updatedAt"`
+	LastHeartbeat *DateTime `json:"lastHeartbeat,omitempty"`
+}
+
+// RawControllerPartitionModel is a struct for ControllerPartition when used in raw queries
+type RawControllerPartitionModel struct {
+	ID            RawString    `json:"id"`
+	CreatedAt     RawDateTime  `json:"createdAt"`
+	UpdatedAt     RawDateTime  `json:"updatedAt"`
+	LastHeartbeat *RawDateTime `json:"lastHeartbeat,omitempty"`
+}
+
+// RelationsControllerPartition holds the relation data separately
+type RelationsControllerPartition struct {
+	Tenants []TenantModel `json:"tenants,omitempty"`
+}
+
+func (r ControllerPartitionModel) LastHeartbeat() (value DateTime, ok bool) {
+	if r.InnerControllerPartition.LastHeartbeat == nil {
+		return value, false
+	}
+	return *r.InnerControllerPartition.LastHeartbeat, true
+}
+
+func (r ControllerPartitionModel) Tenants() (value []TenantModel) {
+	if r.RelationsControllerPartition.Tenants == nil {
+		panic("attempted to access tenants but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsControllerPartition.Tenants
+}
+
+// TenantWorkerPartitionModel represents the TenantWorkerPartition model and is a wrapper for accessing fields and methods
+type TenantWorkerPartitionModel struct {
+	InnerTenantWorkerPartition
+	RelationsTenantWorkerPartition
+}
+
+// InnerTenantWorkerPartition holds the actual data
+type InnerTenantWorkerPartition struct {
+	ID            string    `json:"id"`
+	CreatedAt     DateTime  `json:"createdAt"`
+	UpdatedAt     DateTime  `json:"updatedAt"`
+	LastHeartbeat *DateTime `json:"lastHeartbeat,omitempty"`
+}
+
+// RawTenantWorkerPartitionModel is a struct for TenantWorkerPartition when used in raw queries
+type RawTenantWorkerPartitionModel struct {
+	ID            RawString    `json:"id"`
+	CreatedAt     RawDateTime  `json:"createdAt"`
+	UpdatedAt     RawDateTime  `json:"updatedAt"`
+	LastHeartbeat *RawDateTime `json:"lastHeartbeat,omitempty"`
+}
+
+// RelationsTenantWorkerPartition holds the relation data separately
+type RelationsTenantWorkerPartition struct {
+	Tenants []TenantModel `json:"tenants,omitempty"`
+}
+
+func (r TenantWorkerPartitionModel) LastHeartbeat() (value DateTime, ok bool) {
+	if r.InnerTenantWorkerPartition.LastHeartbeat == nil {
+		return value, false
+	}
+	return *r.InnerTenantWorkerPartition.LastHeartbeat, true
+}
+
+func (r TenantWorkerPartitionModel) Tenants() (value []TenantModel) {
+	if r.RelationsTenantWorkerPartition.Tenants == nil {
+		panic("attempted to access tenants but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsTenantWorkerPartition.Tenants
+}
+
 // TenantModel represents the Tenant model and is a wrapper for accessing fields and methods
 type TenantModel struct {
 	InnerTenant
@@ -6529,30 +6800,36 @@ type TenantModel struct {
 
 // InnerTenant holds the actual data
 type InnerTenant struct {
-	ID                string    `json:"id"`
-	CreatedAt         DateTime  `json:"createdAt"`
-	UpdatedAt         DateTime  `json:"updatedAt"`
-	DeletedAt         *DateTime `json:"deletedAt,omitempty"`
-	Name              string    `json:"name"`
-	Slug              string    `json:"slug"`
-	AnalyticsOptOut   bool      `json:"analyticsOptOut"`
-	AlertMemberEmails bool      `json:"alertMemberEmails"`
+	ID                    string    `json:"id"`
+	CreatedAt             DateTime  `json:"createdAt"`
+	UpdatedAt             DateTime  `json:"updatedAt"`
+	DeletedAt             *DateTime `json:"deletedAt,omitempty"`
+	Name                  string    `json:"name"`
+	Slug                  string    `json:"slug"`
+	AnalyticsOptOut       bool      `json:"analyticsOptOut"`
+	ControllerPartitionID *string   `json:"controllerPartitionId,omitempty"`
+	WorkerPartitionID     *string   `json:"workerPartitionId,omitempty"`
+	AlertMemberEmails     bool      `json:"alertMemberEmails"`
 }
 
 // RawTenantModel is a struct for Tenant when used in raw queries
 type RawTenantModel struct {
-	ID                RawString    `json:"id"`
-	CreatedAt         RawDateTime  `json:"createdAt"`
-	UpdatedAt         RawDateTime  `json:"updatedAt"`
-	DeletedAt         *RawDateTime `json:"deletedAt,omitempty"`
-	Name              RawString    `json:"name"`
-	Slug              RawString    `json:"slug"`
-	AnalyticsOptOut   RawBoolean   `json:"analyticsOptOut"`
-	AlertMemberEmails RawBoolean   `json:"alertMemberEmails"`
+	ID                    RawString    `json:"id"`
+	CreatedAt             RawDateTime  `json:"createdAt"`
+	UpdatedAt             RawDateTime  `json:"updatedAt"`
+	DeletedAt             *RawDateTime `json:"deletedAt,omitempty"`
+	Name                  RawString    `json:"name"`
+	Slug                  RawString    `json:"slug"`
+	AnalyticsOptOut       RawBoolean   `json:"analyticsOptOut"`
+	ControllerPartitionID *RawString   `json:"controllerPartitionId,omitempty"`
+	WorkerPartitionID     *RawString   `json:"workerPartitionId,omitempty"`
+	AlertMemberEmails     RawBoolean   `json:"alertMemberEmails"`
 }
 
 // RelationsTenant holds the relation data separately
 type RelationsTenant struct {
+	ControllerPartition *ControllerPartitionModel       `json:"controllerPartition,omitempty"`
+	WorkerPartition     *TenantWorkerPartitionModel     `json:"workerPartition,omitempty"`
 	Events              []EventModel                    `json:"events,omitempty"`
 	Workflows           []WorkflowModel                 `json:"workflows,omitempty"`
 	Jobs                []JobModel                      `json:"jobs,omitempty"`
@@ -6590,6 +6867,34 @@ func (r TenantModel) DeletedAt() (value DateTime, ok bool) {
 		return value, false
 	}
 	return *r.InnerTenant.DeletedAt, true
+}
+
+func (r TenantModel) ControllerPartition() (value *ControllerPartitionModel, ok bool) {
+	if r.RelationsTenant.ControllerPartition == nil {
+		return value, false
+	}
+	return r.RelationsTenant.ControllerPartition, true
+}
+
+func (r TenantModel) ControllerPartitionID() (value String, ok bool) {
+	if r.InnerTenant.ControllerPartitionID == nil {
+		return value, false
+	}
+	return *r.InnerTenant.ControllerPartitionID, true
+}
+
+func (r TenantModel) WorkerPartition() (value *TenantWorkerPartitionModel, ok bool) {
+	if r.RelationsTenant.WorkerPartition == nil {
+		return value, false
+	}
+	return r.RelationsTenant.WorkerPartition, true
+}
+
+func (r TenantModel) WorkerPartitionID() (value String, ok bool) {
+	if r.InnerTenant.WorkerPartitionID == nil {
+		return value, false
+	}
+	return *r.InnerTenant.WorkerPartitionID, true
 }
 
 func (r TenantModel) Events() (value []EventModel) {
@@ -23955,6 +24260,3160 @@ func (r webhookWorkerWorkflowQueryWorkflowIDString) Field() webhookWorkerWorkflo
 	return webhookWorkerWorkflowFieldWorkflowID
 }
 
+// ControllerPartition acts as a namespaces to access query methods for the ControllerPartition model
+var ControllerPartition = controllerPartitionQuery{}
+
+// controllerPartitionQuery exposes query functions for the controllerPartition model
+type controllerPartitionQuery struct {
+
+	// ID
+	//
+	// @required
+	ID controllerPartitionQueryIDString
+
+	// CreatedAt
+	//
+	// @required
+	CreatedAt controllerPartitionQueryCreatedAtDateTime
+
+	// UpdatedAt
+	//
+	// @required
+	UpdatedAt controllerPartitionQueryUpdatedAtDateTime
+
+	// LastHeartbeat
+	//
+	// @optional
+	LastHeartbeat controllerPartitionQueryLastHeartbeatDateTime
+
+	Tenants controllerPartitionQueryTenantsRelations
+}
+
+func (controllerPartitionQuery) Not(params ...ControllerPartitionWhereParam) controllerPartitionDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (controllerPartitionQuery) Or(params ...ControllerPartitionWhereParam) controllerPartitionDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (controllerPartitionQuery) And(params ...ControllerPartitionWhereParam) controllerPartitionDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+// base struct
+type controllerPartitionQueryIDString struct{}
+
+// Set the required value of ID
+func (r controllerPartitionQueryIDString) Set(value string) controllerPartitionWithPrismaIDSetParam {
+
+	return controllerPartitionWithPrismaIDSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r controllerPartitionQueryIDString) SetIfPresent(value *String) controllerPartitionWithPrismaIDSetParam {
+	if value == nil {
+		return controllerPartitionWithPrismaIDSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r controllerPartitionQueryIDString) Equals(value string) controllerPartitionWithPrismaIDEqualsUniqueParam {
+
+	return controllerPartitionWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryIDString) EqualsIfPresent(value *string) controllerPartitionWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return controllerPartitionWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r controllerPartitionQueryIDString) Order(direction SortOrder) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r controllerPartitionQueryIDString) Cursor(cursor string) controllerPartitionCursorParam {
+	return controllerPartitionCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r controllerPartitionQueryIDString) In(value []string) controllerPartitionParamUnique {
+	return controllerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryIDString) InIfPresent(value []string) controllerPartitionParamUnique {
+	if value == nil {
+		return controllerPartitionParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r controllerPartitionQueryIDString) NotIn(value []string) controllerPartitionParamUnique {
+	return controllerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryIDString) NotInIfPresent(value []string) controllerPartitionParamUnique {
+	if value == nil {
+		return controllerPartitionParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r controllerPartitionQueryIDString) Lt(value string) controllerPartitionParamUnique {
+	return controllerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryIDString) LtIfPresent(value *string) controllerPartitionParamUnique {
+	if value == nil {
+		return controllerPartitionParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r controllerPartitionQueryIDString) Lte(value string) controllerPartitionParamUnique {
+	return controllerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryIDString) LteIfPresent(value *string) controllerPartitionParamUnique {
+	if value == nil {
+		return controllerPartitionParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r controllerPartitionQueryIDString) Gt(value string) controllerPartitionParamUnique {
+	return controllerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryIDString) GtIfPresent(value *string) controllerPartitionParamUnique {
+	if value == nil {
+		return controllerPartitionParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r controllerPartitionQueryIDString) Gte(value string) controllerPartitionParamUnique {
+	return controllerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryIDString) GteIfPresent(value *string) controllerPartitionParamUnique {
+	if value == nil {
+		return controllerPartitionParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r controllerPartitionQueryIDString) Contains(value string) controllerPartitionParamUnique {
+	return controllerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryIDString) ContainsIfPresent(value *string) controllerPartitionParamUnique {
+	if value == nil {
+		return controllerPartitionParamUnique{}
+	}
+	return r.Contains(*value)
+}
+
+func (r controllerPartitionQueryIDString) StartsWith(value string) controllerPartitionParamUnique {
+	return controllerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryIDString) StartsWithIfPresent(value *string) controllerPartitionParamUnique {
+	if value == nil {
+		return controllerPartitionParamUnique{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r controllerPartitionQueryIDString) EndsWith(value string) controllerPartitionParamUnique {
+	return controllerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryIDString) EndsWithIfPresent(value *string) controllerPartitionParamUnique {
+	if value == nil {
+		return controllerPartitionParamUnique{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r controllerPartitionQueryIDString) Mode(value QueryMode) controllerPartitionParamUnique {
+	return controllerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryIDString) ModeIfPresent(value *QueryMode) controllerPartitionParamUnique {
+	if value == nil {
+		return controllerPartitionParamUnique{}
+	}
+	return r.Mode(*value)
+}
+
+func (r controllerPartitionQueryIDString) Not(value string) controllerPartitionParamUnique {
+	return controllerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryIDString) NotIfPresent(value *string) controllerPartitionParamUnique {
+	if value == nil {
+		return controllerPartitionParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r controllerPartitionQueryIDString) HasPrefix(value string) controllerPartitionParamUnique {
+	return controllerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r controllerPartitionQueryIDString) HasPrefixIfPresent(value *string) controllerPartitionParamUnique {
+	if value == nil {
+		return controllerPartitionParamUnique{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r controllerPartitionQueryIDString) HasSuffix(value string) controllerPartitionParamUnique {
+	return controllerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r controllerPartitionQueryIDString) HasSuffixIfPresent(value *string) controllerPartitionParamUnique {
+	if value == nil {
+		return controllerPartitionParamUnique{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r controllerPartitionQueryIDString) Field() controllerPartitionPrismaFields {
+	return controllerPartitionFieldID
+}
+
+// base struct
+type controllerPartitionQueryCreatedAtDateTime struct{}
+
+// Set the required value of CreatedAt
+func (r controllerPartitionQueryCreatedAtDateTime) Set(value DateTime) controllerPartitionSetParam {
+
+	return controllerPartitionSetParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of CreatedAt dynamically
+func (r controllerPartitionQueryCreatedAtDateTime) SetIfPresent(value *DateTime) controllerPartitionSetParam {
+	if value == nil {
+		return controllerPartitionSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r controllerPartitionQueryCreatedAtDateTime) Equals(value DateTime) controllerPartitionWithPrismaCreatedAtEqualsParam {
+
+	return controllerPartitionWithPrismaCreatedAtEqualsParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryCreatedAtDateTime) EqualsIfPresent(value *DateTime) controllerPartitionWithPrismaCreatedAtEqualsParam {
+	if value == nil {
+		return controllerPartitionWithPrismaCreatedAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r controllerPartitionQueryCreatedAtDateTime) Order(direction SortOrder) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r controllerPartitionQueryCreatedAtDateTime) Cursor(cursor DateTime) controllerPartitionCursorParam {
+	return controllerPartitionCursorParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r controllerPartitionQueryCreatedAtDateTime) In(value []DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryCreatedAtDateTime) InIfPresent(value []DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r controllerPartitionQueryCreatedAtDateTime) NotIn(value []DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryCreatedAtDateTime) NotInIfPresent(value []DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r controllerPartitionQueryCreatedAtDateTime) Lt(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryCreatedAtDateTime) LtIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r controllerPartitionQueryCreatedAtDateTime) Lte(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryCreatedAtDateTime) LteIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r controllerPartitionQueryCreatedAtDateTime) Gt(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryCreatedAtDateTime) GtIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r controllerPartitionQueryCreatedAtDateTime) Gte(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryCreatedAtDateTime) GteIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r controllerPartitionQueryCreatedAtDateTime) Not(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryCreatedAtDateTime) NotIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r controllerPartitionQueryCreatedAtDateTime) Before(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r controllerPartitionQueryCreatedAtDateTime) BeforeIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r controllerPartitionQueryCreatedAtDateTime) After(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r controllerPartitionQueryCreatedAtDateTime) AfterIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r controllerPartitionQueryCreatedAtDateTime) BeforeEquals(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r controllerPartitionQueryCreatedAtDateTime) BeforeEqualsIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r controllerPartitionQueryCreatedAtDateTime) AfterEquals(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r controllerPartitionQueryCreatedAtDateTime) AfterEqualsIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r controllerPartitionQueryCreatedAtDateTime) Field() controllerPartitionPrismaFields {
+	return controllerPartitionFieldCreatedAt
+}
+
+// base struct
+type controllerPartitionQueryUpdatedAtDateTime struct{}
+
+// Set the required value of UpdatedAt
+func (r controllerPartitionQueryUpdatedAtDateTime) Set(value DateTime) controllerPartitionSetParam {
+
+	return controllerPartitionSetParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of UpdatedAt dynamically
+func (r controllerPartitionQueryUpdatedAtDateTime) SetIfPresent(value *DateTime) controllerPartitionSetParam {
+	if value == nil {
+		return controllerPartitionSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r controllerPartitionQueryUpdatedAtDateTime) Equals(value DateTime) controllerPartitionWithPrismaUpdatedAtEqualsParam {
+
+	return controllerPartitionWithPrismaUpdatedAtEqualsParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryUpdatedAtDateTime) EqualsIfPresent(value *DateTime) controllerPartitionWithPrismaUpdatedAtEqualsParam {
+	if value == nil {
+		return controllerPartitionWithPrismaUpdatedAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r controllerPartitionQueryUpdatedAtDateTime) Order(direction SortOrder) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r controllerPartitionQueryUpdatedAtDateTime) Cursor(cursor DateTime) controllerPartitionCursorParam {
+	return controllerPartitionCursorParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r controllerPartitionQueryUpdatedAtDateTime) In(value []DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryUpdatedAtDateTime) InIfPresent(value []DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r controllerPartitionQueryUpdatedAtDateTime) NotIn(value []DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryUpdatedAtDateTime) NotInIfPresent(value []DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r controllerPartitionQueryUpdatedAtDateTime) Lt(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryUpdatedAtDateTime) LtIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r controllerPartitionQueryUpdatedAtDateTime) Lte(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryUpdatedAtDateTime) LteIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r controllerPartitionQueryUpdatedAtDateTime) Gt(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryUpdatedAtDateTime) GtIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r controllerPartitionQueryUpdatedAtDateTime) Gte(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryUpdatedAtDateTime) GteIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r controllerPartitionQueryUpdatedAtDateTime) Not(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryUpdatedAtDateTime) NotIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r controllerPartitionQueryUpdatedAtDateTime) Before(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r controllerPartitionQueryUpdatedAtDateTime) BeforeIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r controllerPartitionQueryUpdatedAtDateTime) After(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r controllerPartitionQueryUpdatedAtDateTime) AfterIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r controllerPartitionQueryUpdatedAtDateTime) BeforeEquals(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r controllerPartitionQueryUpdatedAtDateTime) BeforeEqualsIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r controllerPartitionQueryUpdatedAtDateTime) AfterEquals(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r controllerPartitionQueryUpdatedAtDateTime) AfterEqualsIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r controllerPartitionQueryUpdatedAtDateTime) Field() controllerPartitionPrismaFields {
+	return controllerPartitionFieldUpdatedAt
+}
+
+// base struct
+type controllerPartitionQueryLastHeartbeatDateTime struct{}
+
+// Set the optional value of LastHeartbeat
+func (r controllerPartitionQueryLastHeartbeatDateTime) Set(value DateTime) controllerPartitionSetParam {
+
+	return controllerPartitionSetParam{
+		data: builder.Field{
+			Name:  "lastHeartbeat",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of LastHeartbeat dynamically
+func (r controllerPartitionQueryLastHeartbeatDateTime) SetIfPresent(value *DateTime) controllerPartitionSetParam {
+	if value == nil {
+		return controllerPartitionSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of LastHeartbeat dynamically
+func (r controllerPartitionQueryLastHeartbeatDateTime) SetOptional(value *DateTime) controllerPartitionSetParam {
+	if value == nil {
+
+		var v *DateTime
+		return controllerPartitionSetParam{
+			data: builder.Field{
+				Name:  "lastHeartbeat",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) Equals(value DateTime) controllerPartitionWithPrismaLastHeartbeatEqualsParam {
+
+	return controllerPartitionWithPrismaLastHeartbeatEqualsParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) EqualsIfPresent(value *DateTime) controllerPartitionWithPrismaLastHeartbeatEqualsParam {
+	if value == nil {
+		return controllerPartitionWithPrismaLastHeartbeatEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) EqualsOptional(value *DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) IsNull() controllerPartitionDefaultParam {
+	var str *string = nil
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) Order(direction SortOrder) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name:  "lastHeartbeat",
+			Value: direction,
+		},
+	}
+}
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) Cursor(cursor DateTime) controllerPartitionCursorParam {
+	return controllerPartitionCursorParam{
+		data: builder.Field{
+			Name:  "lastHeartbeat",
+			Value: cursor,
+		},
+	}
+}
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) In(value []DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) InIfPresent(value []DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) NotIn(value []DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) NotInIfPresent(value []DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) Lt(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) LtIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) Lte(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) LteIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) Gt(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) GtIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) Gte(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) GteIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) Not(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) NotIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) Before(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r controllerPartitionQueryLastHeartbeatDateTime) BeforeIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) After(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r controllerPartitionQueryLastHeartbeatDateTime) AfterIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) BeforeEquals(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r controllerPartitionQueryLastHeartbeatDateTime) BeforeEqualsIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) AfterEquals(value DateTime) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r controllerPartitionQueryLastHeartbeatDateTime) AfterEqualsIfPresent(value *DateTime) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r controllerPartitionQueryLastHeartbeatDateTime) Field() controllerPartitionPrismaFields {
+	return controllerPartitionFieldLastHeartbeat
+}
+
+// base struct
+type controllerPartitionQueryTenantsTenant struct{}
+
+type controllerPartitionQueryTenantsRelations struct{}
+
+// ControllerPartition -> Tenants
+//
+// @relation
+// @required
+func (controllerPartitionQueryTenantsRelations) Some(
+	params ...TenantWhereParam,
+) controllerPartitionDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "tenants",
+			Fields: []builder.Field{
+				{
+					Name:   "some",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// ControllerPartition -> Tenants
+//
+// @relation
+// @required
+func (controllerPartitionQueryTenantsRelations) Every(
+	params ...TenantWhereParam,
+) controllerPartitionDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "tenants",
+			Fields: []builder.Field{
+				{
+					Name:   "every",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// ControllerPartition -> Tenants
+//
+// @relation
+// @required
+func (controllerPartitionQueryTenantsRelations) None(
+	params ...TenantWhereParam,
+) controllerPartitionDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "tenants",
+			Fields: []builder.Field{
+				{
+					Name:   "none",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (controllerPartitionQueryTenantsRelations) Fetch(
+
+	params ...TenantWhereParam,
+
+) controllerPartitionToTenantsFindMany {
+	var v controllerPartitionToTenantsFindMany
+
+	v.query.Operation = "query"
+	v.query.Method = "tenants"
+	v.query.Outputs = tenantOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r controllerPartitionQueryTenantsRelations) Link(
+	params ...TenantWhereParam,
+) controllerPartitionSetParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return controllerPartitionSetParam{
+		data: builder.Field{
+			Name: "tenants",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+
+					List:     true,
+					WrapList: true,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryTenantsRelations) Unlink(
+	params ...TenantWhereParam,
+) controllerPartitionSetParam {
+	var v controllerPartitionSetParam
+
+	var fields []builder.Field
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+	v = controllerPartitionSetParam{
+		data: builder.Field{
+			Name: "tenants",
+			Fields: []builder.Field{
+				{
+					Name:     "disconnect",
+					List:     true,
+					WrapList: true,
+					Fields:   builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r controllerPartitionQueryTenantsTenant) Field() controllerPartitionPrismaFields {
+	return controllerPartitionFieldTenants
+}
+
+// TenantWorkerPartition acts as a namespaces to access query methods for the TenantWorkerPartition model
+var TenantWorkerPartition = tenantWorkerPartitionQuery{}
+
+// tenantWorkerPartitionQuery exposes query functions for the tenantWorkerPartition model
+type tenantWorkerPartitionQuery struct {
+
+	// ID
+	//
+	// @required
+	ID tenantWorkerPartitionQueryIDString
+
+	// CreatedAt
+	//
+	// @required
+	CreatedAt tenantWorkerPartitionQueryCreatedAtDateTime
+
+	// UpdatedAt
+	//
+	// @required
+	UpdatedAt tenantWorkerPartitionQueryUpdatedAtDateTime
+
+	// LastHeartbeat
+	//
+	// @optional
+	LastHeartbeat tenantWorkerPartitionQueryLastHeartbeatDateTime
+
+	Tenants tenantWorkerPartitionQueryTenantsRelations
+}
+
+func (tenantWorkerPartitionQuery) Not(params ...TenantWorkerPartitionWhereParam) tenantWorkerPartitionDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (tenantWorkerPartitionQuery) Or(params ...TenantWorkerPartitionWhereParam) tenantWorkerPartitionDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (tenantWorkerPartitionQuery) And(params ...TenantWorkerPartitionWhereParam) tenantWorkerPartitionDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+// base struct
+type tenantWorkerPartitionQueryIDString struct{}
+
+// Set the required value of ID
+func (r tenantWorkerPartitionQueryIDString) Set(value string) tenantWorkerPartitionWithPrismaIDSetParam {
+
+	return tenantWorkerPartitionWithPrismaIDSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r tenantWorkerPartitionQueryIDString) SetIfPresent(value *String) tenantWorkerPartitionWithPrismaIDSetParam {
+	if value == nil {
+		return tenantWorkerPartitionWithPrismaIDSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r tenantWorkerPartitionQueryIDString) Equals(value string) tenantWorkerPartitionWithPrismaIDEqualsUniqueParam {
+
+	return tenantWorkerPartitionWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryIDString) EqualsIfPresent(value *string) tenantWorkerPartitionWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return tenantWorkerPartitionWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r tenantWorkerPartitionQueryIDString) Order(direction SortOrder) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryIDString) Cursor(cursor string) tenantWorkerPartitionCursorParam {
+	return tenantWorkerPartitionCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryIDString) In(value []string) tenantWorkerPartitionParamUnique {
+	return tenantWorkerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryIDString) InIfPresent(value []string) tenantWorkerPartitionParamUnique {
+	if value == nil {
+		return tenantWorkerPartitionParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r tenantWorkerPartitionQueryIDString) NotIn(value []string) tenantWorkerPartitionParamUnique {
+	return tenantWorkerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryIDString) NotInIfPresent(value []string) tenantWorkerPartitionParamUnique {
+	if value == nil {
+		return tenantWorkerPartitionParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r tenantWorkerPartitionQueryIDString) Lt(value string) tenantWorkerPartitionParamUnique {
+	return tenantWorkerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryIDString) LtIfPresent(value *string) tenantWorkerPartitionParamUnique {
+	if value == nil {
+		return tenantWorkerPartitionParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r tenantWorkerPartitionQueryIDString) Lte(value string) tenantWorkerPartitionParamUnique {
+	return tenantWorkerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryIDString) LteIfPresent(value *string) tenantWorkerPartitionParamUnique {
+	if value == nil {
+		return tenantWorkerPartitionParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r tenantWorkerPartitionQueryIDString) Gt(value string) tenantWorkerPartitionParamUnique {
+	return tenantWorkerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryIDString) GtIfPresent(value *string) tenantWorkerPartitionParamUnique {
+	if value == nil {
+		return tenantWorkerPartitionParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r tenantWorkerPartitionQueryIDString) Gte(value string) tenantWorkerPartitionParamUnique {
+	return tenantWorkerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryIDString) GteIfPresent(value *string) tenantWorkerPartitionParamUnique {
+	if value == nil {
+		return tenantWorkerPartitionParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r tenantWorkerPartitionQueryIDString) Contains(value string) tenantWorkerPartitionParamUnique {
+	return tenantWorkerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryIDString) ContainsIfPresent(value *string) tenantWorkerPartitionParamUnique {
+	if value == nil {
+		return tenantWorkerPartitionParamUnique{}
+	}
+	return r.Contains(*value)
+}
+
+func (r tenantWorkerPartitionQueryIDString) StartsWith(value string) tenantWorkerPartitionParamUnique {
+	return tenantWorkerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryIDString) StartsWithIfPresent(value *string) tenantWorkerPartitionParamUnique {
+	if value == nil {
+		return tenantWorkerPartitionParamUnique{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r tenantWorkerPartitionQueryIDString) EndsWith(value string) tenantWorkerPartitionParamUnique {
+	return tenantWorkerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryIDString) EndsWithIfPresent(value *string) tenantWorkerPartitionParamUnique {
+	if value == nil {
+		return tenantWorkerPartitionParamUnique{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r tenantWorkerPartitionQueryIDString) Mode(value QueryMode) tenantWorkerPartitionParamUnique {
+	return tenantWorkerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryIDString) ModeIfPresent(value *QueryMode) tenantWorkerPartitionParamUnique {
+	if value == nil {
+		return tenantWorkerPartitionParamUnique{}
+	}
+	return r.Mode(*value)
+}
+
+func (r tenantWorkerPartitionQueryIDString) Not(value string) tenantWorkerPartitionParamUnique {
+	return tenantWorkerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryIDString) NotIfPresent(value *string) tenantWorkerPartitionParamUnique {
+	if value == nil {
+		return tenantWorkerPartitionParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r tenantWorkerPartitionQueryIDString) HasPrefix(value string) tenantWorkerPartitionParamUnique {
+	return tenantWorkerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r tenantWorkerPartitionQueryIDString) HasPrefixIfPresent(value *string) tenantWorkerPartitionParamUnique {
+	if value == nil {
+		return tenantWorkerPartitionParamUnique{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r tenantWorkerPartitionQueryIDString) HasSuffix(value string) tenantWorkerPartitionParamUnique {
+	return tenantWorkerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r tenantWorkerPartitionQueryIDString) HasSuffixIfPresent(value *string) tenantWorkerPartitionParamUnique {
+	if value == nil {
+		return tenantWorkerPartitionParamUnique{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r tenantWorkerPartitionQueryIDString) Field() tenantWorkerPartitionPrismaFields {
+	return tenantWorkerPartitionFieldID
+}
+
+// base struct
+type tenantWorkerPartitionQueryCreatedAtDateTime struct{}
+
+// Set the required value of CreatedAt
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) Set(value DateTime) tenantWorkerPartitionSetParam {
+
+	return tenantWorkerPartitionSetParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of CreatedAt dynamically
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) SetIfPresent(value *DateTime) tenantWorkerPartitionSetParam {
+	if value == nil {
+		return tenantWorkerPartitionSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) Equals(value DateTime) tenantWorkerPartitionWithPrismaCreatedAtEqualsParam {
+
+	return tenantWorkerPartitionWithPrismaCreatedAtEqualsParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) EqualsIfPresent(value *DateTime) tenantWorkerPartitionWithPrismaCreatedAtEqualsParam {
+	if value == nil {
+		return tenantWorkerPartitionWithPrismaCreatedAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) Order(direction SortOrder) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) Cursor(cursor DateTime) tenantWorkerPartitionCursorParam {
+	return tenantWorkerPartitionCursorParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) In(value []DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) InIfPresent(value []DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) NotIn(value []DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) NotInIfPresent(value []DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) Lt(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) LtIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) Lte(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) LteIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) Gt(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) GtIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) Gte(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) GteIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) Not(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) NotIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) Before(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) BeforeIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) After(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) AfterIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) BeforeEquals(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) BeforeEqualsIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) AfterEquals(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) AfterEqualsIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r tenantWorkerPartitionQueryCreatedAtDateTime) Field() tenantWorkerPartitionPrismaFields {
+	return tenantWorkerPartitionFieldCreatedAt
+}
+
+// base struct
+type tenantWorkerPartitionQueryUpdatedAtDateTime struct{}
+
+// Set the required value of UpdatedAt
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) Set(value DateTime) tenantWorkerPartitionSetParam {
+
+	return tenantWorkerPartitionSetParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of UpdatedAt dynamically
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) SetIfPresent(value *DateTime) tenantWorkerPartitionSetParam {
+	if value == nil {
+		return tenantWorkerPartitionSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) Equals(value DateTime) tenantWorkerPartitionWithPrismaUpdatedAtEqualsParam {
+
+	return tenantWorkerPartitionWithPrismaUpdatedAtEqualsParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) EqualsIfPresent(value *DateTime) tenantWorkerPartitionWithPrismaUpdatedAtEqualsParam {
+	if value == nil {
+		return tenantWorkerPartitionWithPrismaUpdatedAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) Order(direction SortOrder) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) Cursor(cursor DateTime) tenantWorkerPartitionCursorParam {
+	return tenantWorkerPartitionCursorParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) In(value []DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) InIfPresent(value []DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) NotIn(value []DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) NotInIfPresent(value []DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) Lt(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) LtIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) Lte(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) LteIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) Gt(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) GtIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) Gte(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) GteIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) Not(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) NotIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) Before(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) BeforeIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) After(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) AfterIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) BeforeEquals(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) BeforeEqualsIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) AfterEquals(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) AfterEqualsIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r tenantWorkerPartitionQueryUpdatedAtDateTime) Field() tenantWorkerPartitionPrismaFields {
+	return tenantWorkerPartitionFieldUpdatedAt
+}
+
+// base struct
+type tenantWorkerPartitionQueryLastHeartbeatDateTime struct{}
+
+// Set the optional value of LastHeartbeat
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) Set(value DateTime) tenantWorkerPartitionSetParam {
+
+	return tenantWorkerPartitionSetParam{
+		data: builder.Field{
+			Name:  "lastHeartbeat",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of LastHeartbeat dynamically
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) SetIfPresent(value *DateTime) tenantWorkerPartitionSetParam {
+	if value == nil {
+		return tenantWorkerPartitionSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of LastHeartbeat dynamically
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) SetOptional(value *DateTime) tenantWorkerPartitionSetParam {
+	if value == nil {
+
+		var v *DateTime
+		return tenantWorkerPartitionSetParam{
+			data: builder.Field{
+				Name:  "lastHeartbeat",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) Equals(value DateTime) tenantWorkerPartitionWithPrismaLastHeartbeatEqualsParam {
+
+	return tenantWorkerPartitionWithPrismaLastHeartbeatEqualsParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) EqualsIfPresent(value *DateTime) tenantWorkerPartitionWithPrismaLastHeartbeatEqualsParam {
+	if value == nil {
+		return tenantWorkerPartitionWithPrismaLastHeartbeatEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) EqualsOptional(value *DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) IsNull() tenantWorkerPartitionDefaultParam {
+	var str *string = nil
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) Order(direction SortOrder) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name:  "lastHeartbeat",
+			Value: direction,
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) Cursor(cursor DateTime) tenantWorkerPartitionCursorParam {
+	return tenantWorkerPartitionCursorParam{
+		data: builder.Field{
+			Name:  "lastHeartbeat",
+			Value: cursor,
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) In(value []DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) InIfPresent(value []DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) NotIn(value []DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) NotInIfPresent(value []DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) Lt(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) LtIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) Lte(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) LteIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) Gt(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) GtIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) Gte(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) GteIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) Not(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) NotIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) Before(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) BeforeIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) After(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) AfterIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) BeforeEquals(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) BeforeEqualsIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) AfterEquals(value DateTime) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) AfterEqualsIfPresent(value *DateTime) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) Field() tenantWorkerPartitionPrismaFields {
+	return tenantWorkerPartitionFieldLastHeartbeat
+}
+
+// base struct
+type tenantWorkerPartitionQueryTenantsTenant struct{}
+
+type tenantWorkerPartitionQueryTenantsRelations struct{}
+
+// TenantWorkerPartition -> Tenants
+//
+// @relation
+// @required
+func (tenantWorkerPartitionQueryTenantsRelations) Some(
+	params ...TenantWhereParam,
+) tenantWorkerPartitionDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "tenants",
+			Fields: []builder.Field{
+				{
+					Name:   "some",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// TenantWorkerPartition -> Tenants
+//
+// @relation
+// @required
+func (tenantWorkerPartitionQueryTenantsRelations) Every(
+	params ...TenantWhereParam,
+) tenantWorkerPartitionDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "tenants",
+			Fields: []builder.Field{
+				{
+					Name:   "every",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// TenantWorkerPartition -> Tenants
+//
+// @relation
+// @required
+func (tenantWorkerPartitionQueryTenantsRelations) None(
+	params ...TenantWhereParam,
+) tenantWorkerPartitionDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "tenants",
+			Fields: []builder.Field{
+				{
+					Name:   "none",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (tenantWorkerPartitionQueryTenantsRelations) Fetch(
+
+	params ...TenantWhereParam,
+
+) tenantWorkerPartitionToTenantsFindMany {
+	var v tenantWorkerPartitionToTenantsFindMany
+
+	v.query.Operation = "query"
+	v.query.Method = "tenants"
+	v.query.Outputs = tenantOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r tenantWorkerPartitionQueryTenantsRelations) Link(
+	params ...TenantWhereParam,
+) tenantWorkerPartitionSetParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tenantWorkerPartitionSetParam{
+		data: builder.Field{
+			Name: "tenants",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+
+					List:     true,
+					WrapList: true,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryTenantsRelations) Unlink(
+	params ...TenantWhereParam,
+) tenantWorkerPartitionSetParam {
+	var v tenantWorkerPartitionSetParam
+
+	var fields []builder.Field
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+	v = tenantWorkerPartitionSetParam{
+		data: builder.Field{
+			Name: "tenants",
+			Fields: []builder.Field{
+				{
+					Name:     "disconnect",
+					List:     true,
+					WrapList: true,
+					Fields:   builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r tenantWorkerPartitionQueryTenantsTenant) Field() tenantWorkerPartitionPrismaFields {
+	return tenantWorkerPartitionFieldTenants
+}
+
 // Tenant acts as a namespaces to access query methods for the Tenant model
 var Tenant = tenantQuery{}
 
@@ -23996,6 +27455,20 @@ type tenantQuery struct {
 	//
 	// @required
 	AnalyticsOptOut tenantQueryAnalyticsOptOutBoolean
+
+	ControllerPartition tenantQueryControllerPartitionRelations
+
+	// ControllerPartitionID
+	//
+	// @optional
+	ControllerPartitionID tenantQueryControllerPartitionIDString
+
+	WorkerPartition tenantQueryWorkerPartitionRelations
+
+	// WorkerPartitionID
+	//
+	// @optional
+	WorkerPartitionID tenantQueryWorkerPartitionIDString
 
 	Events tenantQueryEventsRelations
 
@@ -26199,6 +29672,966 @@ func (r tenantQueryAnalyticsOptOutBoolean) Cursor(cursor bool) tenantCursorParam
 
 func (r tenantQueryAnalyticsOptOutBoolean) Field() tenantPrismaFields {
 	return tenantFieldAnalyticsOptOut
+}
+
+// base struct
+type tenantQueryControllerPartitionControllerPartition struct{}
+
+type tenantQueryControllerPartitionRelations struct{}
+
+// Tenant -> ControllerPartition
+//
+// @relation
+// @optional
+func (tenantQueryControllerPartitionRelations) Where(
+	params ...ControllerPartitionWhereParam,
+) tenantDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "controllerPartition",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (tenantQueryControllerPartitionRelations) Fetch() tenantToControllerPartitionFindUnique {
+	var v tenantToControllerPartitionFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "controllerPartition"
+	v.query.Outputs = controllerPartitionOutput
+
+	return v
+}
+
+func (r tenantQueryControllerPartitionRelations) Link(
+	params ControllerPartitionWhereParam,
+) tenantSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return tenantSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return tenantSetParam{
+		data: builder.Field{
+			Name: "controllerPartition",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryControllerPartitionRelations) Unlink() tenantSetParam {
+	var v tenantSetParam
+
+	v = tenantSetParam{
+		data: builder.Field{
+			Name: "controllerPartition",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r tenantQueryControllerPartitionControllerPartition) Field() tenantPrismaFields {
+	return tenantFieldControllerPartition
+}
+
+// base struct
+type tenantQueryControllerPartitionIDString struct{}
+
+// Set the optional value of ControllerPartitionID
+func (r tenantQueryControllerPartitionIDString) Set(value string) tenantSetParam {
+
+	return tenantSetParam{
+		data: builder.Field{
+			Name:  "controllerPartitionId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ControllerPartitionID dynamically
+func (r tenantQueryControllerPartitionIDString) SetIfPresent(value *String) tenantSetParam {
+	if value == nil {
+		return tenantSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of ControllerPartitionID dynamically
+func (r tenantQueryControllerPartitionIDString) SetOptional(value *String) tenantSetParam {
+	if value == nil {
+
+		var v *string
+		return tenantSetParam{
+			data: builder.Field{
+				Name:  "controllerPartitionId",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r tenantQueryControllerPartitionIDString) Equals(value string) tenantWithPrismaControllerPartitionIDEqualsParam {
+
+	return tenantWithPrismaControllerPartitionIDEqualsParam{
+		data: builder.Field{
+			Name: "controllerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryControllerPartitionIDString) EqualsIfPresent(value *string) tenantWithPrismaControllerPartitionIDEqualsParam {
+	if value == nil {
+		return tenantWithPrismaControllerPartitionIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r tenantQueryControllerPartitionIDString) EqualsOptional(value *String) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "controllerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryControllerPartitionIDString) IsNull() tenantDefaultParam {
+	var str *string = nil
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "controllerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryControllerPartitionIDString) Order(direction SortOrder) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name:  "controllerPartitionId",
+			Value: direction,
+		},
+	}
+}
+
+func (r tenantQueryControllerPartitionIDString) Cursor(cursor string) tenantCursorParam {
+	return tenantCursorParam{
+		data: builder.Field{
+			Name:  "controllerPartitionId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r tenantQueryControllerPartitionIDString) In(value []string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "controllerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryControllerPartitionIDString) InIfPresent(value []string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r tenantQueryControllerPartitionIDString) NotIn(value []string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "controllerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryControllerPartitionIDString) NotInIfPresent(value []string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r tenantQueryControllerPartitionIDString) Lt(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "controllerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryControllerPartitionIDString) LtIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r tenantQueryControllerPartitionIDString) Lte(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "controllerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryControllerPartitionIDString) LteIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r tenantQueryControllerPartitionIDString) Gt(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "controllerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryControllerPartitionIDString) GtIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r tenantQueryControllerPartitionIDString) Gte(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "controllerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryControllerPartitionIDString) GteIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r tenantQueryControllerPartitionIDString) Contains(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "controllerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryControllerPartitionIDString) ContainsIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r tenantQueryControllerPartitionIDString) StartsWith(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "controllerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryControllerPartitionIDString) StartsWithIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r tenantQueryControllerPartitionIDString) EndsWith(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "controllerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryControllerPartitionIDString) EndsWithIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r tenantQueryControllerPartitionIDString) Mode(value QueryMode) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "controllerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryControllerPartitionIDString) ModeIfPresent(value *QueryMode) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r tenantQueryControllerPartitionIDString) Not(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "controllerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryControllerPartitionIDString) NotIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r tenantQueryControllerPartitionIDString) HasPrefix(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "controllerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r tenantQueryControllerPartitionIDString) HasPrefixIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r tenantQueryControllerPartitionIDString) HasSuffix(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "controllerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r tenantQueryControllerPartitionIDString) HasSuffixIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r tenantQueryControllerPartitionIDString) Field() tenantPrismaFields {
+	return tenantFieldControllerPartitionID
+}
+
+// base struct
+type tenantQueryWorkerPartitionTenantWorkerPartition struct{}
+
+type tenantQueryWorkerPartitionRelations struct{}
+
+// Tenant -> WorkerPartition
+//
+// @relation
+// @optional
+func (tenantQueryWorkerPartitionRelations) Where(
+	params ...TenantWorkerPartitionWhereParam,
+) tenantDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "workerPartition",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (tenantQueryWorkerPartitionRelations) Fetch() tenantToWorkerPartitionFindUnique {
+	var v tenantToWorkerPartitionFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "workerPartition"
+	v.query.Outputs = tenantWorkerPartitionOutput
+
+	return v
+}
+
+func (r tenantQueryWorkerPartitionRelations) Link(
+	params TenantWorkerPartitionWhereParam,
+) tenantSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return tenantSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return tenantSetParam{
+		data: builder.Field{
+			Name: "workerPartition",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryWorkerPartitionRelations) Unlink() tenantSetParam {
+	var v tenantSetParam
+
+	v = tenantSetParam{
+		data: builder.Field{
+			Name: "workerPartition",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r tenantQueryWorkerPartitionTenantWorkerPartition) Field() tenantPrismaFields {
+	return tenantFieldWorkerPartition
+}
+
+// base struct
+type tenantQueryWorkerPartitionIDString struct{}
+
+// Set the optional value of WorkerPartitionID
+func (r tenantQueryWorkerPartitionIDString) Set(value string) tenantSetParam {
+
+	return tenantSetParam{
+		data: builder.Field{
+			Name:  "workerPartitionId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of WorkerPartitionID dynamically
+func (r tenantQueryWorkerPartitionIDString) SetIfPresent(value *String) tenantSetParam {
+	if value == nil {
+		return tenantSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of WorkerPartitionID dynamically
+func (r tenantQueryWorkerPartitionIDString) SetOptional(value *String) tenantSetParam {
+	if value == nil {
+
+		var v *string
+		return tenantSetParam{
+			data: builder.Field{
+				Name:  "workerPartitionId",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r tenantQueryWorkerPartitionIDString) Equals(value string) tenantWithPrismaWorkerPartitionIDEqualsParam {
+
+	return tenantWithPrismaWorkerPartitionIDEqualsParam{
+		data: builder.Field{
+			Name: "workerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryWorkerPartitionIDString) EqualsIfPresent(value *string) tenantWithPrismaWorkerPartitionIDEqualsParam {
+	if value == nil {
+		return tenantWithPrismaWorkerPartitionIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r tenantQueryWorkerPartitionIDString) EqualsOptional(value *String) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "workerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryWorkerPartitionIDString) IsNull() tenantDefaultParam {
+	var str *string = nil
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "workerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryWorkerPartitionIDString) Order(direction SortOrder) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name:  "workerPartitionId",
+			Value: direction,
+		},
+	}
+}
+
+func (r tenantQueryWorkerPartitionIDString) Cursor(cursor string) tenantCursorParam {
+	return tenantCursorParam{
+		data: builder.Field{
+			Name:  "workerPartitionId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r tenantQueryWorkerPartitionIDString) In(value []string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "workerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryWorkerPartitionIDString) InIfPresent(value []string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r tenantQueryWorkerPartitionIDString) NotIn(value []string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "workerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryWorkerPartitionIDString) NotInIfPresent(value []string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r tenantQueryWorkerPartitionIDString) Lt(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "workerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryWorkerPartitionIDString) LtIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r tenantQueryWorkerPartitionIDString) Lte(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "workerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryWorkerPartitionIDString) LteIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r tenantQueryWorkerPartitionIDString) Gt(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "workerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryWorkerPartitionIDString) GtIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r tenantQueryWorkerPartitionIDString) Gte(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "workerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryWorkerPartitionIDString) GteIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r tenantQueryWorkerPartitionIDString) Contains(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "workerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryWorkerPartitionIDString) ContainsIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r tenantQueryWorkerPartitionIDString) StartsWith(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "workerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryWorkerPartitionIDString) StartsWithIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r tenantQueryWorkerPartitionIDString) EndsWith(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "workerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryWorkerPartitionIDString) EndsWithIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r tenantQueryWorkerPartitionIDString) Mode(value QueryMode) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "workerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryWorkerPartitionIDString) ModeIfPresent(value *QueryMode) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r tenantQueryWorkerPartitionIDString) Not(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "workerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryWorkerPartitionIDString) NotIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r tenantQueryWorkerPartitionIDString) HasPrefix(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "workerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r tenantQueryWorkerPartitionIDString) HasPrefixIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r tenantQueryWorkerPartitionIDString) HasSuffix(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "workerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r tenantQueryWorkerPartitionIDString) HasSuffixIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r tenantQueryWorkerPartitionIDString) Field() tenantPrismaFields {
+	return tenantFieldWorkerPartitionID
 }
 
 // base struct
@@ -172775,6 +177208,1138 @@ func (p webhookWorkerWorkflowWithPrismaWorkflowIDEqualsUniqueParam) workflowIDFi
 func (webhookWorkerWorkflowWithPrismaWorkflowIDEqualsUniqueParam) unique() {}
 func (webhookWorkerWorkflowWithPrismaWorkflowIDEqualsUniqueParam) equals() {}
 
+type controllerPartitionActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var controllerPartitionOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "createdAt"},
+	{Name: "updatedAt"},
+	{Name: "lastHeartbeat"},
+}
+
+type ControllerPartitionRelationWith interface {
+	getQuery() builder.Query
+	with()
+	controllerPartitionRelation()
+}
+
+type ControllerPartitionWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	controllerPartitionModel()
+}
+
+type controllerPartitionDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p controllerPartitionDefaultParam) controllerPartitionModel() {}
+
+type ControllerPartitionOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	controllerPartitionModel()
+}
+
+type controllerPartitionOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p controllerPartitionOrderByParam) controllerPartitionModel() {}
+
+type ControllerPartitionCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	controllerPartitionModel()
+	isCursor()
+}
+
+type controllerPartitionCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionCursorParam) isCursor() {}
+
+func (p controllerPartitionCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p controllerPartitionCursorParam) controllerPartitionModel() {}
+
+type ControllerPartitionParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	controllerPartitionModel()
+}
+
+type controllerPartitionParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionParamUnique) controllerPartitionModel() {}
+
+func (controllerPartitionParamUnique) unique() {}
+
+func (p controllerPartitionParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type ControllerPartitionEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	controllerPartitionModel()
+}
+
+type controllerPartitionEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionEqualsParam) controllerPartitionModel() {}
+
+func (controllerPartitionEqualsParam) equals() {}
+
+func (p controllerPartitionEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type ControllerPartitionEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	controllerPartitionModel()
+}
+
+type controllerPartitionEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionEqualsUniqueParam) controllerPartitionModel() {}
+
+func (controllerPartitionEqualsUniqueParam) unique() {}
+func (controllerPartitionEqualsUniqueParam) equals() {}
+
+func (p controllerPartitionEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type ControllerPartitionSetParam interface {
+	field() builder.Field
+	settable()
+	controllerPartitionModel()
+}
+
+type controllerPartitionSetParam struct {
+	data builder.Field
+}
+
+func (controllerPartitionSetParam) settable() {}
+
+func (p controllerPartitionSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionSetParam) controllerPartitionModel() {}
+
+type ControllerPartitionWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	controllerPartitionModel()
+	idField()
+}
+
+type ControllerPartitionWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	controllerPartitionModel()
+	idField()
+}
+
+type controllerPartitionWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p controllerPartitionWithPrismaIDSetParam) controllerPartitionModel() {}
+
+func (p controllerPartitionWithPrismaIDSetParam) idField() {}
+
+type ControllerPartitionWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	controllerPartitionModel()
+	idField()
+}
+
+type controllerPartitionWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p controllerPartitionWithPrismaIDEqualsParam) controllerPartitionModel() {}
+
+func (p controllerPartitionWithPrismaIDEqualsParam) idField() {}
+
+func (controllerPartitionWithPrismaIDSetParam) settable()  {}
+func (controllerPartitionWithPrismaIDEqualsParam) equals() {}
+
+type controllerPartitionWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p controllerPartitionWithPrismaIDEqualsUniqueParam) controllerPartitionModel() {}
+func (p controllerPartitionWithPrismaIDEqualsUniqueParam) idField()                  {}
+
+func (controllerPartitionWithPrismaIDEqualsUniqueParam) unique() {}
+func (controllerPartitionWithPrismaIDEqualsUniqueParam) equals() {}
+
+type ControllerPartitionWithPrismaCreatedAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	controllerPartitionModel()
+	createdAtField()
+}
+
+type ControllerPartitionWithPrismaCreatedAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	controllerPartitionModel()
+	createdAtField()
+}
+
+type controllerPartitionWithPrismaCreatedAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionWithPrismaCreatedAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionWithPrismaCreatedAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p controllerPartitionWithPrismaCreatedAtSetParam) controllerPartitionModel() {}
+
+func (p controllerPartitionWithPrismaCreatedAtSetParam) createdAtField() {}
+
+type ControllerPartitionWithPrismaCreatedAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	controllerPartitionModel()
+	createdAtField()
+}
+
+type controllerPartitionWithPrismaCreatedAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionWithPrismaCreatedAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionWithPrismaCreatedAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p controllerPartitionWithPrismaCreatedAtEqualsParam) controllerPartitionModel() {}
+
+func (p controllerPartitionWithPrismaCreatedAtEqualsParam) createdAtField() {}
+
+func (controllerPartitionWithPrismaCreatedAtSetParam) settable()  {}
+func (controllerPartitionWithPrismaCreatedAtEqualsParam) equals() {}
+
+type controllerPartitionWithPrismaCreatedAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionWithPrismaCreatedAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionWithPrismaCreatedAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p controllerPartitionWithPrismaCreatedAtEqualsUniqueParam) controllerPartitionModel() {}
+func (p controllerPartitionWithPrismaCreatedAtEqualsUniqueParam) createdAtField()           {}
+
+func (controllerPartitionWithPrismaCreatedAtEqualsUniqueParam) unique() {}
+func (controllerPartitionWithPrismaCreatedAtEqualsUniqueParam) equals() {}
+
+type ControllerPartitionWithPrismaUpdatedAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	controllerPartitionModel()
+	updatedAtField()
+}
+
+type ControllerPartitionWithPrismaUpdatedAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	controllerPartitionModel()
+	updatedAtField()
+}
+
+type controllerPartitionWithPrismaUpdatedAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionWithPrismaUpdatedAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionWithPrismaUpdatedAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p controllerPartitionWithPrismaUpdatedAtSetParam) controllerPartitionModel() {}
+
+func (p controllerPartitionWithPrismaUpdatedAtSetParam) updatedAtField() {}
+
+type ControllerPartitionWithPrismaUpdatedAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	controllerPartitionModel()
+	updatedAtField()
+}
+
+type controllerPartitionWithPrismaUpdatedAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionWithPrismaUpdatedAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionWithPrismaUpdatedAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p controllerPartitionWithPrismaUpdatedAtEqualsParam) controllerPartitionModel() {}
+
+func (p controllerPartitionWithPrismaUpdatedAtEqualsParam) updatedAtField() {}
+
+func (controllerPartitionWithPrismaUpdatedAtSetParam) settable()  {}
+func (controllerPartitionWithPrismaUpdatedAtEqualsParam) equals() {}
+
+type controllerPartitionWithPrismaUpdatedAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionWithPrismaUpdatedAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionWithPrismaUpdatedAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p controllerPartitionWithPrismaUpdatedAtEqualsUniqueParam) controllerPartitionModel() {}
+func (p controllerPartitionWithPrismaUpdatedAtEqualsUniqueParam) updatedAtField()           {}
+
+func (controllerPartitionWithPrismaUpdatedAtEqualsUniqueParam) unique() {}
+func (controllerPartitionWithPrismaUpdatedAtEqualsUniqueParam) equals() {}
+
+type ControllerPartitionWithPrismaLastHeartbeatEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	controllerPartitionModel()
+	lastHeartbeatField()
+}
+
+type ControllerPartitionWithPrismaLastHeartbeatSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	controllerPartitionModel()
+	lastHeartbeatField()
+}
+
+type controllerPartitionWithPrismaLastHeartbeatSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionWithPrismaLastHeartbeatSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionWithPrismaLastHeartbeatSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p controllerPartitionWithPrismaLastHeartbeatSetParam) controllerPartitionModel() {}
+
+func (p controllerPartitionWithPrismaLastHeartbeatSetParam) lastHeartbeatField() {}
+
+type ControllerPartitionWithPrismaLastHeartbeatWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	controllerPartitionModel()
+	lastHeartbeatField()
+}
+
+type controllerPartitionWithPrismaLastHeartbeatEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionWithPrismaLastHeartbeatEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionWithPrismaLastHeartbeatEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p controllerPartitionWithPrismaLastHeartbeatEqualsParam) controllerPartitionModel() {}
+
+func (p controllerPartitionWithPrismaLastHeartbeatEqualsParam) lastHeartbeatField() {}
+
+func (controllerPartitionWithPrismaLastHeartbeatSetParam) settable()  {}
+func (controllerPartitionWithPrismaLastHeartbeatEqualsParam) equals() {}
+
+type controllerPartitionWithPrismaLastHeartbeatEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p controllerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) controllerPartitionModel() {}
+func (p controllerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) lastHeartbeatField()       {}
+
+func (controllerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) unique() {}
+func (controllerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) equals() {}
+
+type ControllerPartitionWithPrismaTenantsEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	controllerPartitionModel()
+	tenantsField()
+}
+
+type ControllerPartitionWithPrismaTenantsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	controllerPartitionModel()
+	tenantsField()
+}
+
+type controllerPartitionWithPrismaTenantsSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionWithPrismaTenantsSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionWithPrismaTenantsSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p controllerPartitionWithPrismaTenantsSetParam) controllerPartitionModel() {}
+
+func (p controllerPartitionWithPrismaTenantsSetParam) tenantsField() {}
+
+type ControllerPartitionWithPrismaTenantsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	controllerPartitionModel()
+	tenantsField()
+}
+
+type controllerPartitionWithPrismaTenantsEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionWithPrismaTenantsEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionWithPrismaTenantsEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p controllerPartitionWithPrismaTenantsEqualsParam) controllerPartitionModel() {}
+
+func (p controllerPartitionWithPrismaTenantsEqualsParam) tenantsField() {}
+
+func (controllerPartitionWithPrismaTenantsSetParam) settable()  {}
+func (controllerPartitionWithPrismaTenantsEqualsParam) equals() {}
+
+type controllerPartitionWithPrismaTenantsEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionWithPrismaTenantsEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionWithPrismaTenantsEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p controllerPartitionWithPrismaTenantsEqualsUniqueParam) controllerPartitionModel() {}
+func (p controllerPartitionWithPrismaTenantsEqualsUniqueParam) tenantsField()             {}
+
+func (controllerPartitionWithPrismaTenantsEqualsUniqueParam) unique() {}
+func (controllerPartitionWithPrismaTenantsEqualsUniqueParam) equals() {}
+
+type tenantWorkerPartitionActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var tenantWorkerPartitionOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "createdAt"},
+	{Name: "updatedAt"},
+	{Name: "lastHeartbeat"},
+}
+
+type TenantWorkerPartitionRelationWith interface {
+	getQuery() builder.Query
+	with()
+	tenantWorkerPartitionRelation()
+}
+
+type TenantWorkerPartitionWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantWorkerPartitionModel()
+}
+
+type tenantWorkerPartitionDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWorkerPartitionDefaultParam) tenantWorkerPartitionModel() {}
+
+type TenantWorkerPartitionOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantWorkerPartitionModel()
+}
+
+type tenantWorkerPartitionOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWorkerPartitionOrderByParam) tenantWorkerPartitionModel() {}
+
+type TenantWorkerPartitionCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantWorkerPartitionModel()
+	isCursor()
+}
+
+type tenantWorkerPartitionCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionCursorParam) isCursor() {}
+
+func (p tenantWorkerPartitionCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWorkerPartitionCursorParam) tenantWorkerPartitionModel() {}
+
+type TenantWorkerPartitionParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	tenantWorkerPartitionModel()
+}
+
+type tenantWorkerPartitionParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionParamUnique) tenantWorkerPartitionModel() {}
+
+func (tenantWorkerPartitionParamUnique) unique() {}
+
+func (p tenantWorkerPartitionParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type TenantWorkerPartitionEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tenantWorkerPartitionModel()
+}
+
+type tenantWorkerPartitionEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionEqualsParam) tenantWorkerPartitionModel() {}
+
+func (tenantWorkerPartitionEqualsParam) equals() {}
+
+func (p tenantWorkerPartitionEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type TenantWorkerPartitionEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	tenantWorkerPartitionModel()
+}
+
+type tenantWorkerPartitionEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionEqualsUniqueParam) tenantWorkerPartitionModel() {}
+
+func (tenantWorkerPartitionEqualsUniqueParam) unique() {}
+func (tenantWorkerPartitionEqualsUniqueParam) equals() {}
+
+func (p tenantWorkerPartitionEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type TenantWorkerPartitionSetParam interface {
+	field() builder.Field
+	settable()
+	tenantWorkerPartitionModel()
+}
+
+type tenantWorkerPartitionSetParam struct {
+	data builder.Field
+}
+
+func (tenantWorkerPartitionSetParam) settable() {}
+
+func (p tenantWorkerPartitionSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionSetParam) tenantWorkerPartitionModel() {}
+
+type TenantWorkerPartitionWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tenantWorkerPartitionModel()
+	idField()
+}
+
+type TenantWorkerPartitionWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantWorkerPartitionModel()
+	idField()
+}
+
+type tenantWorkerPartitionWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWorkerPartitionWithPrismaIDSetParam) tenantWorkerPartitionModel() {}
+
+func (p tenantWorkerPartitionWithPrismaIDSetParam) idField() {}
+
+type TenantWorkerPartitionWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantWorkerPartitionModel()
+	idField()
+}
+
+type tenantWorkerPartitionWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWorkerPartitionWithPrismaIDEqualsParam) tenantWorkerPartitionModel() {}
+
+func (p tenantWorkerPartitionWithPrismaIDEqualsParam) idField() {}
+
+func (tenantWorkerPartitionWithPrismaIDSetParam) settable()  {}
+func (tenantWorkerPartitionWithPrismaIDEqualsParam) equals() {}
+
+type tenantWorkerPartitionWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWorkerPartitionWithPrismaIDEqualsUniqueParam) tenantWorkerPartitionModel() {}
+func (p tenantWorkerPartitionWithPrismaIDEqualsUniqueParam) idField()                    {}
+
+func (tenantWorkerPartitionWithPrismaIDEqualsUniqueParam) unique() {}
+func (tenantWorkerPartitionWithPrismaIDEqualsUniqueParam) equals() {}
+
+type TenantWorkerPartitionWithPrismaCreatedAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tenantWorkerPartitionModel()
+	createdAtField()
+}
+
+type TenantWorkerPartitionWithPrismaCreatedAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantWorkerPartitionModel()
+	createdAtField()
+}
+
+type tenantWorkerPartitionWithPrismaCreatedAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionWithPrismaCreatedAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionWithPrismaCreatedAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWorkerPartitionWithPrismaCreatedAtSetParam) tenantWorkerPartitionModel() {}
+
+func (p tenantWorkerPartitionWithPrismaCreatedAtSetParam) createdAtField() {}
+
+type TenantWorkerPartitionWithPrismaCreatedAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantWorkerPartitionModel()
+	createdAtField()
+}
+
+type tenantWorkerPartitionWithPrismaCreatedAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionWithPrismaCreatedAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionWithPrismaCreatedAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWorkerPartitionWithPrismaCreatedAtEqualsParam) tenantWorkerPartitionModel() {}
+
+func (p tenantWorkerPartitionWithPrismaCreatedAtEqualsParam) createdAtField() {}
+
+func (tenantWorkerPartitionWithPrismaCreatedAtSetParam) settable()  {}
+func (tenantWorkerPartitionWithPrismaCreatedAtEqualsParam) equals() {}
+
+type tenantWorkerPartitionWithPrismaCreatedAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionWithPrismaCreatedAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionWithPrismaCreatedAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWorkerPartitionWithPrismaCreatedAtEqualsUniqueParam) tenantWorkerPartitionModel() {}
+func (p tenantWorkerPartitionWithPrismaCreatedAtEqualsUniqueParam) createdAtField()             {}
+
+func (tenantWorkerPartitionWithPrismaCreatedAtEqualsUniqueParam) unique() {}
+func (tenantWorkerPartitionWithPrismaCreatedAtEqualsUniqueParam) equals() {}
+
+type TenantWorkerPartitionWithPrismaUpdatedAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tenantWorkerPartitionModel()
+	updatedAtField()
+}
+
+type TenantWorkerPartitionWithPrismaUpdatedAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantWorkerPartitionModel()
+	updatedAtField()
+}
+
+type tenantWorkerPartitionWithPrismaUpdatedAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionWithPrismaUpdatedAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionWithPrismaUpdatedAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWorkerPartitionWithPrismaUpdatedAtSetParam) tenantWorkerPartitionModel() {}
+
+func (p tenantWorkerPartitionWithPrismaUpdatedAtSetParam) updatedAtField() {}
+
+type TenantWorkerPartitionWithPrismaUpdatedAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantWorkerPartitionModel()
+	updatedAtField()
+}
+
+type tenantWorkerPartitionWithPrismaUpdatedAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionWithPrismaUpdatedAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionWithPrismaUpdatedAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWorkerPartitionWithPrismaUpdatedAtEqualsParam) tenantWorkerPartitionModel() {}
+
+func (p tenantWorkerPartitionWithPrismaUpdatedAtEqualsParam) updatedAtField() {}
+
+func (tenantWorkerPartitionWithPrismaUpdatedAtSetParam) settable()  {}
+func (tenantWorkerPartitionWithPrismaUpdatedAtEqualsParam) equals() {}
+
+type tenantWorkerPartitionWithPrismaUpdatedAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionWithPrismaUpdatedAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionWithPrismaUpdatedAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWorkerPartitionWithPrismaUpdatedAtEqualsUniqueParam) tenantWorkerPartitionModel() {}
+func (p tenantWorkerPartitionWithPrismaUpdatedAtEqualsUniqueParam) updatedAtField()             {}
+
+func (tenantWorkerPartitionWithPrismaUpdatedAtEqualsUniqueParam) unique() {}
+func (tenantWorkerPartitionWithPrismaUpdatedAtEqualsUniqueParam) equals() {}
+
+type TenantWorkerPartitionWithPrismaLastHeartbeatEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tenantWorkerPartitionModel()
+	lastHeartbeatField()
+}
+
+type TenantWorkerPartitionWithPrismaLastHeartbeatSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantWorkerPartitionModel()
+	lastHeartbeatField()
+}
+
+type tenantWorkerPartitionWithPrismaLastHeartbeatSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionWithPrismaLastHeartbeatSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionWithPrismaLastHeartbeatSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWorkerPartitionWithPrismaLastHeartbeatSetParam) tenantWorkerPartitionModel() {}
+
+func (p tenantWorkerPartitionWithPrismaLastHeartbeatSetParam) lastHeartbeatField() {}
+
+type TenantWorkerPartitionWithPrismaLastHeartbeatWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantWorkerPartitionModel()
+	lastHeartbeatField()
+}
+
+type tenantWorkerPartitionWithPrismaLastHeartbeatEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionWithPrismaLastHeartbeatEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionWithPrismaLastHeartbeatEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWorkerPartitionWithPrismaLastHeartbeatEqualsParam) tenantWorkerPartitionModel() {}
+
+func (p tenantWorkerPartitionWithPrismaLastHeartbeatEqualsParam) lastHeartbeatField() {}
+
+func (tenantWorkerPartitionWithPrismaLastHeartbeatSetParam) settable()  {}
+func (tenantWorkerPartitionWithPrismaLastHeartbeatEqualsParam) equals() {}
+
+type tenantWorkerPartitionWithPrismaLastHeartbeatEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWorkerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) tenantWorkerPartitionModel() {}
+func (p tenantWorkerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) lastHeartbeatField()         {}
+
+func (tenantWorkerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) unique() {}
+func (tenantWorkerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) equals() {}
+
+type TenantWorkerPartitionWithPrismaTenantsEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tenantWorkerPartitionModel()
+	tenantsField()
+}
+
+type TenantWorkerPartitionWithPrismaTenantsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantWorkerPartitionModel()
+	tenantsField()
+}
+
+type tenantWorkerPartitionWithPrismaTenantsSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionWithPrismaTenantsSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionWithPrismaTenantsSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWorkerPartitionWithPrismaTenantsSetParam) tenantWorkerPartitionModel() {}
+
+func (p tenantWorkerPartitionWithPrismaTenantsSetParam) tenantsField() {}
+
+type TenantWorkerPartitionWithPrismaTenantsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantWorkerPartitionModel()
+	tenantsField()
+}
+
+type tenantWorkerPartitionWithPrismaTenantsEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionWithPrismaTenantsEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionWithPrismaTenantsEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWorkerPartitionWithPrismaTenantsEqualsParam) tenantWorkerPartitionModel() {}
+
+func (p tenantWorkerPartitionWithPrismaTenantsEqualsParam) tenantsField() {}
+
+func (tenantWorkerPartitionWithPrismaTenantsSetParam) settable()  {}
+func (tenantWorkerPartitionWithPrismaTenantsEqualsParam) equals() {}
+
+type tenantWorkerPartitionWithPrismaTenantsEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionWithPrismaTenantsEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionWithPrismaTenantsEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWorkerPartitionWithPrismaTenantsEqualsUniqueParam) tenantWorkerPartitionModel() {}
+func (p tenantWorkerPartitionWithPrismaTenantsEqualsUniqueParam) tenantsField()               {}
+
+func (tenantWorkerPartitionWithPrismaTenantsEqualsUniqueParam) unique() {}
+func (tenantWorkerPartitionWithPrismaTenantsEqualsUniqueParam) equals() {}
+
 type tenantActions struct {
 	// client holds the prisma client
 	client *PrismaClient
@@ -172788,6 +178353,8 @@ var tenantOutput = []builder.Output{
 	{Name: "name"},
 	{Name: "slug"},
 	{Name: "analyticsOptOut"},
+	{Name: "controllerPartitionId"},
+	{Name: "workerPartitionId"},
 	{Name: "alertMemberEmails"},
 }
 
@@ -173500,6 +179067,318 @@ func (p tenantWithPrismaAnalyticsOptOutEqualsUniqueParam) analyticsOptOutField()
 
 func (tenantWithPrismaAnalyticsOptOutEqualsUniqueParam) unique() {}
 func (tenantWithPrismaAnalyticsOptOutEqualsUniqueParam) equals() {}
+
+type TenantWithPrismaControllerPartitionEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tenantModel()
+	controllerPartitionField()
+}
+
+type TenantWithPrismaControllerPartitionSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantModel()
+	controllerPartitionField()
+}
+
+type tenantWithPrismaControllerPartitionSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaControllerPartitionSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaControllerPartitionSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaControllerPartitionSetParam) tenantModel() {}
+
+func (p tenantWithPrismaControllerPartitionSetParam) controllerPartitionField() {}
+
+type TenantWithPrismaControllerPartitionWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantModel()
+	controllerPartitionField()
+}
+
+type tenantWithPrismaControllerPartitionEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaControllerPartitionEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaControllerPartitionEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaControllerPartitionEqualsParam) tenantModel() {}
+
+func (p tenantWithPrismaControllerPartitionEqualsParam) controllerPartitionField() {}
+
+func (tenantWithPrismaControllerPartitionSetParam) settable()  {}
+func (tenantWithPrismaControllerPartitionEqualsParam) equals() {}
+
+type tenantWithPrismaControllerPartitionEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaControllerPartitionEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaControllerPartitionEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaControllerPartitionEqualsUniqueParam) tenantModel()              {}
+func (p tenantWithPrismaControllerPartitionEqualsUniqueParam) controllerPartitionField() {}
+
+func (tenantWithPrismaControllerPartitionEqualsUniqueParam) unique() {}
+func (tenantWithPrismaControllerPartitionEqualsUniqueParam) equals() {}
+
+type TenantWithPrismaControllerPartitionIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tenantModel()
+	controllerPartitionIDField()
+}
+
+type TenantWithPrismaControllerPartitionIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantModel()
+	controllerPartitionIDField()
+}
+
+type tenantWithPrismaControllerPartitionIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaControllerPartitionIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaControllerPartitionIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaControllerPartitionIDSetParam) tenantModel() {}
+
+func (p tenantWithPrismaControllerPartitionIDSetParam) controllerPartitionIDField() {}
+
+type TenantWithPrismaControllerPartitionIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantModel()
+	controllerPartitionIDField()
+}
+
+type tenantWithPrismaControllerPartitionIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaControllerPartitionIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaControllerPartitionIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaControllerPartitionIDEqualsParam) tenantModel() {}
+
+func (p tenantWithPrismaControllerPartitionIDEqualsParam) controllerPartitionIDField() {}
+
+func (tenantWithPrismaControllerPartitionIDSetParam) settable()  {}
+func (tenantWithPrismaControllerPartitionIDEqualsParam) equals() {}
+
+type tenantWithPrismaControllerPartitionIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaControllerPartitionIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaControllerPartitionIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaControllerPartitionIDEqualsUniqueParam) tenantModel()                {}
+func (p tenantWithPrismaControllerPartitionIDEqualsUniqueParam) controllerPartitionIDField() {}
+
+func (tenantWithPrismaControllerPartitionIDEqualsUniqueParam) unique() {}
+func (tenantWithPrismaControllerPartitionIDEqualsUniqueParam) equals() {}
+
+type TenantWithPrismaWorkerPartitionEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tenantModel()
+	workerPartitionField()
+}
+
+type TenantWithPrismaWorkerPartitionSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantModel()
+	workerPartitionField()
+}
+
+type tenantWithPrismaWorkerPartitionSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaWorkerPartitionSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaWorkerPartitionSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaWorkerPartitionSetParam) tenantModel() {}
+
+func (p tenantWithPrismaWorkerPartitionSetParam) workerPartitionField() {}
+
+type TenantWithPrismaWorkerPartitionWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantModel()
+	workerPartitionField()
+}
+
+type tenantWithPrismaWorkerPartitionEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaWorkerPartitionEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaWorkerPartitionEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaWorkerPartitionEqualsParam) tenantModel() {}
+
+func (p tenantWithPrismaWorkerPartitionEqualsParam) workerPartitionField() {}
+
+func (tenantWithPrismaWorkerPartitionSetParam) settable()  {}
+func (tenantWithPrismaWorkerPartitionEqualsParam) equals() {}
+
+type tenantWithPrismaWorkerPartitionEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaWorkerPartitionEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaWorkerPartitionEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaWorkerPartitionEqualsUniqueParam) tenantModel()          {}
+func (p tenantWithPrismaWorkerPartitionEqualsUniqueParam) workerPartitionField() {}
+
+func (tenantWithPrismaWorkerPartitionEqualsUniqueParam) unique() {}
+func (tenantWithPrismaWorkerPartitionEqualsUniqueParam) equals() {}
+
+type TenantWithPrismaWorkerPartitionIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tenantModel()
+	workerPartitionIDField()
+}
+
+type TenantWithPrismaWorkerPartitionIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantModel()
+	workerPartitionIDField()
+}
+
+type tenantWithPrismaWorkerPartitionIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaWorkerPartitionIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaWorkerPartitionIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaWorkerPartitionIDSetParam) tenantModel() {}
+
+func (p tenantWithPrismaWorkerPartitionIDSetParam) workerPartitionIDField() {}
+
+type TenantWithPrismaWorkerPartitionIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantModel()
+	workerPartitionIDField()
+}
+
+type tenantWithPrismaWorkerPartitionIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaWorkerPartitionIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaWorkerPartitionIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaWorkerPartitionIDEqualsParam) tenantModel() {}
+
+func (p tenantWithPrismaWorkerPartitionIDEqualsParam) workerPartitionIDField() {}
+
+func (tenantWithPrismaWorkerPartitionIDSetParam) settable()  {}
+func (tenantWithPrismaWorkerPartitionIDEqualsParam) equals() {}
+
+type tenantWithPrismaWorkerPartitionIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaWorkerPartitionIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaWorkerPartitionIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaWorkerPartitionIDEqualsUniqueParam) tenantModel()            {}
+func (p tenantWithPrismaWorkerPartitionIDEqualsUniqueParam) workerPartitionIDField() {}
+
+func (tenantWithPrismaWorkerPartitionIDEqualsUniqueParam) unique() {}
+func (tenantWithPrismaWorkerPartitionIDEqualsUniqueParam) equals() {}
 
 type TenantWithPrismaEventsEqualsSetParam interface {
 	field() builder.Field
@@ -221487,6 +227366,142 @@ func (r webhookWorkerWorkflowCreateOne) Tx() WebhookWorkerWorkflowUniqueTxResult
 	return v
 }
 
+// Creates a single controllerPartition.
+func (r controllerPartitionActions) CreateOne(
+	_id ControllerPartitionWithPrismaIDSetParam,
+
+	optional ...ControllerPartitionSetParam,
+) controllerPartitionCreateOne {
+	var v controllerPartitionCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "ControllerPartition"
+	v.query.Outputs = controllerPartitionOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _id.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r controllerPartitionCreateOne) With(params ...ControllerPartitionRelationWith) controllerPartitionCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type controllerPartitionCreateOne struct {
+	query builder.Query
+}
+
+func (p controllerPartitionCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p controllerPartitionCreateOne) controllerPartitionModel() {}
+
+func (r controllerPartitionCreateOne) Exec(ctx context.Context) (*ControllerPartitionModel, error) {
+	var v ControllerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r controllerPartitionCreateOne) Tx() ControllerPartitionUniqueTxResult {
+	v := newControllerPartitionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+// Creates a single tenantWorkerPartition.
+func (r tenantWorkerPartitionActions) CreateOne(
+	_id TenantWorkerPartitionWithPrismaIDSetParam,
+
+	optional ...TenantWorkerPartitionSetParam,
+) tenantWorkerPartitionCreateOne {
+	var v tenantWorkerPartitionCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "TenantWorkerPartition"
+	v.query.Outputs = tenantWorkerPartitionOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _id.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r tenantWorkerPartitionCreateOne) With(params ...TenantWorkerPartitionRelationWith) tenantWorkerPartitionCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type tenantWorkerPartitionCreateOne struct {
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWorkerPartitionCreateOne) tenantWorkerPartitionModel() {}
+
+func (r tenantWorkerPartitionCreateOne) Exec(ctx context.Context) (*TenantWorkerPartitionModel, error) {
+	var v TenantWorkerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantWorkerPartitionCreateOne) Tx() TenantWorkerPartitionUniqueTxResult {
+	v := newTenantWorkerPartitionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 // Creates a single tenant.
 func (r tenantActions) CreateOne(
 	_name TenantWithPrismaNameSetParam,
@@ -234992,6 +241007,3522 @@ func (r webhookWorkerWorkflowDeleteMany) Exec(ctx context.Context) (*BatchResult
 
 func (r webhookWorkerWorkflowDeleteMany) Tx() WebhookWorkerWorkflowManyTxResult {
 	v := newWebhookWorkerWorkflowManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type controllerPartitionToTenantsFindUnique struct {
+	query builder.Query
+}
+
+func (r controllerPartitionToTenantsFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r controllerPartitionToTenantsFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r controllerPartitionToTenantsFindUnique) with()                        {}
+func (r controllerPartitionToTenantsFindUnique) controllerPartitionModel()    {}
+func (r controllerPartitionToTenantsFindUnique) controllerPartitionRelation() {}
+
+func (r controllerPartitionToTenantsFindUnique) With(params ...TenantRelationWith) controllerPartitionToTenantsFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r controllerPartitionToTenantsFindUnique) Select(params ...controllerPartitionPrismaFields) controllerPartitionToTenantsFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r controllerPartitionToTenantsFindUnique) Omit(params ...controllerPartitionPrismaFields) controllerPartitionToTenantsFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range controllerPartitionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r controllerPartitionToTenantsFindUnique) Exec(ctx context.Context) (
+	*ControllerPartitionModel,
+	error,
+) {
+	var v *ControllerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r controllerPartitionToTenantsFindUnique) ExecInner(ctx context.Context) (
+	*InnerControllerPartition,
+	error,
+) {
+	var v *InnerControllerPartition
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r controllerPartitionToTenantsFindUnique) Update(params ...ControllerPartitionSetParam) controllerPartitionToTenantsUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "ControllerPartition"
+
+	var v controllerPartitionToTenantsUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type controllerPartitionToTenantsUpdateUnique struct {
+	query builder.Query
+}
+
+func (r controllerPartitionToTenantsUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r controllerPartitionToTenantsUpdateUnique) controllerPartitionModel() {}
+
+func (r controllerPartitionToTenantsUpdateUnique) Exec(ctx context.Context) (*ControllerPartitionModel, error) {
+	var v ControllerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r controllerPartitionToTenantsUpdateUnique) Tx() ControllerPartitionUniqueTxResult {
+	v := newControllerPartitionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r controllerPartitionToTenantsFindUnique) Delete() controllerPartitionToTenantsDeleteUnique {
+	var v controllerPartitionToTenantsDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "ControllerPartition"
+
+	return v
+}
+
+type controllerPartitionToTenantsDeleteUnique struct {
+	query builder.Query
+}
+
+func (r controllerPartitionToTenantsDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p controllerPartitionToTenantsDeleteUnique) controllerPartitionModel() {}
+
+func (r controllerPartitionToTenantsDeleteUnique) Exec(ctx context.Context) (*ControllerPartitionModel, error) {
+	var v ControllerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r controllerPartitionToTenantsDeleteUnique) Tx() ControllerPartitionUniqueTxResult {
+	v := newControllerPartitionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type controllerPartitionToTenantsFindFirst struct {
+	query builder.Query
+}
+
+func (r controllerPartitionToTenantsFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r controllerPartitionToTenantsFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r controllerPartitionToTenantsFindFirst) with()                        {}
+func (r controllerPartitionToTenantsFindFirst) controllerPartitionModel()    {}
+func (r controllerPartitionToTenantsFindFirst) controllerPartitionRelation() {}
+
+func (r controllerPartitionToTenantsFindFirst) With(params ...TenantRelationWith) controllerPartitionToTenantsFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r controllerPartitionToTenantsFindFirst) Select(params ...controllerPartitionPrismaFields) controllerPartitionToTenantsFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r controllerPartitionToTenantsFindFirst) Omit(params ...controllerPartitionPrismaFields) controllerPartitionToTenantsFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range controllerPartitionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r controllerPartitionToTenantsFindFirst) OrderBy(params ...TenantOrderByParam) controllerPartitionToTenantsFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r controllerPartitionToTenantsFindFirst) Skip(count int) controllerPartitionToTenantsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r controllerPartitionToTenantsFindFirst) Take(count int) controllerPartitionToTenantsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r controllerPartitionToTenantsFindFirst) Cursor(cursor ControllerPartitionCursorParam) controllerPartitionToTenantsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r controllerPartitionToTenantsFindFirst) Exec(ctx context.Context) (
+	*ControllerPartitionModel,
+	error,
+) {
+	var v *ControllerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r controllerPartitionToTenantsFindFirst) ExecInner(ctx context.Context) (
+	*InnerControllerPartition,
+	error,
+) {
+	var v *InnerControllerPartition
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type controllerPartitionToTenantsFindMany struct {
+	query builder.Query
+}
+
+func (r controllerPartitionToTenantsFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r controllerPartitionToTenantsFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r controllerPartitionToTenantsFindMany) with()                        {}
+func (r controllerPartitionToTenantsFindMany) controllerPartitionModel()    {}
+func (r controllerPartitionToTenantsFindMany) controllerPartitionRelation() {}
+
+func (r controllerPartitionToTenantsFindMany) With(params ...TenantRelationWith) controllerPartitionToTenantsFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r controllerPartitionToTenantsFindMany) Select(params ...controllerPartitionPrismaFields) controllerPartitionToTenantsFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r controllerPartitionToTenantsFindMany) Omit(params ...controllerPartitionPrismaFields) controllerPartitionToTenantsFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range controllerPartitionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r controllerPartitionToTenantsFindMany) OrderBy(params ...TenantOrderByParam) controllerPartitionToTenantsFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r controllerPartitionToTenantsFindMany) Skip(count int) controllerPartitionToTenantsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r controllerPartitionToTenantsFindMany) Take(count int) controllerPartitionToTenantsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r controllerPartitionToTenantsFindMany) Cursor(cursor ControllerPartitionCursorParam) controllerPartitionToTenantsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r controllerPartitionToTenantsFindMany) Exec(ctx context.Context) (
+	[]ControllerPartitionModel,
+	error,
+) {
+	var v []ControllerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r controllerPartitionToTenantsFindMany) ExecInner(ctx context.Context) (
+	[]InnerControllerPartition,
+	error,
+) {
+	var v []InnerControllerPartition
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r controllerPartitionToTenantsFindMany) Update(params ...ControllerPartitionSetParam) controllerPartitionToTenantsUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "ControllerPartition"
+
+	r.query.Outputs = countOutput
+
+	var v controllerPartitionToTenantsUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type controllerPartitionToTenantsUpdateMany struct {
+	query builder.Query
+}
+
+func (r controllerPartitionToTenantsUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r controllerPartitionToTenantsUpdateMany) controllerPartitionModel() {}
+
+func (r controllerPartitionToTenantsUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r controllerPartitionToTenantsUpdateMany) Tx() ControllerPartitionManyTxResult {
+	v := newControllerPartitionManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r controllerPartitionToTenantsFindMany) Delete() controllerPartitionToTenantsDeleteMany {
+	var v controllerPartitionToTenantsDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "ControllerPartition"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type controllerPartitionToTenantsDeleteMany struct {
+	query builder.Query
+}
+
+func (r controllerPartitionToTenantsDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p controllerPartitionToTenantsDeleteMany) controllerPartitionModel() {}
+
+func (r controllerPartitionToTenantsDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r controllerPartitionToTenantsDeleteMany) Tx() ControllerPartitionManyTxResult {
+	v := newControllerPartitionManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type controllerPartitionFindUnique struct {
+	query builder.Query
+}
+
+func (r controllerPartitionFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r controllerPartitionFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r controllerPartitionFindUnique) with()                        {}
+func (r controllerPartitionFindUnique) controllerPartitionModel()    {}
+func (r controllerPartitionFindUnique) controllerPartitionRelation() {}
+
+func (r controllerPartitionActions) FindUnique(
+	params ControllerPartitionEqualsUniqueWhereParam,
+) controllerPartitionFindUnique {
+	var v controllerPartitionFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "ControllerPartition"
+	v.query.Outputs = controllerPartitionOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r controllerPartitionFindUnique) With(params ...ControllerPartitionRelationWith) controllerPartitionFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r controllerPartitionFindUnique) Select(params ...controllerPartitionPrismaFields) controllerPartitionFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r controllerPartitionFindUnique) Omit(params ...controllerPartitionPrismaFields) controllerPartitionFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range controllerPartitionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r controllerPartitionFindUnique) Exec(ctx context.Context) (
+	*ControllerPartitionModel,
+	error,
+) {
+	var v *ControllerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r controllerPartitionFindUnique) ExecInner(ctx context.Context) (
+	*InnerControllerPartition,
+	error,
+) {
+	var v *InnerControllerPartition
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r controllerPartitionFindUnique) Update(params ...ControllerPartitionSetParam) controllerPartitionUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "ControllerPartition"
+
+	var v controllerPartitionUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type controllerPartitionUpdateUnique struct {
+	query builder.Query
+}
+
+func (r controllerPartitionUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r controllerPartitionUpdateUnique) controllerPartitionModel() {}
+
+func (r controllerPartitionUpdateUnique) Exec(ctx context.Context) (*ControllerPartitionModel, error) {
+	var v ControllerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r controllerPartitionUpdateUnique) Tx() ControllerPartitionUniqueTxResult {
+	v := newControllerPartitionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r controllerPartitionFindUnique) Delete() controllerPartitionDeleteUnique {
+	var v controllerPartitionDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "ControllerPartition"
+
+	return v
+}
+
+type controllerPartitionDeleteUnique struct {
+	query builder.Query
+}
+
+func (r controllerPartitionDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p controllerPartitionDeleteUnique) controllerPartitionModel() {}
+
+func (r controllerPartitionDeleteUnique) Exec(ctx context.Context) (*ControllerPartitionModel, error) {
+	var v ControllerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r controllerPartitionDeleteUnique) Tx() ControllerPartitionUniqueTxResult {
+	v := newControllerPartitionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type controllerPartitionFindFirst struct {
+	query builder.Query
+}
+
+func (r controllerPartitionFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r controllerPartitionFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r controllerPartitionFindFirst) with()                        {}
+func (r controllerPartitionFindFirst) controllerPartitionModel()    {}
+func (r controllerPartitionFindFirst) controllerPartitionRelation() {}
+
+func (r controllerPartitionActions) FindFirst(
+	params ...ControllerPartitionWhereParam,
+) controllerPartitionFindFirst {
+	var v controllerPartitionFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "ControllerPartition"
+	v.query.Outputs = controllerPartitionOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r controllerPartitionFindFirst) With(params ...ControllerPartitionRelationWith) controllerPartitionFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r controllerPartitionFindFirst) Select(params ...controllerPartitionPrismaFields) controllerPartitionFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r controllerPartitionFindFirst) Omit(params ...controllerPartitionPrismaFields) controllerPartitionFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range controllerPartitionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r controllerPartitionFindFirst) OrderBy(params ...ControllerPartitionOrderByParam) controllerPartitionFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r controllerPartitionFindFirst) Skip(count int) controllerPartitionFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r controllerPartitionFindFirst) Take(count int) controllerPartitionFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r controllerPartitionFindFirst) Cursor(cursor ControllerPartitionCursorParam) controllerPartitionFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r controllerPartitionFindFirst) Exec(ctx context.Context) (
+	*ControllerPartitionModel,
+	error,
+) {
+	var v *ControllerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r controllerPartitionFindFirst) ExecInner(ctx context.Context) (
+	*InnerControllerPartition,
+	error,
+) {
+	var v *InnerControllerPartition
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type controllerPartitionFindMany struct {
+	query builder.Query
+}
+
+func (r controllerPartitionFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r controllerPartitionFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r controllerPartitionFindMany) with()                        {}
+func (r controllerPartitionFindMany) controllerPartitionModel()    {}
+func (r controllerPartitionFindMany) controllerPartitionRelation() {}
+
+func (r controllerPartitionActions) FindMany(
+	params ...ControllerPartitionWhereParam,
+) controllerPartitionFindMany {
+	var v controllerPartitionFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "ControllerPartition"
+	v.query.Outputs = controllerPartitionOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r controllerPartitionFindMany) With(params ...ControllerPartitionRelationWith) controllerPartitionFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r controllerPartitionFindMany) Select(params ...controllerPartitionPrismaFields) controllerPartitionFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r controllerPartitionFindMany) Omit(params ...controllerPartitionPrismaFields) controllerPartitionFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range controllerPartitionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r controllerPartitionFindMany) OrderBy(params ...ControllerPartitionOrderByParam) controllerPartitionFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r controllerPartitionFindMany) Skip(count int) controllerPartitionFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r controllerPartitionFindMany) Take(count int) controllerPartitionFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r controllerPartitionFindMany) Cursor(cursor ControllerPartitionCursorParam) controllerPartitionFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r controllerPartitionFindMany) Exec(ctx context.Context) (
+	[]ControllerPartitionModel,
+	error,
+) {
+	var v []ControllerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r controllerPartitionFindMany) ExecInner(ctx context.Context) (
+	[]InnerControllerPartition,
+	error,
+) {
+	var v []InnerControllerPartition
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r controllerPartitionFindMany) Update(params ...ControllerPartitionSetParam) controllerPartitionUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "ControllerPartition"
+
+	r.query.Outputs = countOutput
+
+	var v controllerPartitionUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type controllerPartitionUpdateMany struct {
+	query builder.Query
+}
+
+func (r controllerPartitionUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r controllerPartitionUpdateMany) controllerPartitionModel() {}
+
+func (r controllerPartitionUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r controllerPartitionUpdateMany) Tx() ControllerPartitionManyTxResult {
+	v := newControllerPartitionManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r controllerPartitionFindMany) Delete() controllerPartitionDeleteMany {
+	var v controllerPartitionDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "ControllerPartition"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type controllerPartitionDeleteMany struct {
+	query builder.Query
+}
+
+func (r controllerPartitionDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p controllerPartitionDeleteMany) controllerPartitionModel() {}
+
+func (r controllerPartitionDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r controllerPartitionDeleteMany) Tx() ControllerPartitionManyTxResult {
+	v := newControllerPartitionManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type tenantWorkerPartitionToTenantsFindUnique struct {
+	query builder.Query
+}
+
+func (r tenantWorkerPartitionToTenantsFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantWorkerPartitionToTenantsFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantWorkerPartitionToTenantsFindUnique) with()                          {}
+func (r tenantWorkerPartitionToTenantsFindUnique) tenantWorkerPartitionModel()    {}
+func (r tenantWorkerPartitionToTenantsFindUnique) tenantWorkerPartitionRelation() {}
+
+func (r tenantWorkerPartitionToTenantsFindUnique) With(params ...TenantRelationWith) tenantWorkerPartitionToTenantsFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tenantWorkerPartitionToTenantsFindUnique) Select(params ...tenantWorkerPartitionPrismaFields) tenantWorkerPartitionToTenantsFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantWorkerPartitionToTenantsFindUnique) Omit(params ...tenantWorkerPartitionPrismaFields) tenantWorkerPartitionToTenantsFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tenantWorkerPartitionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantWorkerPartitionToTenantsFindUnique) Exec(ctx context.Context) (
+	*TenantWorkerPartitionModel,
+	error,
+) {
+	var v *TenantWorkerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tenantWorkerPartitionToTenantsFindUnique) ExecInner(ctx context.Context) (
+	*InnerTenantWorkerPartition,
+	error,
+) {
+	var v *InnerTenantWorkerPartition
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tenantWorkerPartitionToTenantsFindUnique) Update(params ...TenantWorkerPartitionSetParam) tenantWorkerPartitionToTenantsUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "TenantWorkerPartition"
+
+	var v tenantWorkerPartitionToTenantsUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type tenantWorkerPartitionToTenantsUpdateUnique struct {
+	query builder.Query
+}
+
+func (r tenantWorkerPartitionToTenantsUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantWorkerPartitionToTenantsUpdateUnique) tenantWorkerPartitionModel() {}
+
+func (r tenantWorkerPartitionToTenantsUpdateUnique) Exec(ctx context.Context) (*TenantWorkerPartitionModel, error) {
+	var v TenantWorkerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantWorkerPartitionToTenantsUpdateUnique) Tx() TenantWorkerPartitionUniqueTxResult {
+	v := newTenantWorkerPartitionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r tenantWorkerPartitionToTenantsFindUnique) Delete() tenantWorkerPartitionToTenantsDeleteUnique {
+	var v tenantWorkerPartitionToTenantsDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "TenantWorkerPartition"
+
+	return v
+}
+
+type tenantWorkerPartitionToTenantsDeleteUnique struct {
+	query builder.Query
+}
+
+func (r tenantWorkerPartitionToTenantsDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p tenantWorkerPartitionToTenantsDeleteUnique) tenantWorkerPartitionModel() {}
+
+func (r tenantWorkerPartitionToTenantsDeleteUnique) Exec(ctx context.Context) (*TenantWorkerPartitionModel, error) {
+	var v TenantWorkerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantWorkerPartitionToTenantsDeleteUnique) Tx() TenantWorkerPartitionUniqueTxResult {
+	v := newTenantWorkerPartitionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type tenantWorkerPartitionToTenantsFindFirst struct {
+	query builder.Query
+}
+
+func (r tenantWorkerPartitionToTenantsFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantWorkerPartitionToTenantsFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantWorkerPartitionToTenantsFindFirst) with()                          {}
+func (r tenantWorkerPartitionToTenantsFindFirst) tenantWorkerPartitionModel()    {}
+func (r tenantWorkerPartitionToTenantsFindFirst) tenantWorkerPartitionRelation() {}
+
+func (r tenantWorkerPartitionToTenantsFindFirst) With(params ...TenantRelationWith) tenantWorkerPartitionToTenantsFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tenantWorkerPartitionToTenantsFindFirst) Select(params ...tenantWorkerPartitionPrismaFields) tenantWorkerPartitionToTenantsFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantWorkerPartitionToTenantsFindFirst) Omit(params ...tenantWorkerPartitionPrismaFields) tenantWorkerPartitionToTenantsFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tenantWorkerPartitionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantWorkerPartitionToTenantsFindFirst) OrderBy(params ...TenantOrderByParam) tenantWorkerPartitionToTenantsFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r tenantWorkerPartitionToTenantsFindFirst) Skip(count int) tenantWorkerPartitionToTenantsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantWorkerPartitionToTenantsFindFirst) Take(count int) tenantWorkerPartitionToTenantsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantWorkerPartitionToTenantsFindFirst) Cursor(cursor TenantWorkerPartitionCursorParam) tenantWorkerPartitionToTenantsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r tenantWorkerPartitionToTenantsFindFirst) Exec(ctx context.Context) (
+	*TenantWorkerPartitionModel,
+	error,
+) {
+	var v *TenantWorkerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tenantWorkerPartitionToTenantsFindFirst) ExecInner(ctx context.Context) (
+	*InnerTenantWorkerPartition,
+	error,
+) {
+	var v *InnerTenantWorkerPartition
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type tenantWorkerPartitionToTenantsFindMany struct {
+	query builder.Query
+}
+
+func (r tenantWorkerPartitionToTenantsFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantWorkerPartitionToTenantsFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantWorkerPartitionToTenantsFindMany) with()                          {}
+func (r tenantWorkerPartitionToTenantsFindMany) tenantWorkerPartitionModel()    {}
+func (r tenantWorkerPartitionToTenantsFindMany) tenantWorkerPartitionRelation() {}
+
+func (r tenantWorkerPartitionToTenantsFindMany) With(params ...TenantRelationWith) tenantWorkerPartitionToTenantsFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tenantWorkerPartitionToTenantsFindMany) Select(params ...tenantWorkerPartitionPrismaFields) tenantWorkerPartitionToTenantsFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantWorkerPartitionToTenantsFindMany) Omit(params ...tenantWorkerPartitionPrismaFields) tenantWorkerPartitionToTenantsFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tenantWorkerPartitionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantWorkerPartitionToTenantsFindMany) OrderBy(params ...TenantOrderByParam) tenantWorkerPartitionToTenantsFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r tenantWorkerPartitionToTenantsFindMany) Skip(count int) tenantWorkerPartitionToTenantsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantWorkerPartitionToTenantsFindMany) Take(count int) tenantWorkerPartitionToTenantsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantWorkerPartitionToTenantsFindMany) Cursor(cursor TenantWorkerPartitionCursorParam) tenantWorkerPartitionToTenantsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r tenantWorkerPartitionToTenantsFindMany) Exec(ctx context.Context) (
+	[]TenantWorkerPartitionModel,
+	error,
+) {
+	var v []TenantWorkerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r tenantWorkerPartitionToTenantsFindMany) ExecInner(ctx context.Context) (
+	[]InnerTenantWorkerPartition,
+	error,
+) {
+	var v []InnerTenantWorkerPartition
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r tenantWorkerPartitionToTenantsFindMany) Update(params ...TenantWorkerPartitionSetParam) tenantWorkerPartitionToTenantsUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "TenantWorkerPartition"
+
+	r.query.Outputs = countOutput
+
+	var v tenantWorkerPartitionToTenantsUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type tenantWorkerPartitionToTenantsUpdateMany struct {
+	query builder.Query
+}
+
+func (r tenantWorkerPartitionToTenantsUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantWorkerPartitionToTenantsUpdateMany) tenantWorkerPartitionModel() {}
+
+func (r tenantWorkerPartitionToTenantsUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantWorkerPartitionToTenantsUpdateMany) Tx() TenantWorkerPartitionManyTxResult {
+	v := newTenantWorkerPartitionManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r tenantWorkerPartitionToTenantsFindMany) Delete() tenantWorkerPartitionToTenantsDeleteMany {
+	var v tenantWorkerPartitionToTenantsDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "TenantWorkerPartition"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type tenantWorkerPartitionToTenantsDeleteMany struct {
+	query builder.Query
+}
+
+func (r tenantWorkerPartitionToTenantsDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p tenantWorkerPartitionToTenantsDeleteMany) tenantWorkerPartitionModel() {}
+
+func (r tenantWorkerPartitionToTenantsDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantWorkerPartitionToTenantsDeleteMany) Tx() TenantWorkerPartitionManyTxResult {
+	v := newTenantWorkerPartitionManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type tenantWorkerPartitionFindUnique struct {
+	query builder.Query
+}
+
+func (r tenantWorkerPartitionFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantWorkerPartitionFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantWorkerPartitionFindUnique) with()                          {}
+func (r tenantWorkerPartitionFindUnique) tenantWorkerPartitionModel()    {}
+func (r tenantWorkerPartitionFindUnique) tenantWorkerPartitionRelation() {}
+
+func (r tenantWorkerPartitionActions) FindUnique(
+	params TenantWorkerPartitionEqualsUniqueWhereParam,
+) tenantWorkerPartitionFindUnique {
+	var v tenantWorkerPartitionFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "TenantWorkerPartition"
+	v.query.Outputs = tenantWorkerPartitionOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r tenantWorkerPartitionFindUnique) With(params ...TenantWorkerPartitionRelationWith) tenantWorkerPartitionFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tenantWorkerPartitionFindUnique) Select(params ...tenantWorkerPartitionPrismaFields) tenantWorkerPartitionFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantWorkerPartitionFindUnique) Omit(params ...tenantWorkerPartitionPrismaFields) tenantWorkerPartitionFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tenantWorkerPartitionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantWorkerPartitionFindUnique) Exec(ctx context.Context) (
+	*TenantWorkerPartitionModel,
+	error,
+) {
+	var v *TenantWorkerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tenantWorkerPartitionFindUnique) ExecInner(ctx context.Context) (
+	*InnerTenantWorkerPartition,
+	error,
+) {
+	var v *InnerTenantWorkerPartition
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tenantWorkerPartitionFindUnique) Update(params ...TenantWorkerPartitionSetParam) tenantWorkerPartitionUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "TenantWorkerPartition"
+
+	var v tenantWorkerPartitionUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type tenantWorkerPartitionUpdateUnique struct {
+	query builder.Query
+}
+
+func (r tenantWorkerPartitionUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantWorkerPartitionUpdateUnique) tenantWorkerPartitionModel() {}
+
+func (r tenantWorkerPartitionUpdateUnique) Exec(ctx context.Context) (*TenantWorkerPartitionModel, error) {
+	var v TenantWorkerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantWorkerPartitionUpdateUnique) Tx() TenantWorkerPartitionUniqueTxResult {
+	v := newTenantWorkerPartitionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r tenantWorkerPartitionFindUnique) Delete() tenantWorkerPartitionDeleteUnique {
+	var v tenantWorkerPartitionDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "TenantWorkerPartition"
+
+	return v
+}
+
+type tenantWorkerPartitionDeleteUnique struct {
+	query builder.Query
+}
+
+func (r tenantWorkerPartitionDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p tenantWorkerPartitionDeleteUnique) tenantWorkerPartitionModel() {}
+
+func (r tenantWorkerPartitionDeleteUnique) Exec(ctx context.Context) (*TenantWorkerPartitionModel, error) {
+	var v TenantWorkerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantWorkerPartitionDeleteUnique) Tx() TenantWorkerPartitionUniqueTxResult {
+	v := newTenantWorkerPartitionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type tenantWorkerPartitionFindFirst struct {
+	query builder.Query
+}
+
+func (r tenantWorkerPartitionFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantWorkerPartitionFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantWorkerPartitionFindFirst) with()                          {}
+func (r tenantWorkerPartitionFindFirst) tenantWorkerPartitionModel()    {}
+func (r tenantWorkerPartitionFindFirst) tenantWorkerPartitionRelation() {}
+
+func (r tenantWorkerPartitionActions) FindFirst(
+	params ...TenantWorkerPartitionWhereParam,
+) tenantWorkerPartitionFindFirst {
+	var v tenantWorkerPartitionFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "TenantWorkerPartition"
+	v.query.Outputs = tenantWorkerPartitionOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r tenantWorkerPartitionFindFirst) With(params ...TenantWorkerPartitionRelationWith) tenantWorkerPartitionFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tenantWorkerPartitionFindFirst) Select(params ...tenantWorkerPartitionPrismaFields) tenantWorkerPartitionFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantWorkerPartitionFindFirst) Omit(params ...tenantWorkerPartitionPrismaFields) tenantWorkerPartitionFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tenantWorkerPartitionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantWorkerPartitionFindFirst) OrderBy(params ...TenantWorkerPartitionOrderByParam) tenantWorkerPartitionFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r tenantWorkerPartitionFindFirst) Skip(count int) tenantWorkerPartitionFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantWorkerPartitionFindFirst) Take(count int) tenantWorkerPartitionFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantWorkerPartitionFindFirst) Cursor(cursor TenantWorkerPartitionCursorParam) tenantWorkerPartitionFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r tenantWorkerPartitionFindFirst) Exec(ctx context.Context) (
+	*TenantWorkerPartitionModel,
+	error,
+) {
+	var v *TenantWorkerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tenantWorkerPartitionFindFirst) ExecInner(ctx context.Context) (
+	*InnerTenantWorkerPartition,
+	error,
+) {
+	var v *InnerTenantWorkerPartition
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type tenantWorkerPartitionFindMany struct {
+	query builder.Query
+}
+
+func (r tenantWorkerPartitionFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantWorkerPartitionFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantWorkerPartitionFindMany) with()                          {}
+func (r tenantWorkerPartitionFindMany) tenantWorkerPartitionModel()    {}
+func (r tenantWorkerPartitionFindMany) tenantWorkerPartitionRelation() {}
+
+func (r tenantWorkerPartitionActions) FindMany(
+	params ...TenantWorkerPartitionWhereParam,
+) tenantWorkerPartitionFindMany {
+	var v tenantWorkerPartitionFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "TenantWorkerPartition"
+	v.query.Outputs = tenantWorkerPartitionOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r tenantWorkerPartitionFindMany) With(params ...TenantWorkerPartitionRelationWith) tenantWorkerPartitionFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tenantWorkerPartitionFindMany) Select(params ...tenantWorkerPartitionPrismaFields) tenantWorkerPartitionFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantWorkerPartitionFindMany) Omit(params ...tenantWorkerPartitionPrismaFields) tenantWorkerPartitionFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tenantWorkerPartitionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantWorkerPartitionFindMany) OrderBy(params ...TenantWorkerPartitionOrderByParam) tenantWorkerPartitionFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r tenantWorkerPartitionFindMany) Skip(count int) tenantWorkerPartitionFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantWorkerPartitionFindMany) Take(count int) tenantWorkerPartitionFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantWorkerPartitionFindMany) Cursor(cursor TenantWorkerPartitionCursorParam) tenantWorkerPartitionFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r tenantWorkerPartitionFindMany) Exec(ctx context.Context) (
+	[]TenantWorkerPartitionModel,
+	error,
+) {
+	var v []TenantWorkerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r tenantWorkerPartitionFindMany) ExecInner(ctx context.Context) (
+	[]InnerTenantWorkerPartition,
+	error,
+) {
+	var v []InnerTenantWorkerPartition
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r tenantWorkerPartitionFindMany) Update(params ...TenantWorkerPartitionSetParam) tenantWorkerPartitionUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "TenantWorkerPartition"
+
+	r.query.Outputs = countOutput
+
+	var v tenantWorkerPartitionUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type tenantWorkerPartitionUpdateMany struct {
+	query builder.Query
+}
+
+func (r tenantWorkerPartitionUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantWorkerPartitionUpdateMany) tenantWorkerPartitionModel() {}
+
+func (r tenantWorkerPartitionUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantWorkerPartitionUpdateMany) Tx() TenantWorkerPartitionManyTxResult {
+	v := newTenantWorkerPartitionManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r tenantWorkerPartitionFindMany) Delete() tenantWorkerPartitionDeleteMany {
+	var v tenantWorkerPartitionDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "TenantWorkerPartition"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type tenantWorkerPartitionDeleteMany struct {
+	query builder.Query
+}
+
+func (r tenantWorkerPartitionDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p tenantWorkerPartitionDeleteMany) tenantWorkerPartitionModel() {}
+
+func (r tenantWorkerPartitionDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantWorkerPartitionDeleteMany) Tx() TenantWorkerPartitionManyTxResult {
+	v := newTenantWorkerPartitionManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type tenantToControllerPartitionFindUnique struct {
+	query builder.Query
+}
+
+func (r tenantToControllerPartitionFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToControllerPartitionFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToControllerPartitionFindUnique) with()           {}
+func (r tenantToControllerPartitionFindUnique) tenantModel()    {}
+func (r tenantToControllerPartitionFindUnique) tenantRelation() {}
+
+func (r tenantToControllerPartitionFindUnique) With(params ...ControllerPartitionRelationWith) tenantToControllerPartitionFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tenantToControllerPartitionFindUnique) Select(params ...tenantPrismaFields) tenantToControllerPartitionFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToControllerPartitionFindUnique) Omit(params ...tenantPrismaFields) tenantToControllerPartitionFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tenantOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToControllerPartitionFindUnique) Exec(ctx context.Context) (
+	*TenantModel,
+	error,
+) {
+	var v *TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tenantToControllerPartitionFindUnique) ExecInner(ctx context.Context) (
+	*InnerTenant,
+	error,
+) {
+	var v *InnerTenant
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tenantToControllerPartitionFindUnique) Update(params ...TenantSetParam) tenantToControllerPartitionUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Tenant"
+
+	var v tenantToControllerPartitionUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type tenantToControllerPartitionUpdateUnique struct {
+	query builder.Query
+}
+
+func (r tenantToControllerPartitionUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToControllerPartitionUpdateUnique) tenantModel() {}
+
+func (r tenantToControllerPartitionUpdateUnique) Exec(ctx context.Context) (*TenantModel, error) {
+	var v TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantToControllerPartitionUpdateUnique) Tx() TenantUniqueTxResult {
+	v := newTenantUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r tenantToControllerPartitionFindUnique) Delete() tenantToControllerPartitionDeleteUnique {
+	var v tenantToControllerPartitionDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Tenant"
+
+	return v
+}
+
+type tenantToControllerPartitionDeleteUnique struct {
+	query builder.Query
+}
+
+func (r tenantToControllerPartitionDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p tenantToControllerPartitionDeleteUnique) tenantModel() {}
+
+func (r tenantToControllerPartitionDeleteUnique) Exec(ctx context.Context) (*TenantModel, error) {
+	var v TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantToControllerPartitionDeleteUnique) Tx() TenantUniqueTxResult {
+	v := newTenantUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type tenantToControllerPartitionFindFirst struct {
+	query builder.Query
+}
+
+func (r tenantToControllerPartitionFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToControllerPartitionFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToControllerPartitionFindFirst) with()           {}
+func (r tenantToControllerPartitionFindFirst) tenantModel()    {}
+func (r tenantToControllerPartitionFindFirst) tenantRelation() {}
+
+func (r tenantToControllerPartitionFindFirst) With(params ...ControllerPartitionRelationWith) tenantToControllerPartitionFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tenantToControllerPartitionFindFirst) Select(params ...tenantPrismaFields) tenantToControllerPartitionFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToControllerPartitionFindFirst) Omit(params ...tenantPrismaFields) tenantToControllerPartitionFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tenantOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToControllerPartitionFindFirst) OrderBy(params ...ControllerPartitionOrderByParam) tenantToControllerPartitionFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r tenantToControllerPartitionFindFirst) Skip(count int) tenantToControllerPartitionFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantToControllerPartitionFindFirst) Take(count int) tenantToControllerPartitionFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantToControllerPartitionFindFirst) Cursor(cursor TenantCursorParam) tenantToControllerPartitionFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r tenantToControllerPartitionFindFirst) Exec(ctx context.Context) (
+	*TenantModel,
+	error,
+) {
+	var v *TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tenantToControllerPartitionFindFirst) ExecInner(ctx context.Context) (
+	*InnerTenant,
+	error,
+) {
+	var v *InnerTenant
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type tenantToControllerPartitionFindMany struct {
+	query builder.Query
+}
+
+func (r tenantToControllerPartitionFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToControllerPartitionFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToControllerPartitionFindMany) with()           {}
+func (r tenantToControllerPartitionFindMany) tenantModel()    {}
+func (r tenantToControllerPartitionFindMany) tenantRelation() {}
+
+func (r tenantToControllerPartitionFindMany) With(params ...ControllerPartitionRelationWith) tenantToControllerPartitionFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tenantToControllerPartitionFindMany) Select(params ...tenantPrismaFields) tenantToControllerPartitionFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToControllerPartitionFindMany) Omit(params ...tenantPrismaFields) tenantToControllerPartitionFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tenantOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToControllerPartitionFindMany) OrderBy(params ...ControllerPartitionOrderByParam) tenantToControllerPartitionFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r tenantToControllerPartitionFindMany) Skip(count int) tenantToControllerPartitionFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantToControllerPartitionFindMany) Take(count int) tenantToControllerPartitionFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantToControllerPartitionFindMany) Cursor(cursor TenantCursorParam) tenantToControllerPartitionFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r tenantToControllerPartitionFindMany) Exec(ctx context.Context) (
+	[]TenantModel,
+	error,
+) {
+	var v []TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r tenantToControllerPartitionFindMany) ExecInner(ctx context.Context) (
+	[]InnerTenant,
+	error,
+) {
+	var v []InnerTenant
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r tenantToControllerPartitionFindMany) Update(params ...TenantSetParam) tenantToControllerPartitionUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Tenant"
+
+	r.query.Outputs = countOutput
+
+	var v tenantToControllerPartitionUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type tenantToControllerPartitionUpdateMany struct {
+	query builder.Query
+}
+
+func (r tenantToControllerPartitionUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToControllerPartitionUpdateMany) tenantModel() {}
+
+func (r tenantToControllerPartitionUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantToControllerPartitionUpdateMany) Tx() TenantManyTxResult {
+	v := newTenantManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r tenantToControllerPartitionFindMany) Delete() tenantToControllerPartitionDeleteMany {
+	var v tenantToControllerPartitionDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Tenant"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type tenantToControllerPartitionDeleteMany struct {
+	query builder.Query
+}
+
+func (r tenantToControllerPartitionDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p tenantToControllerPartitionDeleteMany) tenantModel() {}
+
+func (r tenantToControllerPartitionDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantToControllerPartitionDeleteMany) Tx() TenantManyTxResult {
+	v := newTenantManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type tenantToWorkerPartitionFindUnique struct {
+	query builder.Query
+}
+
+func (r tenantToWorkerPartitionFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToWorkerPartitionFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToWorkerPartitionFindUnique) with()           {}
+func (r tenantToWorkerPartitionFindUnique) tenantModel()    {}
+func (r tenantToWorkerPartitionFindUnique) tenantRelation() {}
+
+func (r tenantToWorkerPartitionFindUnique) With(params ...TenantWorkerPartitionRelationWith) tenantToWorkerPartitionFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tenantToWorkerPartitionFindUnique) Select(params ...tenantPrismaFields) tenantToWorkerPartitionFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToWorkerPartitionFindUnique) Omit(params ...tenantPrismaFields) tenantToWorkerPartitionFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tenantOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToWorkerPartitionFindUnique) Exec(ctx context.Context) (
+	*TenantModel,
+	error,
+) {
+	var v *TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tenantToWorkerPartitionFindUnique) ExecInner(ctx context.Context) (
+	*InnerTenant,
+	error,
+) {
+	var v *InnerTenant
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tenantToWorkerPartitionFindUnique) Update(params ...TenantSetParam) tenantToWorkerPartitionUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Tenant"
+
+	var v tenantToWorkerPartitionUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type tenantToWorkerPartitionUpdateUnique struct {
+	query builder.Query
+}
+
+func (r tenantToWorkerPartitionUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToWorkerPartitionUpdateUnique) tenantModel() {}
+
+func (r tenantToWorkerPartitionUpdateUnique) Exec(ctx context.Context) (*TenantModel, error) {
+	var v TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantToWorkerPartitionUpdateUnique) Tx() TenantUniqueTxResult {
+	v := newTenantUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r tenantToWorkerPartitionFindUnique) Delete() tenantToWorkerPartitionDeleteUnique {
+	var v tenantToWorkerPartitionDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Tenant"
+
+	return v
+}
+
+type tenantToWorkerPartitionDeleteUnique struct {
+	query builder.Query
+}
+
+func (r tenantToWorkerPartitionDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p tenantToWorkerPartitionDeleteUnique) tenantModel() {}
+
+func (r tenantToWorkerPartitionDeleteUnique) Exec(ctx context.Context) (*TenantModel, error) {
+	var v TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantToWorkerPartitionDeleteUnique) Tx() TenantUniqueTxResult {
+	v := newTenantUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type tenantToWorkerPartitionFindFirst struct {
+	query builder.Query
+}
+
+func (r tenantToWorkerPartitionFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToWorkerPartitionFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToWorkerPartitionFindFirst) with()           {}
+func (r tenantToWorkerPartitionFindFirst) tenantModel()    {}
+func (r tenantToWorkerPartitionFindFirst) tenantRelation() {}
+
+func (r tenantToWorkerPartitionFindFirst) With(params ...TenantWorkerPartitionRelationWith) tenantToWorkerPartitionFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tenantToWorkerPartitionFindFirst) Select(params ...tenantPrismaFields) tenantToWorkerPartitionFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToWorkerPartitionFindFirst) Omit(params ...tenantPrismaFields) tenantToWorkerPartitionFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tenantOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToWorkerPartitionFindFirst) OrderBy(params ...TenantWorkerPartitionOrderByParam) tenantToWorkerPartitionFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r tenantToWorkerPartitionFindFirst) Skip(count int) tenantToWorkerPartitionFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantToWorkerPartitionFindFirst) Take(count int) tenantToWorkerPartitionFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantToWorkerPartitionFindFirst) Cursor(cursor TenantCursorParam) tenantToWorkerPartitionFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r tenantToWorkerPartitionFindFirst) Exec(ctx context.Context) (
+	*TenantModel,
+	error,
+) {
+	var v *TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tenantToWorkerPartitionFindFirst) ExecInner(ctx context.Context) (
+	*InnerTenant,
+	error,
+) {
+	var v *InnerTenant
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type tenantToWorkerPartitionFindMany struct {
+	query builder.Query
+}
+
+func (r tenantToWorkerPartitionFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToWorkerPartitionFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToWorkerPartitionFindMany) with()           {}
+func (r tenantToWorkerPartitionFindMany) tenantModel()    {}
+func (r tenantToWorkerPartitionFindMany) tenantRelation() {}
+
+func (r tenantToWorkerPartitionFindMany) With(params ...TenantWorkerPartitionRelationWith) tenantToWorkerPartitionFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tenantToWorkerPartitionFindMany) Select(params ...tenantPrismaFields) tenantToWorkerPartitionFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToWorkerPartitionFindMany) Omit(params ...tenantPrismaFields) tenantToWorkerPartitionFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tenantOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToWorkerPartitionFindMany) OrderBy(params ...TenantWorkerPartitionOrderByParam) tenantToWorkerPartitionFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r tenantToWorkerPartitionFindMany) Skip(count int) tenantToWorkerPartitionFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantToWorkerPartitionFindMany) Take(count int) tenantToWorkerPartitionFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantToWorkerPartitionFindMany) Cursor(cursor TenantCursorParam) tenantToWorkerPartitionFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r tenantToWorkerPartitionFindMany) Exec(ctx context.Context) (
+	[]TenantModel,
+	error,
+) {
+	var v []TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r tenantToWorkerPartitionFindMany) ExecInner(ctx context.Context) (
+	[]InnerTenant,
+	error,
+) {
+	var v []InnerTenant
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r tenantToWorkerPartitionFindMany) Update(params ...TenantSetParam) tenantToWorkerPartitionUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Tenant"
+
+	r.query.Outputs = countOutput
+
+	var v tenantToWorkerPartitionUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type tenantToWorkerPartitionUpdateMany struct {
+	query builder.Query
+}
+
+func (r tenantToWorkerPartitionUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToWorkerPartitionUpdateMany) tenantModel() {}
+
+func (r tenantToWorkerPartitionUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantToWorkerPartitionUpdateMany) Tx() TenantManyTxResult {
+	v := newTenantManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r tenantToWorkerPartitionFindMany) Delete() tenantToWorkerPartitionDeleteMany {
+	var v tenantToWorkerPartitionDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Tenant"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type tenantToWorkerPartitionDeleteMany struct {
+	query builder.Query
+}
+
+func (r tenantToWorkerPartitionDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p tenantToWorkerPartitionDeleteMany) tenantModel() {}
+
+func (r tenantToWorkerPartitionDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantToWorkerPartitionDeleteMany) Tx() TenantManyTxResult {
+	v := newTenantManyTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -353451,6 +362982,102 @@ func (r WebhookWorkerWorkflowManyTxResult) Result() (v *BatchResult) {
 	return v
 }
 
+func newControllerPartitionUniqueTxResult() ControllerPartitionUniqueTxResult {
+	return ControllerPartitionUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type ControllerPartitionUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p ControllerPartitionUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p ControllerPartitionUniqueTxResult) IsTx() {}
+
+func (r ControllerPartitionUniqueTxResult) Result() (v *ControllerPartitionModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newControllerPartitionManyTxResult() ControllerPartitionManyTxResult {
+	return ControllerPartitionManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type ControllerPartitionManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p ControllerPartitionManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p ControllerPartitionManyTxResult) IsTx() {}
+
+func (r ControllerPartitionManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newTenantWorkerPartitionUniqueTxResult() TenantWorkerPartitionUniqueTxResult {
+	return TenantWorkerPartitionUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type TenantWorkerPartitionUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p TenantWorkerPartitionUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p TenantWorkerPartitionUniqueTxResult) IsTx() {}
+
+func (r TenantWorkerPartitionUniqueTxResult) Result() (v *TenantWorkerPartitionModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newTenantWorkerPartitionManyTxResult() TenantWorkerPartitionManyTxResult {
+	return TenantWorkerPartitionManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type TenantWorkerPartitionManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p TenantWorkerPartitionManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p TenantWorkerPartitionManyTxResult) IsTx() {}
+
+func (r TenantWorkerPartitionManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
 func newTenantUniqueTxResult() TenantUniqueTxResult {
 	return TenantUniqueTxResult{
 		result: &transaction.Result{},
@@ -356140,6 +365767,226 @@ func (r webhookWorkerWorkflowUpsertOne) Exec(ctx context.Context) (*WebhookWorke
 
 func (r webhookWorkerWorkflowUpsertOne) Tx() WebhookWorkerWorkflowUniqueTxResult {
 	v := newWebhookWorkerWorkflowUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type controllerPartitionUpsertOne struct {
+	query builder.Query
+}
+
+func (r controllerPartitionUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r controllerPartitionUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r controllerPartitionUpsertOne) with()                        {}
+func (r controllerPartitionUpsertOne) controllerPartitionModel()    {}
+func (r controllerPartitionUpsertOne) controllerPartitionRelation() {}
+
+func (r controllerPartitionActions) UpsertOne(
+	params ControllerPartitionEqualsUniqueWhereParam,
+) controllerPartitionUpsertOne {
+	var v controllerPartitionUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "ControllerPartition"
+	v.query.Outputs = controllerPartitionOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r controllerPartitionUpsertOne) Create(
+
+	_id ControllerPartitionWithPrismaIDSetParam,
+
+	optional ...ControllerPartitionSetParam,
+) controllerPartitionUpsertOne {
+	var v controllerPartitionUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _id.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r controllerPartitionUpsertOne) Update(
+	params ...ControllerPartitionSetParam,
+) controllerPartitionUpsertOne {
+	var v controllerPartitionUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r controllerPartitionUpsertOne) Exec(ctx context.Context) (*ControllerPartitionModel, error) {
+	var v ControllerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r controllerPartitionUpsertOne) Tx() ControllerPartitionUniqueTxResult {
+	v := newControllerPartitionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type tenantWorkerPartitionUpsertOne struct {
+	query builder.Query
+}
+
+func (r tenantWorkerPartitionUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantWorkerPartitionUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantWorkerPartitionUpsertOne) with()                          {}
+func (r tenantWorkerPartitionUpsertOne) tenantWorkerPartitionModel()    {}
+func (r tenantWorkerPartitionUpsertOne) tenantWorkerPartitionRelation() {}
+
+func (r tenantWorkerPartitionActions) UpsertOne(
+	params TenantWorkerPartitionEqualsUniqueWhereParam,
+) tenantWorkerPartitionUpsertOne {
+	var v tenantWorkerPartitionUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "TenantWorkerPartition"
+	v.query.Outputs = tenantWorkerPartitionOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r tenantWorkerPartitionUpsertOne) Create(
+
+	_id TenantWorkerPartitionWithPrismaIDSetParam,
+
+	optional ...TenantWorkerPartitionSetParam,
+) tenantWorkerPartitionUpsertOne {
+	var v tenantWorkerPartitionUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _id.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r tenantWorkerPartitionUpsertOne) Update(
+	params ...TenantWorkerPartitionSetParam,
+) tenantWorkerPartitionUpsertOne {
+	var v tenantWorkerPartitionUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r tenantWorkerPartitionUpsertOne) Exec(ctx context.Context) (*TenantWorkerPartitionModel, error) {
+	var v TenantWorkerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantWorkerPartitionUpsertOne) Tx() TenantWorkerPartitionUniqueTxResult {
+	v := newTenantWorkerPartitionUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
