@@ -1534,6 +1534,10 @@ model SNSIntegration {
 
   @@unique([tenantId, topicArn])
 }
+
+model SecurityCheckIdent {
+  id       String   @id @unique @default(uuid()) @db.Uuid
+}
 `
 const schemaDatasourceURL = ""
 const schemaEnvVarName = "DATABASE_URL"
@@ -1652,6 +1656,7 @@ func newClient() *PrismaClient {
 	c.LogLine = logLineActions{client: c}
 	c.StreamEvent = streamEventActions{client: c}
 	c.SNSIntegration = sNSIntegrationActions{client: c}
+	c.SecurityCheckIdent = securityCheckIdentActions{client: c}
 
 	c.Prisma = &PrismaActions{
 		Raw: &raw.Raw{Engine: c},
@@ -1770,6 +1775,8 @@ type PrismaClient struct {
 	StreamEvent streamEventActions
 	// SNSIntegration provides access to CRUD methods.
 	SNSIntegration sNSIntegrationActions
+	// SecurityCheckIdent provides access to CRUD methods.
+	SecurityCheckIdent securityCheckIdentActions
 }
 
 // --- template enums.gotpl ---
@@ -2546,6 +2553,12 @@ const (
 	SNSIntegrationScalarFieldEnumUpdatedAt SNSIntegrationScalarFieldEnum = "updatedAt"
 	SNSIntegrationScalarFieldEnumTenantID  SNSIntegrationScalarFieldEnum = "tenantId"
 	SNSIntegrationScalarFieldEnumTopicArn  SNSIntegrationScalarFieldEnum = "topicArn"
+)
+
+type SecurityCheckIdentScalarFieldEnum string
+
+const (
+	SecurityCheckIdentScalarFieldEnumID SecurityCheckIdentScalarFieldEnum = "id"
 )
 
 type SortOrder string
@@ -3847,6 +3860,10 @@ const sNSIntegrationFieldTenantID sNSIntegrationPrismaFields = "tenantId"
 
 const sNSIntegrationFieldTopicArn sNSIntegrationPrismaFields = "topicArn"
 
+type securityCheckIdentPrismaFields = prismaFields
+
+const securityCheckIdentFieldID securityCheckIdentPrismaFields = "id"
+
 // --- template mock.gotpl ---
 func NewMock() (*PrismaClient, *Mock, func(t *testing.T)) {
 	expectations := new([]mock.Expectation)
@@ -4045,6 +4062,10 @@ func NewMock() (*PrismaClient, *Mock, func(t *testing.T)) {
 		mock: m,
 	}
 
+	m.SecurityCheckIdent = securityCheckIdentMock{
+		mock: m,
+	}
+
 	return pc, m, m.Ensure
 }
 
@@ -4144,6 +4165,8 @@ type Mock struct {
 	StreamEvent streamEventMock
 
 	SNSIntegration sNSIntegrationMock
+
+	SecurityCheckIdent securityCheckIdentMock
 }
 
 type userMock struct {
@@ -6114,6 +6137,48 @@ func (m *sNSIntegrationMockExec) ReturnsMany(v []SNSIntegrationModel) {
 }
 
 func (m *sNSIntegrationMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
+type securityCheckIdentMock struct {
+	mock *Mock
+}
+
+type SecurityCheckIdentMockExpectParam interface {
+	ExtractQuery() builder.Query
+	securityCheckIdentModel()
+}
+
+func (m *securityCheckIdentMock) Expect(query SecurityCheckIdentMockExpectParam) *securityCheckIdentMockExec {
+	return &securityCheckIdentMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type securityCheckIdentMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *securityCheckIdentMockExec) Returns(v SecurityCheckIdentModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *securityCheckIdentMockExec) ReturnsMany(v []SecurityCheckIdentModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *securityCheckIdentMockExec) Errors(err error) {
 	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
 		Query:   m.query,
 		WantErr: err,
@@ -10091,6 +10156,26 @@ func (r SNSIntegrationModel) Tenant() (value *TenantModel) {
 		panic("attempted to access tenant but did not fetch it using the .With() syntax")
 	}
 	return r.RelationsSNSIntegration.Tenant
+}
+
+// SecurityCheckIdentModel represents the SecurityCheckIdent model and is a wrapper for accessing fields and methods
+type SecurityCheckIdentModel struct {
+	InnerSecurityCheckIdent
+	RelationsSecurityCheckIdent
+}
+
+// InnerSecurityCheckIdent holds the actual data
+type InnerSecurityCheckIdent struct {
+	ID string `json:"id"`
+}
+
+// RawSecurityCheckIdentModel is a struct for SecurityCheckIdent when used in raw queries
+type RawSecurityCheckIdentModel struct {
+	ID RawString `json:"id"`
+}
+
+// RelationsSecurityCheckIdent holds the relation data separately
+type RelationsSecurityCheckIdent struct {
 }
 
 // --- template query.gotpl ---
@@ -167382,6 +167467,416 @@ func (r sNSIntegrationQueryTopicArnString) Field() sNSIntegrationPrismaFields {
 	return sNSIntegrationFieldTopicArn
 }
 
+// SecurityCheckIdent acts as a namespaces to access query methods for the SecurityCheckIdent model
+var SecurityCheckIdent = securityCheckIdentQuery{}
+
+// securityCheckIdentQuery exposes query functions for the securityCheckIdent model
+type securityCheckIdentQuery struct {
+
+	// ID
+	//
+	// @required
+	ID securityCheckIdentQueryIDString
+}
+
+func (securityCheckIdentQuery) Not(params ...SecurityCheckIdentWhereParam) securityCheckIdentDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return securityCheckIdentDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (securityCheckIdentQuery) Or(params ...SecurityCheckIdentWhereParam) securityCheckIdentDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return securityCheckIdentDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (securityCheckIdentQuery) And(params ...SecurityCheckIdentWhereParam) securityCheckIdentDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return securityCheckIdentDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+// base struct
+type securityCheckIdentQueryIDString struct{}
+
+// Set the required value of ID
+func (r securityCheckIdentQueryIDString) Set(value string) securityCheckIdentSetParam {
+
+	return securityCheckIdentSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r securityCheckIdentQueryIDString) SetIfPresent(value *String) securityCheckIdentSetParam {
+	if value == nil {
+		return securityCheckIdentSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r securityCheckIdentQueryIDString) Equals(value string) securityCheckIdentWithPrismaIDEqualsUniqueParam {
+
+	return securityCheckIdentWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r securityCheckIdentQueryIDString) EqualsIfPresent(value *string) securityCheckIdentWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return securityCheckIdentWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r securityCheckIdentQueryIDString) Order(direction SortOrder) securityCheckIdentDefaultParam {
+	return securityCheckIdentDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r securityCheckIdentQueryIDString) Cursor(cursor string) securityCheckIdentCursorParam {
+	return securityCheckIdentCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r securityCheckIdentQueryIDString) In(value []string) securityCheckIdentParamUnique {
+	return securityCheckIdentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r securityCheckIdentQueryIDString) InIfPresent(value []string) securityCheckIdentParamUnique {
+	if value == nil {
+		return securityCheckIdentParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r securityCheckIdentQueryIDString) NotIn(value []string) securityCheckIdentParamUnique {
+	return securityCheckIdentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r securityCheckIdentQueryIDString) NotInIfPresent(value []string) securityCheckIdentParamUnique {
+	if value == nil {
+		return securityCheckIdentParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r securityCheckIdentQueryIDString) Lt(value string) securityCheckIdentParamUnique {
+	return securityCheckIdentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r securityCheckIdentQueryIDString) LtIfPresent(value *string) securityCheckIdentParamUnique {
+	if value == nil {
+		return securityCheckIdentParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r securityCheckIdentQueryIDString) Lte(value string) securityCheckIdentParamUnique {
+	return securityCheckIdentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r securityCheckIdentQueryIDString) LteIfPresent(value *string) securityCheckIdentParamUnique {
+	if value == nil {
+		return securityCheckIdentParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r securityCheckIdentQueryIDString) Gt(value string) securityCheckIdentParamUnique {
+	return securityCheckIdentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r securityCheckIdentQueryIDString) GtIfPresent(value *string) securityCheckIdentParamUnique {
+	if value == nil {
+		return securityCheckIdentParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r securityCheckIdentQueryIDString) Gte(value string) securityCheckIdentParamUnique {
+	return securityCheckIdentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r securityCheckIdentQueryIDString) GteIfPresent(value *string) securityCheckIdentParamUnique {
+	if value == nil {
+		return securityCheckIdentParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r securityCheckIdentQueryIDString) Contains(value string) securityCheckIdentParamUnique {
+	return securityCheckIdentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r securityCheckIdentQueryIDString) ContainsIfPresent(value *string) securityCheckIdentParamUnique {
+	if value == nil {
+		return securityCheckIdentParamUnique{}
+	}
+	return r.Contains(*value)
+}
+
+func (r securityCheckIdentQueryIDString) StartsWith(value string) securityCheckIdentParamUnique {
+	return securityCheckIdentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r securityCheckIdentQueryIDString) StartsWithIfPresent(value *string) securityCheckIdentParamUnique {
+	if value == nil {
+		return securityCheckIdentParamUnique{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r securityCheckIdentQueryIDString) EndsWith(value string) securityCheckIdentParamUnique {
+	return securityCheckIdentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r securityCheckIdentQueryIDString) EndsWithIfPresent(value *string) securityCheckIdentParamUnique {
+	if value == nil {
+		return securityCheckIdentParamUnique{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r securityCheckIdentQueryIDString) Mode(value QueryMode) securityCheckIdentParamUnique {
+	return securityCheckIdentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r securityCheckIdentQueryIDString) ModeIfPresent(value *QueryMode) securityCheckIdentParamUnique {
+	if value == nil {
+		return securityCheckIdentParamUnique{}
+	}
+	return r.Mode(*value)
+}
+
+func (r securityCheckIdentQueryIDString) Not(value string) securityCheckIdentParamUnique {
+	return securityCheckIdentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r securityCheckIdentQueryIDString) NotIfPresent(value *string) securityCheckIdentParamUnique {
+	if value == nil {
+		return securityCheckIdentParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r securityCheckIdentQueryIDString) HasPrefix(value string) securityCheckIdentParamUnique {
+	return securityCheckIdentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r securityCheckIdentQueryIDString) HasPrefixIfPresent(value *string) securityCheckIdentParamUnique {
+	if value == nil {
+		return securityCheckIdentParamUnique{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r securityCheckIdentQueryIDString) HasSuffix(value string) securityCheckIdentParamUnique {
+	return securityCheckIdentParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r securityCheckIdentQueryIDString) HasSuffixIfPresent(value *string) securityCheckIdentParamUnique {
+	if value == nil {
+		return securityCheckIdentParamUnique{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r securityCheckIdentQueryIDString) Field() securityCheckIdentPrismaFields {
+	return securityCheckIdentFieldID
+}
+
 // --- template actions.gotpl ---
 var countOutput = []builder.Output{
 	{Name: "count"},
@@ -220315,6 +220810,257 @@ func (p sNSIntegrationWithPrismaTopicArnEqualsUniqueParam) topicArnField()      
 func (sNSIntegrationWithPrismaTopicArnEqualsUniqueParam) unique() {}
 func (sNSIntegrationWithPrismaTopicArnEqualsUniqueParam) equals() {}
 
+type securityCheckIdentActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var securityCheckIdentOutput = []builder.Output{
+	{Name: "id"},
+}
+
+type SecurityCheckIdentRelationWith interface {
+	getQuery() builder.Query
+	with()
+	securityCheckIdentRelation()
+}
+
+type SecurityCheckIdentWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	securityCheckIdentModel()
+}
+
+type securityCheckIdentDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p securityCheckIdentDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p securityCheckIdentDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p securityCheckIdentDefaultParam) securityCheckIdentModel() {}
+
+type SecurityCheckIdentOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	securityCheckIdentModel()
+}
+
+type securityCheckIdentOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p securityCheckIdentOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p securityCheckIdentOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p securityCheckIdentOrderByParam) securityCheckIdentModel() {}
+
+type SecurityCheckIdentCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	securityCheckIdentModel()
+	isCursor()
+}
+
+type securityCheckIdentCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p securityCheckIdentCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p securityCheckIdentCursorParam) isCursor() {}
+
+func (p securityCheckIdentCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p securityCheckIdentCursorParam) securityCheckIdentModel() {}
+
+type SecurityCheckIdentParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	securityCheckIdentModel()
+}
+
+type securityCheckIdentParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p securityCheckIdentParamUnique) securityCheckIdentModel() {}
+
+func (securityCheckIdentParamUnique) unique() {}
+
+func (p securityCheckIdentParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p securityCheckIdentParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type SecurityCheckIdentEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	securityCheckIdentModel()
+}
+
+type securityCheckIdentEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p securityCheckIdentEqualsParam) securityCheckIdentModel() {}
+
+func (securityCheckIdentEqualsParam) equals() {}
+
+func (p securityCheckIdentEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p securityCheckIdentEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type SecurityCheckIdentEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	securityCheckIdentModel()
+}
+
+type securityCheckIdentEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p securityCheckIdentEqualsUniqueParam) securityCheckIdentModel() {}
+
+func (securityCheckIdentEqualsUniqueParam) unique() {}
+func (securityCheckIdentEqualsUniqueParam) equals() {}
+
+func (p securityCheckIdentEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p securityCheckIdentEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type SecurityCheckIdentSetParam interface {
+	field() builder.Field
+	settable()
+	securityCheckIdentModel()
+}
+
+type securityCheckIdentSetParam struct {
+	data builder.Field
+}
+
+func (securityCheckIdentSetParam) settable() {}
+
+func (p securityCheckIdentSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p securityCheckIdentSetParam) securityCheckIdentModel() {}
+
+type SecurityCheckIdentWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	securityCheckIdentModel()
+	idField()
+}
+
+type SecurityCheckIdentWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	securityCheckIdentModel()
+	idField()
+}
+
+type securityCheckIdentWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p securityCheckIdentWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p securityCheckIdentWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p securityCheckIdentWithPrismaIDSetParam) securityCheckIdentModel() {}
+
+func (p securityCheckIdentWithPrismaIDSetParam) idField() {}
+
+type SecurityCheckIdentWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	securityCheckIdentModel()
+	idField()
+}
+
+type securityCheckIdentWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p securityCheckIdentWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p securityCheckIdentWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p securityCheckIdentWithPrismaIDEqualsParam) securityCheckIdentModel() {}
+
+func (p securityCheckIdentWithPrismaIDEqualsParam) idField() {}
+
+func (securityCheckIdentWithPrismaIDSetParam) settable()  {}
+func (securityCheckIdentWithPrismaIDEqualsParam) equals() {}
+
+type securityCheckIdentWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p securityCheckIdentWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p securityCheckIdentWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p securityCheckIdentWithPrismaIDEqualsUniqueParam) securityCheckIdentModel() {}
+func (p securityCheckIdentWithPrismaIDEqualsUniqueParam) idField()                 {}
+
+func (securityCheckIdentWithPrismaIDEqualsUniqueParam) unique() {}
+func (securityCheckIdentWithPrismaIDEqualsUniqueParam) equals() {}
+
 // --- template create.gotpl ---
 
 // Creates a single user.
@@ -223631,6 +224377,71 @@ func (r sNSIntegrationCreateOne) Exec(ctx context.Context) (*SNSIntegrationModel
 
 func (r sNSIntegrationCreateOne) Tx() SNSIntegrationUniqueTxResult {
 	v := newSNSIntegrationUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+// Creates a single securityCheckIdent.
+func (r securityCheckIdentActions) CreateOne(
+
+	optional ...SecurityCheckIdentSetParam,
+) securityCheckIdentCreateOne {
+	var v securityCheckIdentCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "SecurityCheckIdent"
+	v.query.Outputs = securityCheckIdentOutput
+
+	var fields []builder.Field
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r securityCheckIdentCreateOne) With(params ...SecurityCheckIdentRelationWith) securityCheckIdentCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type securityCheckIdentCreateOne struct {
+	query builder.Query
+}
+
+func (p securityCheckIdentCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p securityCheckIdentCreateOne) securityCheckIdentModel() {}
+
+func (r securityCheckIdentCreateOne) Exec(ctx context.Context) (*SecurityCheckIdentModel, error) {
+	var v SecurityCheckIdentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r securityCheckIdentCreateOne) Tx() SecurityCheckIdentUniqueTxResult {
+	v := newSecurityCheckIdentUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -351700,6 +352511,656 @@ func (r sNSIntegrationDeleteMany) Tx() SNSIntegrationManyTxResult {
 	return v
 }
 
+type securityCheckIdentFindUnique struct {
+	query builder.Query
+}
+
+func (r securityCheckIdentFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r securityCheckIdentFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r securityCheckIdentFindUnique) with()                       {}
+func (r securityCheckIdentFindUnique) securityCheckIdentModel()    {}
+func (r securityCheckIdentFindUnique) securityCheckIdentRelation() {}
+
+func (r securityCheckIdentActions) FindUnique(
+	params SecurityCheckIdentEqualsUniqueWhereParam,
+) securityCheckIdentFindUnique {
+	var v securityCheckIdentFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "SecurityCheckIdent"
+	v.query.Outputs = securityCheckIdentOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r securityCheckIdentFindUnique) With(params ...SecurityCheckIdentRelationWith) securityCheckIdentFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r securityCheckIdentFindUnique) Select(params ...securityCheckIdentPrismaFields) securityCheckIdentFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r securityCheckIdentFindUnique) Omit(params ...securityCheckIdentPrismaFields) securityCheckIdentFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range securityCheckIdentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r securityCheckIdentFindUnique) Exec(ctx context.Context) (
+	*SecurityCheckIdentModel,
+	error,
+) {
+	var v *SecurityCheckIdentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r securityCheckIdentFindUnique) ExecInner(ctx context.Context) (
+	*InnerSecurityCheckIdent,
+	error,
+) {
+	var v *InnerSecurityCheckIdent
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r securityCheckIdentFindUnique) Update(params ...SecurityCheckIdentSetParam) securityCheckIdentUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "SecurityCheckIdent"
+
+	var v securityCheckIdentUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type securityCheckIdentUpdateUnique struct {
+	query builder.Query
+}
+
+func (r securityCheckIdentUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r securityCheckIdentUpdateUnique) securityCheckIdentModel() {}
+
+func (r securityCheckIdentUpdateUnique) Exec(ctx context.Context) (*SecurityCheckIdentModel, error) {
+	var v SecurityCheckIdentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r securityCheckIdentUpdateUnique) Tx() SecurityCheckIdentUniqueTxResult {
+	v := newSecurityCheckIdentUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r securityCheckIdentFindUnique) Delete() securityCheckIdentDeleteUnique {
+	var v securityCheckIdentDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "SecurityCheckIdent"
+
+	return v
+}
+
+type securityCheckIdentDeleteUnique struct {
+	query builder.Query
+}
+
+func (r securityCheckIdentDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p securityCheckIdentDeleteUnique) securityCheckIdentModel() {}
+
+func (r securityCheckIdentDeleteUnique) Exec(ctx context.Context) (*SecurityCheckIdentModel, error) {
+	var v SecurityCheckIdentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r securityCheckIdentDeleteUnique) Tx() SecurityCheckIdentUniqueTxResult {
+	v := newSecurityCheckIdentUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type securityCheckIdentFindFirst struct {
+	query builder.Query
+}
+
+func (r securityCheckIdentFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r securityCheckIdentFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r securityCheckIdentFindFirst) with()                       {}
+func (r securityCheckIdentFindFirst) securityCheckIdentModel()    {}
+func (r securityCheckIdentFindFirst) securityCheckIdentRelation() {}
+
+func (r securityCheckIdentActions) FindFirst(
+	params ...SecurityCheckIdentWhereParam,
+) securityCheckIdentFindFirst {
+	var v securityCheckIdentFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "SecurityCheckIdent"
+	v.query.Outputs = securityCheckIdentOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r securityCheckIdentFindFirst) With(params ...SecurityCheckIdentRelationWith) securityCheckIdentFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r securityCheckIdentFindFirst) Select(params ...securityCheckIdentPrismaFields) securityCheckIdentFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r securityCheckIdentFindFirst) Omit(params ...securityCheckIdentPrismaFields) securityCheckIdentFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range securityCheckIdentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r securityCheckIdentFindFirst) OrderBy(params ...SecurityCheckIdentOrderByParam) securityCheckIdentFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r securityCheckIdentFindFirst) Skip(count int) securityCheckIdentFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r securityCheckIdentFindFirst) Take(count int) securityCheckIdentFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r securityCheckIdentFindFirst) Cursor(cursor SecurityCheckIdentCursorParam) securityCheckIdentFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r securityCheckIdentFindFirst) Exec(ctx context.Context) (
+	*SecurityCheckIdentModel,
+	error,
+) {
+	var v *SecurityCheckIdentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r securityCheckIdentFindFirst) ExecInner(ctx context.Context) (
+	*InnerSecurityCheckIdent,
+	error,
+) {
+	var v *InnerSecurityCheckIdent
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type securityCheckIdentFindMany struct {
+	query builder.Query
+}
+
+func (r securityCheckIdentFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r securityCheckIdentFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r securityCheckIdentFindMany) with()                       {}
+func (r securityCheckIdentFindMany) securityCheckIdentModel()    {}
+func (r securityCheckIdentFindMany) securityCheckIdentRelation() {}
+
+func (r securityCheckIdentActions) FindMany(
+	params ...SecurityCheckIdentWhereParam,
+) securityCheckIdentFindMany {
+	var v securityCheckIdentFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "SecurityCheckIdent"
+	v.query.Outputs = securityCheckIdentOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r securityCheckIdentFindMany) With(params ...SecurityCheckIdentRelationWith) securityCheckIdentFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r securityCheckIdentFindMany) Select(params ...securityCheckIdentPrismaFields) securityCheckIdentFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r securityCheckIdentFindMany) Omit(params ...securityCheckIdentPrismaFields) securityCheckIdentFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range securityCheckIdentOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r securityCheckIdentFindMany) OrderBy(params ...SecurityCheckIdentOrderByParam) securityCheckIdentFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r securityCheckIdentFindMany) Skip(count int) securityCheckIdentFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r securityCheckIdentFindMany) Take(count int) securityCheckIdentFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r securityCheckIdentFindMany) Cursor(cursor SecurityCheckIdentCursorParam) securityCheckIdentFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r securityCheckIdentFindMany) Exec(ctx context.Context) (
+	[]SecurityCheckIdentModel,
+	error,
+) {
+	var v []SecurityCheckIdentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r securityCheckIdentFindMany) ExecInner(ctx context.Context) (
+	[]InnerSecurityCheckIdent,
+	error,
+) {
+	var v []InnerSecurityCheckIdent
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r securityCheckIdentFindMany) Update(params ...SecurityCheckIdentSetParam) securityCheckIdentUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "SecurityCheckIdent"
+
+	r.query.Outputs = countOutput
+
+	var v securityCheckIdentUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type securityCheckIdentUpdateMany struct {
+	query builder.Query
+}
+
+func (r securityCheckIdentUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r securityCheckIdentUpdateMany) securityCheckIdentModel() {}
+
+func (r securityCheckIdentUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r securityCheckIdentUpdateMany) Tx() SecurityCheckIdentManyTxResult {
+	v := newSecurityCheckIdentManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r securityCheckIdentFindMany) Delete() securityCheckIdentDeleteMany {
+	var v securityCheckIdentDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "SecurityCheckIdent"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type securityCheckIdentDeleteMany struct {
+	query builder.Query
+}
+
+func (r securityCheckIdentDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p securityCheckIdentDeleteMany) securityCheckIdentModel() {}
+
+func (r securityCheckIdentDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r securityCheckIdentDeleteMany) Tx() SecurityCheckIdentManyTxResult {
+	v := newSecurityCheckIdentManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 // --- template transaction.gotpl ---
 
 func newUserUniqueTxResult() UserUniqueTxResult {
@@ -353952,6 +355413,54 @@ func (p SNSIntegrationManyTxResult) ExtractQuery() builder.Query {
 func (p SNSIntegrationManyTxResult) IsTx() {}
 
 func (r SNSIntegrationManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newSecurityCheckIdentUniqueTxResult() SecurityCheckIdentUniqueTxResult {
+	return SecurityCheckIdentUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type SecurityCheckIdentUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p SecurityCheckIdentUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p SecurityCheckIdentUniqueTxResult) IsTx() {}
+
+func (r SecurityCheckIdentUniqueTxResult) Result() (v *SecurityCheckIdentModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newSecurityCheckIdentManyTxResult() SecurityCheckIdentManyTxResult {
+	return SecurityCheckIdentManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type SecurityCheckIdentManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p SecurityCheckIdentManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p SecurityCheckIdentManyTxResult) IsTx() {}
+
+func (r SecurityCheckIdentManyTxResult) Result() (v *BatchResult) {
 	if err := r.result.Get(r.query.TxResult, &v); err != nil {
 		panic(err)
 	}
@@ -359248,6 +360757,113 @@ func (r sNSIntegrationUpsertOne) Exec(ctx context.Context) (*SNSIntegrationModel
 
 func (r sNSIntegrationUpsertOne) Tx() SNSIntegrationUniqueTxResult {
 	v := newSNSIntegrationUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type securityCheckIdentUpsertOne struct {
+	query builder.Query
+}
+
+func (r securityCheckIdentUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r securityCheckIdentUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r securityCheckIdentUpsertOne) with()                       {}
+func (r securityCheckIdentUpsertOne) securityCheckIdentModel()    {}
+func (r securityCheckIdentUpsertOne) securityCheckIdentRelation() {}
+
+func (r securityCheckIdentActions) UpsertOne(
+	params SecurityCheckIdentEqualsUniqueWhereParam,
+) securityCheckIdentUpsertOne {
+	var v securityCheckIdentUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "SecurityCheckIdent"
+	v.query.Outputs = securityCheckIdentOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r securityCheckIdentUpsertOne) Create(
+
+	optional ...SecurityCheckIdentSetParam,
+) securityCheckIdentUpsertOne {
+	var v securityCheckIdentUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r securityCheckIdentUpsertOne) Update(
+	params ...SecurityCheckIdentSetParam,
+) securityCheckIdentUpsertOne {
+	var v securityCheckIdentUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r securityCheckIdentUpsertOne) Exec(ctx context.Context) (*SecurityCheckIdentModel, error) {
+	var v SecurityCheckIdentModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r securityCheckIdentUpsertOne) Tx() SecurityCheckIdentUniqueTxResult {
+	v := newSecurityCheckIdentUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
