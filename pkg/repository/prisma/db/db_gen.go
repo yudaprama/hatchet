@@ -1574,7 +1574,7 @@ model SNSIntegration {
 }
 
 model SecurityCheckIdent {
-  id       String   @id @unique @default(uuid()) @db.Uuid
+  id String @id @unique @default(uuid()) @db.Uuid
 }
 `
 const schemaDatasourceURL = ""
