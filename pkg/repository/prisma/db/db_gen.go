@@ -1367,7 +1367,10 @@ model Worker {
   // the last heartbeat time
   lastHeartbeatAt DateTime?
 
-  // whether this worker is active or not
+  // whether the worker has been marked as paused
+  isPaused Boolean @default(false)
+
+  // whether this worker GRPC connection is active or not
   isActive Boolean @default(false)
 
   lastListenerEstablished DateTime?
@@ -2511,6 +2514,7 @@ const (
 	WorkerScalarFieldEnumDeletedAt               WorkerScalarFieldEnum = "deletedAt"
 	WorkerScalarFieldEnumTenantID                WorkerScalarFieldEnum = "tenantId"
 	WorkerScalarFieldEnumLastHeartbeatAt         WorkerScalarFieldEnum = "lastHeartbeatAt"
+	WorkerScalarFieldEnumIsPaused                WorkerScalarFieldEnum = "isPaused"
 	WorkerScalarFieldEnumIsActive                WorkerScalarFieldEnum = "isActive"
 	WorkerScalarFieldEnumLastListenerEstablished WorkerScalarFieldEnum = "lastListenerEstablished"
 	WorkerScalarFieldEnumName                    WorkerScalarFieldEnum = "name"
@@ -3778,6 +3782,8 @@ const workerFieldTenant workerPrismaFields = "tenant"
 const workerFieldTenantID workerPrismaFields = "tenantId"
 
 const workerFieldLastHeartbeatAt workerPrismaFields = "lastHeartbeatAt"
+
+const workerFieldIsPaused workerPrismaFields = "isPaused"
 
 const workerFieldIsActive workerPrismaFields = "isActive"
 
@@ -9896,6 +9902,7 @@ type InnerWorker struct {
 	DeletedAt               *DateTime `json:"deletedAt,omitempty"`
 	TenantID                string    `json:"tenantId"`
 	LastHeartbeatAt         *DateTime `json:"lastHeartbeatAt,omitempty"`
+	IsPaused                bool      `json:"isPaused"`
 	IsActive                bool      `json:"isActive"`
 	LastListenerEstablished *DateTime `json:"lastListenerEstablished,omitempty"`
 	Name                    string    `json:"name"`
@@ -9911,6 +9918,7 @@ type RawWorkerModel struct {
 	DeletedAt               *RawDateTime `json:"deletedAt,omitempty"`
 	TenantID                RawString    `json:"tenantId"`
 	LastHeartbeatAt         *RawDateTime `json:"lastHeartbeatAt,omitempty"`
+	IsPaused                RawBoolean   `json:"isPaused"`
 	IsActive                RawBoolean   `json:"isActive"`
 	LastListenerEstablished *RawDateTime `json:"lastListenerEstablished,omitempty"`
 	Name                    RawString    `json:"name"`
@@ -147649,6 +147657,11 @@ type workerQuery struct {
 	// @optional
 	LastHeartbeatAt workerQueryLastHeartbeatAtDateTime
 
+	// IsPaused
+	//
+	// @required
+	IsPaused workerQueryIsPausedBoolean
+
 	// IsActive
 	//
 	// @required
@@ -149854,6 +149867,74 @@ func (r workerQueryLastHeartbeatAtDateTime) AfterEqualsIfPresent(value *DateTime
 
 func (r workerQueryLastHeartbeatAtDateTime) Field() workerPrismaFields {
 	return workerFieldLastHeartbeatAt
+}
+
+// base struct
+type workerQueryIsPausedBoolean struct{}
+
+// Set the required value of IsPaused
+func (r workerQueryIsPausedBoolean) Set(value bool) workerSetParam {
+
+	return workerSetParam{
+		data: builder.Field{
+			Name:  "isPaused",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of IsPaused dynamically
+func (r workerQueryIsPausedBoolean) SetIfPresent(value *Boolean) workerSetParam {
+	if value == nil {
+		return workerSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workerQueryIsPausedBoolean) Equals(value bool) workerWithPrismaIsPausedEqualsParam {
+
+	return workerWithPrismaIsPausedEqualsParam{
+		data: builder.Field{
+			Name: "isPaused",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryIsPausedBoolean) EqualsIfPresent(value *bool) workerWithPrismaIsPausedEqualsParam {
+	if value == nil {
+		return workerWithPrismaIsPausedEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workerQueryIsPausedBoolean) Order(direction SortOrder) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name:  "isPaused",
+			Value: direction,
+		},
+	}
+}
+
+func (r workerQueryIsPausedBoolean) Cursor(cursor bool) workerCursorParam {
+	return workerCursorParam{
+		data: builder.Field{
+			Name:  "isPaused",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workerQueryIsPausedBoolean) Field() workerPrismaFields {
+	return workerFieldIsPaused
 }
 
 // base struct
@@ -218287,6 +218368,7 @@ var workerOutput = []builder.Output{
 	{Name: "deletedAt"},
 	{Name: "tenantId"},
 	{Name: "lastHeartbeatAt"},
+	{Name: "isPaused"},
 	{Name: "isActive"},
 	{Name: "lastListenerEstablished"},
 	{Name: "name"},
@@ -219003,6 +219085,84 @@ func (p workerWithPrismaLastHeartbeatAtEqualsUniqueParam) lastHeartbeatAtField()
 
 func (workerWithPrismaLastHeartbeatAtEqualsUniqueParam) unique() {}
 func (workerWithPrismaLastHeartbeatAtEqualsUniqueParam) equals() {}
+
+type WorkerWithPrismaIsPausedEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerModel()
+	isPausedField()
+}
+
+type WorkerWithPrismaIsPausedSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerModel()
+	isPausedField()
+}
+
+type workerWithPrismaIsPausedSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaIsPausedSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaIsPausedSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaIsPausedSetParam) workerModel() {}
+
+func (p workerWithPrismaIsPausedSetParam) isPausedField() {}
+
+type WorkerWithPrismaIsPausedWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerModel()
+	isPausedField()
+}
+
+type workerWithPrismaIsPausedEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaIsPausedEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaIsPausedEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaIsPausedEqualsParam) workerModel() {}
+
+func (p workerWithPrismaIsPausedEqualsParam) isPausedField() {}
+
+func (workerWithPrismaIsPausedSetParam) settable()  {}
+func (workerWithPrismaIsPausedEqualsParam) equals() {}
+
+type workerWithPrismaIsPausedEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaIsPausedEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaIsPausedEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaIsPausedEqualsUniqueParam) workerModel()   {}
+func (p workerWithPrismaIsPausedEqualsUniqueParam) isPausedField() {}
+
+func (workerWithPrismaIsPausedEqualsUniqueParam) unique() {}
+func (workerWithPrismaIsPausedEqualsUniqueParam) equals() {}
 
 type WorkerWithPrismaIsActiveEqualsSetParam interface {
 	field() builder.Field
