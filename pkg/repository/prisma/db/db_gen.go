@@ -479,6 +479,10 @@ model Event {
 
   // the workflow runs that were triggered by this event
   workflowRuns WorkflowRunTriggeredBy[]
+
+  @@index([tenantId])
+  @@index([createdAt])
+  @@index([tenantId, createdAt])
 }
 
 model WorkflowTag {
@@ -927,6 +931,12 @@ model WorkflowRun {
   additionalMetadata Json?
 
   @@unique([parentId, parentStepRunId, childKey])
+  @@index([tenantId])
+  @@index([workflowVersionId])
+  @@index([createdAt])
+  @@index([tenantId, createdAt])
+  @@index([finishedAt])
+  @@index([status])
 }
 
 model GetGroupKeyRun {
@@ -1018,6 +1028,10 @@ model WorkflowRunTriggeredBy {
   // a specific time that triggered this workflow
   scheduled   WorkflowTriggerScheduledRef? @relation(fields: [scheduledId], references: [id])
   scheduledId String?                      @unique @db.Uuid
+
+  @@index([tenantId])
+  @@index([eventId])
+  @@index([parentId])
 }
 
 enum JobRunStatus {
