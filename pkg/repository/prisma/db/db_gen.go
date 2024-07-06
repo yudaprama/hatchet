@@ -245,6 +245,9 @@ model Tenant {
   workerPartition   TenantWorkerPartition? @relation(fields: [workerPartitionId], references: [id], onDelete: SetNull, onUpdate: SetNull)
   workerPartitionId String?
 
+  // The data retention period for deletable resources. This is a Go duration string.
+  dataRetentionPeriod String @default("720h")
+
   events              Event[]
   workflows           Workflow[]
   jobs                Job[]
@@ -2082,6 +2085,7 @@ const (
 	TenantScalarFieldEnumAnalyticsOptOut       TenantScalarFieldEnum = "analyticsOptOut"
 	TenantScalarFieldEnumControllerPartitionID TenantScalarFieldEnum = "controllerPartitionId"
 	TenantScalarFieldEnumWorkerPartitionID     TenantScalarFieldEnum = "workerPartitionId"
+	TenantScalarFieldEnumDataRetentionPeriod   TenantScalarFieldEnum = "dataRetentionPeriod"
 	TenantScalarFieldEnumAlertMemberEmails     TenantScalarFieldEnum = "alertMemberEmails"
 )
 
@@ -2864,6 +2868,8 @@ const tenantFieldControllerPartitionID tenantPrismaFields = "controllerPartition
 const tenantFieldWorkerPartition tenantPrismaFields = "workerPartition"
 
 const tenantFieldWorkerPartitionID tenantPrismaFields = "workerPartitionId"
+
+const tenantFieldDataRetentionPeriod tenantPrismaFields = "dataRetentionPeriod"
 
 const tenantFieldEvents tenantPrismaFields = "events"
 
@@ -6829,6 +6835,7 @@ type InnerTenant struct {
 	AnalyticsOptOut       bool      `json:"analyticsOptOut"`
 	ControllerPartitionID *string   `json:"controllerPartitionId,omitempty"`
 	WorkerPartitionID     *string   `json:"workerPartitionId,omitempty"`
+	DataRetentionPeriod   string    `json:"dataRetentionPeriod"`
 	AlertMemberEmails     bool      `json:"alertMemberEmails"`
 }
 
@@ -6843,6 +6850,7 @@ type RawTenantModel struct {
 	AnalyticsOptOut       RawBoolean   `json:"analyticsOptOut"`
 	ControllerPartitionID *RawString   `json:"controllerPartitionId,omitempty"`
 	WorkerPartitionID     *RawString   `json:"workerPartitionId,omitempty"`
+	DataRetentionPeriod   RawString    `json:"dataRetentionPeriod"`
 	AlertMemberEmails     RawBoolean   `json:"alertMemberEmails"`
 }
 
@@ -27492,6 +27500,11 @@ type tenantQuery struct {
 	// @optional
 	WorkerPartitionID tenantQueryWorkerPartitionIDString
 
+	// DataRetentionPeriod
+	//
+	// @required
+	DataRetentionPeriod tenantQueryDataRetentionPeriodString
+
 	Events tenantQueryEventsRelations
 
 	Workflows tenantQueryWorkflowsRelations
@@ -30654,6 +30667,353 @@ func (r tenantQueryWorkerPartitionIDString) HasSuffixIfPresent(value *string) te
 
 func (r tenantQueryWorkerPartitionIDString) Field() tenantPrismaFields {
 	return tenantFieldWorkerPartitionID
+}
+
+// base struct
+type tenantQueryDataRetentionPeriodString struct{}
+
+// Set the required value of DataRetentionPeriod
+func (r tenantQueryDataRetentionPeriodString) Set(value string) tenantSetParam {
+
+	return tenantSetParam{
+		data: builder.Field{
+			Name:  "dataRetentionPeriod",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of DataRetentionPeriod dynamically
+func (r tenantQueryDataRetentionPeriodString) SetIfPresent(value *String) tenantSetParam {
+	if value == nil {
+		return tenantSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r tenantQueryDataRetentionPeriodString) Equals(value string) tenantWithPrismaDataRetentionPeriodEqualsParam {
+
+	return tenantWithPrismaDataRetentionPeriodEqualsParam{
+		data: builder.Field{
+			Name: "dataRetentionPeriod",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryDataRetentionPeriodString) EqualsIfPresent(value *string) tenantWithPrismaDataRetentionPeriodEqualsParam {
+	if value == nil {
+		return tenantWithPrismaDataRetentionPeriodEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r tenantQueryDataRetentionPeriodString) Order(direction SortOrder) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name:  "dataRetentionPeriod",
+			Value: direction,
+		},
+	}
+}
+
+func (r tenantQueryDataRetentionPeriodString) Cursor(cursor string) tenantCursorParam {
+	return tenantCursorParam{
+		data: builder.Field{
+			Name:  "dataRetentionPeriod",
+			Value: cursor,
+		},
+	}
+}
+
+func (r tenantQueryDataRetentionPeriodString) In(value []string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "dataRetentionPeriod",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryDataRetentionPeriodString) InIfPresent(value []string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r tenantQueryDataRetentionPeriodString) NotIn(value []string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "dataRetentionPeriod",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryDataRetentionPeriodString) NotInIfPresent(value []string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r tenantQueryDataRetentionPeriodString) Lt(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "dataRetentionPeriod",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryDataRetentionPeriodString) LtIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r tenantQueryDataRetentionPeriodString) Lte(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "dataRetentionPeriod",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryDataRetentionPeriodString) LteIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r tenantQueryDataRetentionPeriodString) Gt(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "dataRetentionPeriod",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryDataRetentionPeriodString) GtIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r tenantQueryDataRetentionPeriodString) Gte(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "dataRetentionPeriod",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryDataRetentionPeriodString) GteIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r tenantQueryDataRetentionPeriodString) Contains(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "dataRetentionPeriod",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryDataRetentionPeriodString) ContainsIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r tenantQueryDataRetentionPeriodString) StartsWith(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "dataRetentionPeriod",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryDataRetentionPeriodString) StartsWithIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r tenantQueryDataRetentionPeriodString) EndsWith(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "dataRetentionPeriod",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryDataRetentionPeriodString) EndsWithIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r tenantQueryDataRetentionPeriodString) Mode(value QueryMode) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "dataRetentionPeriod",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryDataRetentionPeriodString) ModeIfPresent(value *QueryMode) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r tenantQueryDataRetentionPeriodString) Not(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "dataRetentionPeriod",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryDataRetentionPeriodString) NotIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r tenantQueryDataRetentionPeriodString) HasPrefix(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "dataRetentionPeriod",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r tenantQueryDataRetentionPeriodString) HasPrefixIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r tenantQueryDataRetentionPeriodString) HasSuffix(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "dataRetentionPeriod",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r tenantQueryDataRetentionPeriodString) HasSuffixIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r tenantQueryDataRetentionPeriodString) Field() tenantPrismaFields {
+	return tenantFieldDataRetentionPeriod
 }
 
 // base struct
@@ -178450,6 +178810,7 @@ var tenantOutput = []builder.Output{
 	{Name: "analyticsOptOut"},
 	{Name: "controllerPartitionId"},
 	{Name: "workerPartitionId"},
+	{Name: "dataRetentionPeriod"},
 	{Name: "alertMemberEmails"},
 }
 
@@ -179474,6 +179835,84 @@ func (p tenantWithPrismaWorkerPartitionIDEqualsUniqueParam) workerPartitionIDFie
 
 func (tenantWithPrismaWorkerPartitionIDEqualsUniqueParam) unique() {}
 func (tenantWithPrismaWorkerPartitionIDEqualsUniqueParam) equals() {}
+
+type TenantWithPrismaDataRetentionPeriodEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tenantModel()
+	dataRetentionPeriodField()
+}
+
+type TenantWithPrismaDataRetentionPeriodSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantModel()
+	dataRetentionPeriodField()
+}
+
+type tenantWithPrismaDataRetentionPeriodSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaDataRetentionPeriodSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaDataRetentionPeriodSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaDataRetentionPeriodSetParam) tenantModel() {}
+
+func (p tenantWithPrismaDataRetentionPeriodSetParam) dataRetentionPeriodField() {}
+
+type TenantWithPrismaDataRetentionPeriodWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantModel()
+	dataRetentionPeriodField()
+}
+
+type tenantWithPrismaDataRetentionPeriodEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaDataRetentionPeriodEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaDataRetentionPeriodEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaDataRetentionPeriodEqualsParam) tenantModel() {}
+
+func (p tenantWithPrismaDataRetentionPeriodEqualsParam) dataRetentionPeriodField() {}
+
+func (tenantWithPrismaDataRetentionPeriodSetParam) settable()  {}
+func (tenantWithPrismaDataRetentionPeriodEqualsParam) equals() {}
+
+type tenantWithPrismaDataRetentionPeriodEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaDataRetentionPeriodEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaDataRetentionPeriodEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaDataRetentionPeriodEqualsUniqueParam) tenantModel()              {}
+func (p tenantWithPrismaDataRetentionPeriodEqualsUniqueParam) dataRetentionPeriodField() {}
+
+func (tenantWithPrismaDataRetentionPeriodEqualsUniqueParam) unique() {}
+func (tenantWithPrismaDataRetentionPeriodEqualsUniqueParam) equals() {}
 
 type TenantWithPrismaEventsEqualsSetParam interface {
 	field() builder.Field
