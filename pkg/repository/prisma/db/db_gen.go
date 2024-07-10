@@ -1243,6 +1243,8 @@ model StepRun {
   @@index([id, tenantId])
   // index for ResolveJobRunStatus, ResolveLaterStepRuns, and LinkStepRunParents
   @@index([jobRunId, tenantId, order])
+  // index for PollStepRuns
+  @@index([status, timeoutAt, tickerId])
 }
 
 enum StepRunEventReason {
