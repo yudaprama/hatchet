@@ -323,7 +323,6 @@ model TenantResourceLimit {
   alerts TenantResourceLimitAlert[]
 
   @@unique([tenantId, resource])
-  @@index([tenantId])
 }
 
 enum TenantResourceLimitAlertType {
@@ -351,8 +350,6 @@ model TenantResourceLimitAlert {
 
   // the limit at the time of the alert
   limit Int
-
-  @@index([tenantId])
 }
 
 model TenantAlertingSettings {
@@ -540,7 +537,6 @@ model Workflow {
 
   // workflow names are unique per tenant
   @@unique([tenantId, name])
-  @@index([tenantId])
 }
 
 model WorkflowVersion {
@@ -581,8 +577,6 @@ model WorkflowVersion {
 
   // the default amount of time to wait while scheduling a step run
   scheduleTimeout String @default("5m")
-
-  @@index([workflowId])
 }
 
 enum ConcurrencyLimitStrategy {
@@ -760,7 +754,6 @@ model Job {
 
   // jobs names are unique per workflow
   @@unique([workflowVersionId, name])
-  @@index([tenantId])
 }
 
 model Action {
@@ -786,7 +779,6 @@ model Action {
 
   // actions are unique per tenant
   @@unique([tenantId, actionId])
-  @@index([tenantId])
 }
 
 model Step {
@@ -834,8 +826,6 @@ model Step {
 
   // readable ids are unique per job
   @@unique([jobId, readableId])
-  @@index([tenantId])
-  @@index([jobId])
 }
 
 model StepRateLimit {
@@ -1253,8 +1243,6 @@ model StepRun {
   @@index([id, tenantId])
   // index for ResolveJobRunStatus, ResolveLaterStepRuns, and LinkStepRunParents
   @@index([jobRunId, tenantId, order])
-  @@index([timeoutAt])
-  @@index([status])
 }
 
 enum StepRunEventReason {
@@ -1380,9 +1368,6 @@ model Ticker {
   scheduled    WorkflowTriggerScheduledRef[]
   groupKeyRuns GetGroupKeyRun[]
   tenantAlerts TenantAlertingSettings[]
-
-  @@index([isActive])
-  @@index([lastHeartbeatAt])
 }
 
 model Worker {
@@ -1431,10 +1416,6 @@ model Worker {
 
   // DEPRECATED in v_0_30_1, replaced with slots and will be removed in a future release
   semaphore WorkerSemaphore? // FIXME remove this in a few releases from v_0_30_1
-
-  @@index([isActive])
-  @@index([lastHeartbeatAt])
-  @@index([tenantId])
 }
 
 // DEPRECATED in v_0_30_1, replaced with slots and will be removed in a future release
