@@ -1234,6 +1234,8 @@ model StepRun {
   events StepRunEvent[]
 
   @@index([tenantId])
+  @@index([workerId])
+  @@index([createdAt])
   // index for LinkStepRunParents
   @@index([stepId])
   // index for ListStartableStepRuns
@@ -1242,10 +1244,8 @@ model StepRun {
   @@index([id, tenantId])
   // index for ResolveJobRunStatus, ResolveLaterStepRuns, and LinkStepRunParents
   @@index([jobRunId, tenantId, order])
-  @@index([timeoutAt])
-  @@index([requeueAfter])
-  @@index([createdAt])
-  @@index([status])
+  // index for ListStepRunsToRequeue, ListStepRunsToReassign
+  @@index([jobRunId, status, tenantId, requeueAfter])
   // index for PollStepRuns
   @@index([status, timeoutAt, tickerId])
 }
