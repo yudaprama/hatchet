@@ -1247,7 +1247,7 @@ model StepRun {
   // index for ListStepRunsToRequeue, ListStepRunsToReassign
   @@index([jobRunId, status, tenantId])
   // index for PollStepRuns
-  @@index([status, timeoutAt, tickerId])
+  @@index([tenantId, status, timeoutAt])
 }
 
 enum StepRunEventReason {
