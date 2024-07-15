@@ -913,6 +913,9 @@ model WorkflowRun {
   // the run finished at
   finishedAt DateTime?
 
+  // the duration of the run (ms)
+  duration Int?
+
   // a list of dependents for this workflow run
   children          WorkflowRun[]                 @relation("WorkflowRunChild")
   scheduledChildren WorkflowTriggerScheduledRef[]
@@ -2360,6 +2363,7 @@ const (
 	WorkflowRunScalarFieldEnumError              WorkflowRunScalarFieldEnum = "error"
 	WorkflowRunScalarFieldEnumStartedAt          WorkflowRunScalarFieldEnum = "startedAt"
 	WorkflowRunScalarFieldEnumFinishedAt         WorkflowRunScalarFieldEnum = "finishedAt"
+	WorkflowRunScalarFieldEnumDuration           WorkflowRunScalarFieldEnum = "duration"
 	WorkflowRunScalarFieldEnumParentID           WorkflowRunScalarFieldEnum = "parentId"
 	WorkflowRunScalarFieldEnumParentStepRunID    WorkflowRunScalarFieldEnum = "parentStepRunId"
 	WorkflowRunScalarFieldEnumChildIndex         WorkflowRunScalarFieldEnum = "childIndex"
@@ -3443,6 +3447,8 @@ const workflowRunFieldError workflowRunPrismaFields = "error"
 const workflowRunFieldStartedAt workflowRunPrismaFields = "startedAt"
 
 const workflowRunFieldFinishedAt workflowRunPrismaFields = "finishedAt"
+
+const workflowRunFieldDuration workflowRunPrismaFields = "duration"
 
 const workflowRunFieldChildren workflowRunPrismaFields = "children"
 
@@ -8586,6 +8592,7 @@ type InnerWorkflowRun struct {
 	Error              *string           `json:"error,omitempty"`
 	StartedAt          *DateTime         `json:"startedAt,omitempty"`
 	FinishedAt         *DateTime         `json:"finishedAt,omitempty"`
+	Duration           *int              `json:"duration,omitempty"`
 	ParentID           *string           `json:"parentId,omitempty"`
 	ParentStepRunID    *string           `json:"parentStepRunId,omitempty"`
 	ChildIndex         *int              `json:"childIndex,omitempty"`
@@ -8607,6 +8614,7 @@ type RawWorkflowRunModel struct {
 	Error              *RawString           `json:"error,omitempty"`
 	StartedAt          *RawDateTime         `json:"startedAt,omitempty"`
 	FinishedAt         *RawDateTime         `json:"finishedAt,omitempty"`
+	Duration           *RawInt              `json:"duration,omitempty"`
 	ParentID           *RawString           `json:"parentId,omitempty"`
 	ParentStepRunID    *RawString           `json:"parentStepRunId,omitempty"`
 	ChildIndex         *RawInt              `json:"childIndex,omitempty"`
@@ -8702,6 +8710,13 @@ func (r WorkflowRunModel) FinishedAt() (value DateTime, ok bool) {
 		return value, false
 	}
 	return *r.InnerWorkflowRun.FinishedAt, true
+}
+
+func (r WorkflowRunModel) Duration() (value Int, ok bool) {
+	if r.InnerWorkflowRun.Duration == nil {
+		return value, false
+	}
+	return *r.InnerWorkflowRun.Duration, true
 }
 
 func (r WorkflowRunModel) Children() (value []WorkflowRunModel) {
@@ -95648,6 +95663,11 @@ type workflowRunQuery struct {
 	// @optional
 	FinishedAt workflowRunQueryFinishedAtDateTime
 
+	// Duration
+	//
+	// @optional
+	Duration workflowRunQueryDurationInt
+
 	Children workflowRunQueryChildrenRelations
 
 	ScheduledChildren workflowRunQueryScheduledChildrenRelations
@@ -100314,6 +100334,450 @@ func (r workflowRunQueryFinishedAtDateTime) AfterEqualsIfPresent(value *DateTime
 
 func (r workflowRunQueryFinishedAtDateTime) Field() workflowRunPrismaFields {
 	return workflowRunFieldFinishedAt
+}
+
+// base struct
+type workflowRunQueryDurationInt struct{}
+
+// Set the optional value of Duration
+func (r workflowRunQueryDurationInt) Set(value int) workflowRunSetParam {
+
+	return workflowRunSetParam{
+		data: builder.Field{
+			Name:  "duration",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Duration dynamically
+func (r workflowRunQueryDurationInt) SetIfPresent(value *Int) workflowRunSetParam {
+	if value == nil {
+		return workflowRunSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of Duration dynamically
+func (r workflowRunQueryDurationInt) SetOptional(value *Int) workflowRunSetParam {
+	if value == nil {
+
+		var v *int
+		return workflowRunSetParam{
+			data: builder.Field{
+				Name:  "duration",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the optional value of Duration
+func (r workflowRunQueryDurationInt) Increment(value int) workflowRunSetParam {
+	return workflowRunSetParam{
+		data: builder.Field{
+			Name: "duration",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryDurationInt) IncrementIfPresent(value *int) workflowRunSetParam {
+	if value == nil {
+		return workflowRunSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the optional value of Duration
+func (r workflowRunQueryDurationInt) Decrement(value int) workflowRunSetParam {
+	return workflowRunSetParam{
+		data: builder.Field{
+			Name: "duration",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryDurationInt) DecrementIfPresent(value *int) workflowRunSetParam {
+	if value == nil {
+		return workflowRunSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the optional value of Duration
+func (r workflowRunQueryDurationInt) Multiply(value int) workflowRunSetParam {
+	return workflowRunSetParam{
+		data: builder.Field{
+			Name: "duration",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryDurationInt) MultiplyIfPresent(value *int) workflowRunSetParam {
+	if value == nil {
+		return workflowRunSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the optional value of Duration
+func (r workflowRunQueryDurationInt) Divide(value int) workflowRunSetParam {
+	return workflowRunSetParam{
+		data: builder.Field{
+			Name: "duration",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryDurationInt) DivideIfPresent(value *int) workflowRunSetParam {
+	if value == nil {
+		return workflowRunSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r workflowRunQueryDurationInt) Equals(value int) workflowRunWithPrismaDurationEqualsParam {
+
+	return workflowRunWithPrismaDurationEqualsParam{
+		data: builder.Field{
+			Name: "duration",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryDurationInt) EqualsIfPresent(value *int) workflowRunWithPrismaDurationEqualsParam {
+	if value == nil {
+		return workflowRunWithPrismaDurationEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowRunQueryDurationInt) EqualsOptional(value *Int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "duration",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryDurationInt) IsNull() workflowRunDefaultParam {
+	var str *string = nil
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "duration",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryDurationInt) Order(direction SortOrder) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name:  "duration",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowRunQueryDurationInt) Cursor(cursor int) workflowRunCursorParam {
+	return workflowRunCursorParam{
+		data: builder.Field{
+			Name:  "duration",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowRunQueryDurationInt) In(value []int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "duration",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryDurationInt) InIfPresent(value []int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowRunQueryDurationInt) NotIn(value []int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "duration",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryDurationInt) NotInIfPresent(value []int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowRunQueryDurationInt) Lt(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "duration",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryDurationInt) LtIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowRunQueryDurationInt) Lte(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "duration",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryDurationInt) LteIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowRunQueryDurationInt) Gt(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "duration",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryDurationInt) GtIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowRunQueryDurationInt) Gte(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "duration",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryDurationInt) GteIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowRunQueryDurationInt) Not(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "duration",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryDurationInt) NotIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r workflowRunQueryDurationInt) LT(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "duration",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r workflowRunQueryDurationInt) LTIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.LT(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r workflowRunQueryDurationInt) LTE(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "duration",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r workflowRunQueryDurationInt) LTEIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.LTE(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r workflowRunQueryDurationInt) GT(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "duration",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r workflowRunQueryDurationInt) GTIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.GT(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r workflowRunQueryDurationInt) GTE(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "duration",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r workflowRunQueryDurationInt) GTEIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.GTE(*value)
+}
+
+func (r workflowRunQueryDurationInt) Field() workflowRunPrismaFields {
+	return workflowRunFieldDuration
 }
 
 // base struct
@@ -202781,6 +203245,7 @@ var workflowRunOutput = []builder.Output{
 	{Name: "error"},
 	{Name: "startedAt"},
 	{Name: "finishedAt"},
+	{Name: "duration"},
 	{Name: "parentId"},
 	{Name: "parentStepRunId"},
 	{Name: "childIndex"},
@@ -204277,6 +204742,84 @@ func (p workflowRunWithPrismaFinishedAtEqualsUniqueParam) finishedAtField()  {}
 
 func (workflowRunWithPrismaFinishedAtEqualsUniqueParam) unique() {}
 func (workflowRunWithPrismaFinishedAtEqualsUniqueParam) equals() {}
+
+type WorkflowRunWithPrismaDurationEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowRunModel()
+	durationField()
+}
+
+type WorkflowRunWithPrismaDurationSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunModel()
+	durationField()
+}
+
+type workflowRunWithPrismaDurationSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunWithPrismaDurationSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunWithPrismaDurationSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunWithPrismaDurationSetParam) workflowRunModel() {}
+
+func (p workflowRunWithPrismaDurationSetParam) durationField() {}
+
+type WorkflowRunWithPrismaDurationWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunModel()
+	durationField()
+}
+
+type workflowRunWithPrismaDurationEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunWithPrismaDurationEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunWithPrismaDurationEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunWithPrismaDurationEqualsParam) workflowRunModel() {}
+
+func (p workflowRunWithPrismaDurationEqualsParam) durationField() {}
+
+func (workflowRunWithPrismaDurationSetParam) settable()  {}
+func (workflowRunWithPrismaDurationEqualsParam) equals() {}
+
+type workflowRunWithPrismaDurationEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunWithPrismaDurationEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunWithPrismaDurationEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunWithPrismaDurationEqualsUniqueParam) workflowRunModel() {}
+func (p workflowRunWithPrismaDurationEqualsUniqueParam) durationField()    {}
+
+func (workflowRunWithPrismaDurationEqualsUniqueParam) unique() {}
+func (workflowRunWithPrismaDurationEqualsUniqueParam) equals() {}
 
 type WorkflowRunWithPrismaChildrenEqualsSetParam interface {
 	field() builder.Field
