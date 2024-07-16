@@ -443,6 +443,9 @@ model APIToken {
   // when to next alert about expiration
   nextAlertAt DateTime?
 
+  // whether this token is for internal (internal to Hatchet) use
+  internal Boolean @default(false)
+
   // an optional name for the token
   name String?
 
@@ -2177,6 +2180,7 @@ const (
 	APITokenScalarFieldEnumExpiresAt   APITokenScalarFieldEnum = "expiresAt"
 	APITokenScalarFieldEnumRevoked     APITokenScalarFieldEnum = "revoked"
 	APITokenScalarFieldEnumNextAlertAt APITokenScalarFieldEnum = "nextAlertAt"
+	APITokenScalarFieldEnumInternal    APITokenScalarFieldEnum = "internal"
 	APITokenScalarFieldEnumName        APITokenScalarFieldEnum = "name"
 	APITokenScalarFieldEnumTenantID    APITokenScalarFieldEnum = "tenantId"
 )
@@ -3075,6 +3079,8 @@ const aPITokenFieldExpiresAt aPITokenPrismaFields = "expiresAt"
 const aPITokenFieldRevoked aPITokenPrismaFields = "revoked"
 
 const aPITokenFieldNextAlertAt aPITokenPrismaFields = "nextAlertAt"
+
+const aPITokenFieldInternal aPITokenPrismaFields = "internal"
 
 const aPITokenFieldName aPITokenPrismaFields = "name"
 
@@ -7449,6 +7455,7 @@ type InnerAPIToken struct {
 	ExpiresAt   *DateTime `json:"expiresAt,omitempty"`
 	Revoked     bool      `json:"revoked"`
 	NextAlertAt *DateTime `json:"nextAlertAt,omitempty"`
+	Internal    bool      `json:"internal"`
 	Name        *string   `json:"name,omitempty"`
 	TenantID    *string   `json:"tenantId,omitempty"`
 }
@@ -7461,6 +7468,7 @@ type RawAPITokenModel struct {
 	ExpiresAt   *RawDateTime `json:"expiresAt,omitempty"`
 	Revoked     RawBoolean   `json:"revoked"`
 	NextAlertAt *RawDateTime `json:"nextAlertAt,omitempty"`
+	Internal    RawBoolean   `json:"internal"`
 	Name        *RawString   `json:"name,omitempty"`
 	TenantID    *RawString   `json:"tenantId,omitempty"`
 }
@@ -51198,6 +51206,11 @@ type aPITokenQuery struct {
 	// @optional
 	NextAlertAt aPITokenQueryNextAlertAtDateTime
 
+	// Internal
+	//
+	// @required
+	Internal aPITokenQueryInternalBoolean
+
 	// Name
 	//
 	// @optional
@@ -53011,6 +53024,74 @@ func (r aPITokenQueryNextAlertAtDateTime) AfterEqualsIfPresent(value *DateTime) 
 
 func (r aPITokenQueryNextAlertAtDateTime) Field() aPITokenPrismaFields {
 	return aPITokenFieldNextAlertAt
+}
+
+// base struct
+type aPITokenQueryInternalBoolean struct{}
+
+// Set the required value of Internal
+func (r aPITokenQueryInternalBoolean) Set(value bool) aPITokenSetParam {
+
+	return aPITokenSetParam{
+		data: builder.Field{
+			Name:  "internal",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Internal dynamically
+func (r aPITokenQueryInternalBoolean) SetIfPresent(value *Boolean) aPITokenSetParam {
+	if value == nil {
+		return aPITokenSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r aPITokenQueryInternalBoolean) Equals(value bool) aPITokenWithPrismaInternalEqualsParam {
+
+	return aPITokenWithPrismaInternalEqualsParam{
+		data: builder.Field{
+			Name: "internal",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r aPITokenQueryInternalBoolean) EqualsIfPresent(value *bool) aPITokenWithPrismaInternalEqualsParam {
+	if value == nil {
+		return aPITokenWithPrismaInternalEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r aPITokenQueryInternalBoolean) Order(direction SortOrder) aPITokenDefaultParam {
+	return aPITokenDefaultParam{
+		data: builder.Field{
+			Name:  "internal",
+			Value: direction,
+		},
+	}
+}
+
+func (r aPITokenQueryInternalBoolean) Cursor(cursor bool) aPITokenCursorParam {
+	return aPITokenCursorParam{
+		data: builder.Field{
+			Name:  "internal",
+			Value: cursor,
+		},
+	}
+}
+
+func (r aPITokenQueryInternalBoolean) Field() aPITokenPrismaFields {
+	return aPITokenFieldInternal
 }
 
 // base struct
@@ -188037,6 +188118,7 @@ var aPITokenOutput = []builder.Output{
 	{Name: "expiresAt"},
 	{Name: "revoked"},
 	{Name: "nextAlertAt"},
+	{Name: "internal"},
 	{Name: "name"},
 	{Name: "tenantId"},
 }
@@ -188672,6 +188754,84 @@ func (p aPITokenWithPrismaNextAlertAtEqualsUniqueParam) nextAlertAtField() {}
 
 func (aPITokenWithPrismaNextAlertAtEqualsUniqueParam) unique() {}
 func (aPITokenWithPrismaNextAlertAtEqualsUniqueParam) equals() {}
+
+type APITokenWithPrismaInternalEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	aPITokenModel()
+	internalField()
+}
+
+type APITokenWithPrismaInternalSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	aPITokenModel()
+	internalField()
+}
+
+type aPITokenWithPrismaInternalSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p aPITokenWithPrismaInternalSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p aPITokenWithPrismaInternalSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p aPITokenWithPrismaInternalSetParam) aPITokenModel() {}
+
+func (p aPITokenWithPrismaInternalSetParam) internalField() {}
+
+type APITokenWithPrismaInternalWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	aPITokenModel()
+	internalField()
+}
+
+type aPITokenWithPrismaInternalEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p aPITokenWithPrismaInternalEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p aPITokenWithPrismaInternalEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p aPITokenWithPrismaInternalEqualsParam) aPITokenModel() {}
+
+func (p aPITokenWithPrismaInternalEqualsParam) internalField() {}
+
+func (aPITokenWithPrismaInternalSetParam) settable()  {}
+func (aPITokenWithPrismaInternalEqualsParam) equals() {}
+
+type aPITokenWithPrismaInternalEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p aPITokenWithPrismaInternalEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p aPITokenWithPrismaInternalEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p aPITokenWithPrismaInternalEqualsUniqueParam) aPITokenModel() {}
+func (p aPITokenWithPrismaInternalEqualsUniqueParam) internalField() {}
+
+func (aPITokenWithPrismaInternalEqualsUniqueParam) unique() {}
+func (aPITokenWithPrismaInternalEqualsUniqueParam) equals() {}
 
 type APITokenWithPrismaNameEqualsSetParam interface {
 	field() builder.Field
