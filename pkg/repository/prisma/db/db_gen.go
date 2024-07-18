@@ -540,6 +540,7 @@ model Workflow {
 
   // workflow names are unique per tenant
   @@unique([tenantId, name])
+  @@index([deletedAt])
 }
 
 model WorkflowVersion {
@@ -580,6 +581,8 @@ model WorkflowVersion {
 
   // the default amount of time to wait while scheduling a step run
   scheduleTimeout String @default("5m")
+
+  @@index([deletedAt])
 }
 
 enum ConcurrencyLimitStrategy {
@@ -946,6 +949,7 @@ model WorkflowRun {
   @@index([tenantId, createdAt])
   @@index([finishedAt])
   @@index([status])
+  @@index([deletedAt])
 }
 
 model GetGroupKeyRun {
@@ -953,7 +957,7 @@ model GetGroupKeyRun {
   id        String    @id @unique @default(uuid()) @db.Uuid
   createdAt DateTime  @default(now())
   updatedAt DateTime  @default(now()) @updatedAt
-  deletedAt DateTime?
+  deletedAt DateTime? // TODO verify we're setting this
 
   // the parent tenant
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
@@ -1006,6 +1010,8 @@ model GetGroupKeyRun {
 
   // errors while cancelling the run
   cancelledError String?
+
+  @@index([deletedAt])
 }
 
 model WorkflowRunTriggeredBy {
@@ -1104,6 +1110,7 @@ model JobRun {
 
   // index for ResolveWorkflowRunStatus and ListJobRunsForWorkflowRun
   @@index([workflowRunId, tenantId])
+  @@index([deletedAt])
 }
 
 model JobRunLookupData {
@@ -1254,6 +1261,7 @@ model StepRun {
   @@index([jobRunId, status, tenantId])
   // index for PollStepRuns
   @@index([tenantId, status, timeoutAt])
+  @@index([deletedAt])
 }
 
 enum StepRunEventReason {
