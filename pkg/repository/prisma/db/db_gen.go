@@ -543,6 +543,11 @@ model Workflow {
   @@index([deletedAt])
 }
 
+enum StickyStrategy {
+  SOFT
+  HARD
+}
+
 model WorkflowVersion {
   // base fields
   id        String    @id @unique @default(uuid()) @db.Uuid
@@ -565,6 +570,9 @@ model WorkflowVersion {
 
   // concurrency limits for the workflow
   concurrency WorkflowConcurrency?
+
+  // sticky strategy for the workflow to assign steps to the same worker
+  sticky StickyStrategy?
 
   // the declared jobs
   jobs Job[]
@@ -787,6 +795,27 @@ model Action {
   @@unique([tenantId, actionId])
 }
 
+model StepDesiredWorkerLabel {
+  id BigInt @id @default(autoincrement()) @db.BigInt
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  step   Step   @relation(fields: [stepId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  stepId String @db.Uuid
+
+  key      String
+  strValue String?
+  intValue Int?
+
+  required   Boolean
+  comparator WorkerLabelComparator
+  weight     Int
+
+  @@unique([stepId, key])
+  @@index([stepId])
+}
+
 model Step {
   // base fields
   id        String    @id @unique @default(uuid()) @db.Uuid
@@ -829,6 +858,8 @@ model Step {
   scheduleTimeout String @default("5m")
 
   rateLimits StepRateLimit[]
+
+  workerLabels StepDesiredWorkerLabel[]
 
   // readable ids are unique per job
   @@unique([jobId, readableId])
@@ -883,6 +914,23 @@ enum WorkflowRunStatus {
   FAILED
 }
 
+model WorkflowRunStickyState {
+  id        BigInt   @id @default(autoincrement()) @db.BigInt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+  tenantId  String   @db.Uuid
+
+  // the parent workflow run
+  workflowRun   WorkflowRun @relation(fields: [workflowRunId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  workflowRunId String      @unique @db.Uuid
+
+  // the sticky state
+  desiredWorkerId String? @db.Uuid
+
+  // the sticky state value
+  strategy StickyStrategy
+}
+
 model WorkflowRun {
   // base fields
   id        String    @id @unique @default(uuid()) @db.Uuid
@@ -909,6 +957,8 @@ model WorkflowRun {
   jobRuns JobRun[]
 
   triggeredBy WorkflowRunTriggeredBy?
+
+  sticky WorkflowRunStickyState?
 
   // the run error
   error String?
@@ -1389,12 +1439,40 @@ model Ticker {
   tenantAlerts TenantAlertingSettings[]
 }
 
+enum WorkerLabelComparator {
+  EQUAL
+  NOT_EQUAL
+  GREATER_THAN
+  GREATER_THAN_OR_EQUAL
+  LESS_THAN
+  LESS_THAN_OR_EQUAL
+}
+
+model WorkerLabel {
+  id BigInt @id @default(autoincrement()) @db.BigInt
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  worker   Worker @relation(fields: [workerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  workerId String @db.Uuid
+
+  key      String
+  strValue String?
+  intValue Int?
+
+  @@unique([workerId, key])
+  @@index([workerId])
+}
+
 model Worker {
   // base fields
   id        String    @id @unique @default(uuid()) @db.Uuid
   createdAt DateTime  @default(now())
   updatedAt DateTime  @default(now()) @updatedAt
   deletedAt DateTime?
+
+  labels WorkerLabel[]
 
   // the parent tenant
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
@@ -1709,9 +1787,11 @@ func newClient() *PrismaClient {
 	c.WorkflowTriggerScheduledRef = workflowTriggerScheduledRefActions{client: c}
 	c.Job = jobActions{client: c}
 	c.Action = actionActions{client: c}
+	c.StepDesiredWorkerLabel = stepDesiredWorkerLabelActions{client: c}
 	c.Step = stepActions{client: c}
 	c.StepRateLimit = stepRateLimitActions{client: c}
 	c.RateLimit = rateLimitActions{client: c}
+	c.WorkflowRunStickyState = workflowRunStickyStateActions{client: c}
 	c.WorkflowRun = workflowRunActions{client: c}
 	c.GetGroupKeyRun = getGroupKeyRunActions{client: c}
 	c.WorkflowRunTriggeredBy = workflowRunTriggeredByActions{client: c}
@@ -1722,6 +1802,7 @@ func newClient() *PrismaClient {
 	c.StepRunResultArchive = stepRunResultArchiveActions{client: c}
 	c.Dispatcher = dispatcherActions{client: c}
 	c.Ticker = tickerActions{client: c}
+	c.WorkerLabel = workerLabelActions{client: c}
 	c.Worker = workerActions{client: c}
 	c.WorkerSemaphore = workerSemaphoreActions{client: c}
 	c.WorkerSemaphoreSlot = workerSemaphoreSlotActions{client: c}
@@ -1809,12 +1890,16 @@ type PrismaClient struct {
 	Job jobActions
 	// Action provides access to CRUD methods.
 	Action actionActions
+	// StepDesiredWorkerLabel provides access to CRUD methods.
+	StepDesiredWorkerLabel stepDesiredWorkerLabelActions
 	// Step provides access to CRUD methods.
 	Step stepActions
 	// StepRateLimit provides access to CRUD methods.
 	StepRateLimit stepRateLimitActions
 	// RateLimit provides access to CRUD methods.
 	RateLimit rateLimitActions
+	// WorkflowRunStickyState provides access to CRUD methods.
+	WorkflowRunStickyState workflowRunStickyStateActions
 	// WorkflowRun provides access to CRUD methods.
 	WorkflowRun workflowRunActions
 	// GetGroupKeyRun provides access to CRUD methods.
@@ -1835,6 +1920,8 @@ type PrismaClient struct {
 	Dispatcher dispatcherActions
 	// Ticker provides access to CRUD methods.
 	Ticker tickerActions
+	// WorkerLabel provides access to CRUD methods.
+	WorkerLabel workerLabelActions
 	// Worker provides access to CRUD methods.
 	Worker workerActions
 	// WorkerSemaphore provides access to CRUD methods.
@@ -1898,6 +1985,14 @@ const (
 )
 
 type RawInviteLinkStatus InviteLinkStatus
+type StickyStrategy string
+
+const (
+	StickyStrategySoft StickyStrategy = "SOFT"
+	StickyStrategyHard StickyStrategy = "HARD"
+)
+
+type RawStickyStrategy StickyStrategy
 type ConcurrencyLimitStrategy string
 
 const (
@@ -1980,6 +2075,18 @@ const (
 )
 
 type RawStepRunEventSeverity StepRunEventSeverity
+type WorkerLabelComparator string
+
+const (
+	WorkerLabelComparatorEqual              WorkerLabelComparator = "EQUAL"
+	WorkerLabelComparatorNotEqual           WorkerLabelComparator = "NOT_EQUAL"
+	WorkerLabelComparatorGreaterThan        WorkerLabelComparator = "GREATER_THAN"
+	WorkerLabelComparatorGreaterThanOrEqual WorkerLabelComparator = "GREATER_THAN_OR_EQUAL"
+	WorkerLabelComparatorLessThan           WorkerLabelComparator = "LESS_THAN"
+	WorkerLabelComparatorLessThanOrEqual    WorkerLabelComparator = "LESS_THAN_OR_EQUAL"
+)
+
+type RawWorkerLabelComparator WorkerLabelComparator
 type VcsProvider string
 
 const (
@@ -2241,6 +2348,7 @@ const (
 	WorkflowVersionScalarFieldEnumVersion         WorkflowVersionScalarFieldEnum = "version"
 	WorkflowVersionScalarFieldEnumOrder           WorkflowVersionScalarFieldEnum = "order"
 	WorkflowVersionScalarFieldEnumWorkflowID      WorkflowVersionScalarFieldEnum = "workflowId"
+	WorkflowVersionScalarFieldEnumSticky          WorkflowVersionScalarFieldEnum = "sticky"
 	WorkflowVersionScalarFieldEnumOnFailureJobID  WorkflowVersionScalarFieldEnum = "onFailureJobId"
 	WorkflowVersionScalarFieldEnumScheduleTimeout WorkflowVersionScalarFieldEnum = "scheduleTimeout"
 )
@@ -2323,6 +2431,21 @@ const (
 	ActionScalarFieldEnumTenantID    ActionScalarFieldEnum = "tenantId"
 )
 
+type StepDesiredWorkerLabelScalarFieldEnum string
+
+const (
+	StepDesiredWorkerLabelScalarFieldEnumID         StepDesiredWorkerLabelScalarFieldEnum = "id"
+	StepDesiredWorkerLabelScalarFieldEnumCreatedAt  StepDesiredWorkerLabelScalarFieldEnum = "createdAt"
+	StepDesiredWorkerLabelScalarFieldEnumUpdatedAt  StepDesiredWorkerLabelScalarFieldEnum = "updatedAt"
+	StepDesiredWorkerLabelScalarFieldEnumStepID     StepDesiredWorkerLabelScalarFieldEnum = "stepId"
+	StepDesiredWorkerLabelScalarFieldEnumKey        StepDesiredWorkerLabelScalarFieldEnum = "key"
+	StepDesiredWorkerLabelScalarFieldEnumStrValue   StepDesiredWorkerLabelScalarFieldEnum = "strValue"
+	StepDesiredWorkerLabelScalarFieldEnumIntValue   StepDesiredWorkerLabelScalarFieldEnum = "intValue"
+	StepDesiredWorkerLabelScalarFieldEnumRequired   StepDesiredWorkerLabelScalarFieldEnum = "required"
+	StepDesiredWorkerLabelScalarFieldEnumComparator StepDesiredWorkerLabelScalarFieldEnum = "comparator"
+	StepDesiredWorkerLabelScalarFieldEnumWeight     StepDesiredWorkerLabelScalarFieldEnum = "weight"
+)
+
 type StepScalarFieldEnum string
 
 const (
@@ -2358,6 +2481,18 @@ const (
 	RateLimitScalarFieldEnumValue      RateLimitScalarFieldEnum = "value"
 	RateLimitScalarFieldEnumWindow     RateLimitScalarFieldEnum = "window"
 	RateLimitScalarFieldEnumLastRefill RateLimitScalarFieldEnum = "lastRefill"
+)
+
+type WorkflowRunStickyStateScalarFieldEnum string
+
+const (
+	WorkflowRunStickyStateScalarFieldEnumID              WorkflowRunStickyStateScalarFieldEnum = "id"
+	WorkflowRunStickyStateScalarFieldEnumCreatedAt       WorkflowRunStickyStateScalarFieldEnum = "createdAt"
+	WorkflowRunStickyStateScalarFieldEnumUpdatedAt       WorkflowRunStickyStateScalarFieldEnum = "updatedAt"
+	WorkflowRunStickyStateScalarFieldEnumTenantID        WorkflowRunStickyStateScalarFieldEnum = "tenantId"
+	WorkflowRunStickyStateScalarFieldEnumWorkflowRunID   WorkflowRunStickyStateScalarFieldEnum = "workflowRunId"
+	WorkflowRunStickyStateScalarFieldEnumDesiredWorkerID WorkflowRunStickyStateScalarFieldEnum = "desiredWorkerId"
+	WorkflowRunStickyStateScalarFieldEnumStrategy        WorkflowRunStickyStateScalarFieldEnum = "strategy"
 )
 
 type WorkflowRunScalarFieldEnum string
@@ -2542,6 +2677,18 @@ const (
 	TickerScalarFieldEnumUpdatedAt       TickerScalarFieldEnum = "updatedAt"
 	TickerScalarFieldEnumLastHeartbeatAt TickerScalarFieldEnum = "lastHeartbeatAt"
 	TickerScalarFieldEnumIsActive        TickerScalarFieldEnum = "isActive"
+)
+
+type WorkerLabelScalarFieldEnum string
+
+const (
+	WorkerLabelScalarFieldEnumID        WorkerLabelScalarFieldEnum = "id"
+	WorkerLabelScalarFieldEnumCreatedAt WorkerLabelScalarFieldEnum = "createdAt"
+	WorkerLabelScalarFieldEnumUpdatedAt WorkerLabelScalarFieldEnum = "updatedAt"
+	WorkerLabelScalarFieldEnumWorkerID  WorkerLabelScalarFieldEnum = "workerId"
+	WorkerLabelScalarFieldEnumKey       WorkerLabelScalarFieldEnum = "key"
+	WorkerLabelScalarFieldEnumStrValue  WorkerLabelScalarFieldEnum = "strValue"
+	WorkerLabelScalarFieldEnumIntValue  WorkerLabelScalarFieldEnum = "intValue"
 )
 
 type WorkerScalarFieldEnum string
@@ -3192,6 +3339,8 @@ const workflowVersionFieldTriggers workflowVersionPrismaFields = "triggers"
 
 const workflowVersionFieldConcurrency workflowVersionPrismaFields = "concurrency"
 
+const workflowVersionFieldSticky workflowVersionPrismaFields = "sticky"
+
 const workflowVersionFieldJobs workflowVersionPrismaFields = "jobs"
 
 const workflowVersionFieldOnFailureJob workflowVersionPrismaFields = "onFailureJob"
@@ -3352,6 +3501,30 @@ const actionFieldWorkers actionPrismaFields = "workers"
 
 const actionFieldConcurrency actionPrismaFields = "concurrency"
 
+type stepDesiredWorkerLabelPrismaFields = prismaFields
+
+const stepDesiredWorkerLabelFieldID stepDesiredWorkerLabelPrismaFields = "id"
+
+const stepDesiredWorkerLabelFieldCreatedAt stepDesiredWorkerLabelPrismaFields = "createdAt"
+
+const stepDesiredWorkerLabelFieldUpdatedAt stepDesiredWorkerLabelPrismaFields = "updatedAt"
+
+const stepDesiredWorkerLabelFieldStep stepDesiredWorkerLabelPrismaFields = "step"
+
+const stepDesiredWorkerLabelFieldStepID stepDesiredWorkerLabelPrismaFields = "stepId"
+
+const stepDesiredWorkerLabelFieldKey stepDesiredWorkerLabelPrismaFields = "key"
+
+const stepDesiredWorkerLabelFieldStrValue stepDesiredWorkerLabelPrismaFields = "strValue"
+
+const stepDesiredWorkerLabelFieldIntValue stepDesiredWorkerLabelPrismaFields = "intValue"
+
+const stepDesiredWorkerLabelFieldRequired stepDesiredWorkerLabelPrismaFields = "required"
+
+const stepDesiredWorkerLabelFieldComparator stepDesiredWorkerLabelPrismaFields = "comparator"
+
+const stepDesiredWorkerLabelFieldWeight stepDesiredWorkerLabelPrismaFields = "weight"
+
 type stepPrismaFields = prismaFields
 
 const stepFieldID stepPrismaFields = "id"
@@ -3392,6 +3565,8 @@ const stepFieldScheduleTimeout stepPrismaFields = "scheduleTimeout"
 
 const stepFieldRateLimits stepPrismaFields = "rateLimits"
 
+const stepFieldWorkerLabels stepPrismaFields = "workerLabels"
+
 type stepRateLimitPrismaFields = prismaFields
 
 const stepRateLimitFieldUnits stepRateLimitPrismaFields = "units"
@@ -3426,6 +3601,24 @@ const rateLimitFieldLastRefill rateLimitPrismaFields = "lastRefill"
 
 const rateLimitFieldStepRunLimits rateLimitPrismaFields = "stepRunLimits"
 
+type workflowRunStickyStatePrismaFields = prismaFields
+
+const workflowRunStickyStateFieldID workflowRunStickyStatePrismaFields = "id"
+
+const workflowRunStickyStateFieldCreatedAt workflowRunStickyStatePrismaFields = "createdAt"
+
+const workflowRunStickyStateFieldUpdatedAt workflowRunStickyStatePrismaFields = "updatedAt"
+
+const workflowRunStickyStateFieldTenantID workflowRunStickyStatePrismaFields = "tenantId"
+
+const workflowRunStickyStateFieldWorkflowRun workflowRunStickyStatePrismaFields = "workflowRun"
+
+const workflowRunStickyStateFieldWorkflowRunID workflowRunStickyStatePrismaFields = "workflowRunId"
+
+const workflowRunStickyStateFieldDesiredWorkerID workflowRunStickyStatePrismaFields = "desiredWorkerId"
+
+const workflowRunStickyStateFieldStrategy workflowRunStickyStatePrismaFields = "strategy"
+
 type workflowRunPrismaFields = prismaFields
 
 const workflowRunFieldID workflowRunPrismaFields = "id"
@@ -3455,6 +3648,8 @@ const workflowRunFieldStatus workflowRunPrismaFields = "status"
 const workflowRunFieldJobRuns workflowRunPrismaFields = "jobRuns"
 
 const workflowRunFieldTriggeredBy workflowRunPrismaFields = "triggeredBy"
+
+const workflowRunFieldSticky workflowRunPrismaFields = "sticky"
 
 const workflowRunFieldError workflowRunPrismaFields = "error"
 
@@ -3812,6 +4007,24 @@ const tickerFieldGroupKeyRuns tickerPrismaFields = "groupKeyRuns"
 
 const tickerFieldTenantAlerts tickerPrismaFields = "tenantAlerts"
 
+type workerLabelPrismaFields = prismaFields
+
+const workerLabelFieldID workerLabelPrismaFields = "id"
+
+const workerLabelFieldCreatedAt workerLabelPrismaFields = "createdAt"
+
+const workerLabelFieldUpdatedAt workerLabelPrismaFields = "updatedAt"
+
+const workerLabelFieldWorker workerLabelPrismaFields = "worker"
+
+const workerLabelFieldWorkerID workerLabelPrismaFields = "workerId"
+
+const workerLabelFieldKey workerLabelPrismaFields = "key"
+
+const workerLabelFieldStrValue workerLabelPrismaFields = "strValue"
+
+const workerLabelFieldIntValue workerLabelPrismaFields = "intValue"
+
 type workerPrismaFields = prismaFields
 
 const workerFieldID workerPrismaFields = "id"
@@ -3821,6 +4034,8 @@ const workerFieldCreatedAt workerPrismaFields = "createdAt"
 const workerFieldUpdatedAt workerPrismaFields = "updatedAt"
 
 const workerFieldDeletedAt workerPrismaFields = "deletedAt"
+
+const workerFieldLabels workerPrismaFields = "labels"
 
 const workerFieldTenant workerPrismaFields = "tenant"
 
@@ -4122,6 +4337,10 @@ func NewMock() (*PrismaClient, *Mock, func(t *testing.T)) {
 		mock: m,
 	}
 
+	m.StepDesiredWorkerLabel = stepDesiredWorkerLabelMock{
+		mock: m,
+	}
+
 	m.Step = stepMock{
 		mock: m,
 	}
@@ -4131,6 +4350,10 @@ func NewMock() (*PrismaClient, *Mock, func(t *testing.T)) {
 	}
 
 	m.RateLimit = rateLimitMock{
+		mock: m,
+	}
+
+	m.WorkflowRunStickyState = workflowRunStickyStateMock{
 		mock: m,
 	}
 
@@ -4171,6 +4394,10 @@ func NewMock() (*PrismaClient, *Mock, func(t *testing.T)) {
 	}
 
 	m.Ticker = tickerMock{
+		mock: m,
+	}
+
+	m.WorkerLabel = workerLabelMock{
 		mock: m,
 	}
 
@@ -4276,11 +4503,15 @@ type Mock struct {
 
 	Action actionMock
 
+	StepDesiredWorkerLabel stepDesiredWorkerLabelMock
+
 	Step stepMock
 
 	StepRateLimit stepRateLimitMock
 
 	RateLimit rateLimitMock
+
+	WorkflowRunStickyState workflowRunStickyStateMock
 
 	WorkflowRun workflowRunMock
 
@@ -4301,6 +4532,8 @@ type Mock struct {
 	Dispatcher dispatcherMock
 
 	Ticker tickerMock
+
+	WorkerLabel workerLabelMock
 
 	Worker workerMock
 
@@ -5417,6 +5650,48 @@ func (m *actionMockExec) Errors(err error) {
 	})
 }
 
+type stepDesiredWorkerLabelMock struct {
+	mock *Mock
+}
+
+type StepDesiredWorkerLabelMockExpectParam interface {
+	ExtractQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+}
+
+func (m *stepDesiredWorkerLabelMock) Expect(query StepDesiredWorkerLabelMockExpectParam) *stepDesiredWorkerLabelMockExec {
+	return &stepDesiredWorkerLabelMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type stepDesiredWorkerLabelMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *stepDesiredWorkerLabelMockExec) Returns(v StepDesiredWorkerLabelModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *stepDesiredWorkerLabelMockExec) ReturnsMany(v []StepDesiredWorkerLabelModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *stepDesiredWorkerLabelMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
 type stepMock struct {
 	mock *Mock
 }
@@ -5537,6 +5812,48 @@ func (m *rateLimitMockExec) ReturnsMany(v []RateLimitModel) {
 }
 
 func (m *rateLimitMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
+type workflowRunStickyStateMock struct {
+	mock *Mock
+}
+
+type WorkflowRunStickyStateMockExpectParam interface {
+	ExtractQuery() builder.Query
+	workflowRunStickyStateModel()
+}
+
+func (m *workflowRunStickyStateMock) Expect(query WorkflowRunStickyStateMockExpectParam) *workflowRunStickyStateMockExec {
+	return &workflowRunStickyStateMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type workflowRunStickyStateMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *workflowRunStickyStateMockExec) Returns(v WorkflowRunStickyStateModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *workflowRunStickyStateMockExec) ReturnsMany(v []WorkflowRunStickyStateModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *workflowRunStickyStateMockExec) Errors(err error) {
 	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
 		Query:   m.query,
 		WantErr: err,
@@ -5957,6 +6274,48 @@ func (m *tickerMockExec) ReturnsMany(v []TickerModel) {
 }
 
 func (m *tickerMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
+type workerLabelMock struct {
+	mock *Mock
+}
+
+type WorkerLabelMockExpectParam interface {
+	ExtractQuery() builder.Query
+	workerLabelModel()
+}
+
+func (m *workerLabelMock) Expect(query WorkerLabelMockExpectParam) *workerLabelMockExec {
+	return &workerLabelMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type workerLabelMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *workerLabelMockExec) Returns(v WorkerLabelModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *workerLabelMockExec) ReturnsMany(v []WorkerLabelModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *workerLabelMockExec) Errors(err error) {
 	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
 		Query:   m.query,
 		WantErr: err,
@@ -7757,30 +8116,32 @@ type WorkflowVersionModel struct {
 
 // InnerWorkflowVersion holds the actual data
 type InnerWorkflowVersion struct {
-	ID              string    `json:"id"`
-	CreatedAt       DateTime  `json:"createdAt"`
-	UpdatedAt       DateTime  `json:"updatedAt"`
-	DeletedAt       *DateTime `json:"deletedAt,omitempty"`
-	Checksum        string    `json:"checksum"`
-	Version         *string   `json:"version,omitempty"`
-	Order           BigInt    `json:"order"`
-	WorkflowID      string    `json:"workflowId"`
-	OnFailureJobID  *string   `json:"onFailureJobId,omitempty"`
-	ScheduleTimeout string    `json:"scheduleTimeout"`
+	ID              string          `json:"id"`
+	CreatedAt       DateTime        `json:"createdAt"`
+	UpdatedAt       DateTime        `json:"updatedAt"`
+	DeletedAt       *DateTime       `json:"deletedAt,omitempty"`
+	Checksum        string          `json:"checksum"`
+	Version         *string         `json:"version,omitempty"`
+	Order           BigInt          `json:"order"`
+	WorkflowID      string          `json:"workflowId"`
+	Sticky          *StickyStrategy `json:"sticky,omitempty"`
+	OnFailureJobID  *string         `json:"onFailureJobId,omitempty"`
+	ScheduleTimeout string          `json:"scheduleTimeout"`
 }
 
 // RawWorkflowVersionModel is a struct for WorkflowVersion when used in raw queries
 type RawWorkflowVersionModel struct {
-	ID              RawString    `json:"id"`
-	CreatedAt       RawDateTime  `json:"createdAt"`
-	UpdatedAt       RawDateTime  `json:"updatedAt"`
-	DeletedAt       *RawDateTime `json:"deletedAt,omitempty"`
-	Checksum        RawString    `json:"checksum"`
-	Version         *RawString   `json:"version,omitempty"`
-	Order           RawBigInt    `json:"order"`
-	WorkflowID      RawString    `json:"workflowId"`
-	OnFailureJobID  *RawString   `json:"onFailureJobId,omitempty"`
-	ScheduleTimeout RawString    `json:"scheduleTimeout"`
+	ID              RawString          `json:"id"`
+	CreatedAt       RawDateTime        `json:"createdAt"`
+	UpdatedAt       RawDateTime        `json:"updatedAt"`
+	DeletedAt       *RawDateTime       `json:"deletedAt,omitempty"`
+	Checksum        RawString          `json:"checksum"`
+	Version         *RawString         `json:"version,omitempty"`
+	Order           RawBigInt          `json:"order"`
+	WorkflowID      RawString          `json:"workflowId"`
+	Sticky          *RawStickyStrategy `json:"sticky,omitempty"`
+	OnFailureJobID  *RawString         `json:"onFailureJobId,omitempty"`
+	ScheduleTimeout RawString          `json:"scheduleTimeout"`
 }
 
 // RelationsWorkflowVersion holds the relation data separately
@@ -7827,6 +8188,13 @@ func (r WorkflowVersionModel) Concurrency() (value *WorkflowConcurrencyModel, ok
 		return value, false
 	}
 	return r.RelationsWorkflowVersion.Concurrency, true
+}
+
+func (r WorkflowVersionModel) Sticky() (value StickyStrategy, ok bool) {
+	if r.InnerWorkflowVersion.Sticky == nil {
+		return value, false
+	}
+	return *r.InnerWorkflowVersion.Sticky, true
 }
 
 func (r WorkflowVersionModel) Jobs() (value []JobModel) {
@@ -8366,6 +8734,66 @@ func (r ActionModel) Concurrency() (value []WorkflowConcurrencyModel) {
 	return r.RelationsAction.Concurrency
 }
 
+// StepDesiredWorkerLabelModel represents the StepDesiredWorkerLabel model and is a wrapper for accessing fields and methods
+type StepDesiredWorkerLabelModel struct {
+	InnerStepDesiredWorkerLabel
+	RelationsStepDesiredWorkerLabel
+}
+
+// InnerStepDesiredWorkerLabel holds the actual data
+type InnerStepDesiredWorkerLabel struct {
+	ID         BigInt                `json:"id"`
+	CreatedAt  DateTime              `json:"createdAt"`
+	UpdatedAt  DateTime              `json:"updatedAt"`
+	StepID     string                `json:"stepId"`
+	Key        string                `json:"key"`
+	StrValue   *string               `json:"strValue,omitempty"`
+	IntValue   *int                  `json:"intValue,omitempty"`
+	Required   bool                  `json:"required"`
+	Comparator WorkerLabelComparator `json:"comparator"`
+	Weight     int                   `json:"weight"`
+}
+
+// RawStepDesiredWorkerLabelModel is a struct for StepDesiredWorkerLabel when used in raw queries
+type RawStepDesiredWorkerLabelModel struct {
+	ID         RawBigInt                `json:"id"`
+	CreatedAt  RawDateTime              `json:"createdAt"`
+	UpdatedAt  RawDateTime              `json:"updatedAt"`
+	StepID     RawString                `json:"stepId"`
+	Key        RawString                `json:"key"`
+	StrValue   *RawString               `json:"strValue,omitempty"`
+	IntValue   *RawInt                  `json:"intValue,omitempty"`
+	Required   RawBoolean               `json:"required"`
+	Comparator RawWorkerLabelComparator `json:"comparator"`
+	Weight     RawInt                   `json:"weight"`
+}
+
+// RelationsStepDesiredWorkerLabel holds the relation data separately
+type RelationsStepDesiredWorkerLabel struct {
+	Step *StepModel `json:"step,omitempty"`
+}
+
+func (r StepDesiredWorkerLabelModel) Step() (value *StepModel) {
+	if r.RelationsStepDesiredWorkerLabel.Step == nil {
+		panic("attempted to access step but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsStepDesiredWorkerLabel.Step
+}
+
+func (r StepDesiredWorkerLabelModel) StrValue() (value String, ok bool) {
+	if r.InnerStepDesiredWorkerLabel.StrValue == nil {
+		return value, false
+	}
+	return *r.InnerStepDesiredWorkerLabel.StrValue, true
+}
+
+func (r StepDesiredWorkerLabelModel) IntValue() (value Int, ok bool) {
+	if r.InnerStepDesiredWorkerLabel.IntValue == nil {
+		return value, false
+	}
+	return *r.InnerStepDesiredWorkerLabel.IntValue, true
+}
+
 // StepModel represents the Step model and is a wrapper for accessing fields and methods
 type StepModel struct {
 	InnerStep
@@ -8406,13 +8834,14 @@ type RawStepModel struct {
 
 // RelationsStep holds the relation data separately
 type RelationsStep struct {
-	Tenant     *TenantModel         `json:"tenant,omitempty"`
-	Job        *JobModel            `json:"job,omitempty"`
-	Action     *ActionModel         `json:"action,omitempty"`
-	Children   []StepModel          `json:"children,omitempty"`
-	Parents    []StepModel          `json:"parents,omitempty"`
-	StepRuns   []StepRunModel       `json:"stepRuns,omitempty"`
-	RateLimits []StepRateLimitModel `json:"rateLimits,omitempty"`
+	Tenant       *TenantModel                  `json:"tenant,omitempty"`
+	Job          *JobModel                     `json:"job,omitempty"`
+	Action       *ActionModel                  `json:"action,omitempty"`
+	Children     []StepModel                   `json:"children,omitempty"`
+	Parents      []StepModel                   `json:"parents,omitempty"`
+	StepRuns     []StepRunModel                `json:"stepRuns,omitempty"`
+	RateLimits   []StepRateLimitModel          `json:"rateLimits,omitempty"`
+	WorkerLabels []StepDesiredWorkerLabelModel `json:"workerLabels,omitempty"`
 }
 
 func (r StepModel) DeletedAt() (value DateTime, ok bool) {
@@ -8490,6 +8919,13 @@ func (r StepModel) RateLimits() (value []StepRateLimitModel) {
 		panic("attempted to access rateLimits but did not fetch it using the .With() syntax")
 	}
 	return r.RelationsStep.RateLimits
+}
+
+func (r StepModel) WorkerLabels() (value []StepDesiredWorkerLabelModel) {
+	if r.RelationsStep.WorkerLabels == nil {
+		panic("attempted to access workerLabels but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsStep.WorkerLabels
 }
 
 // StepRateLimitModel represents the StepRateLimit model and is a wrapper for accessing fields and methods
@@ -8588,6 +9024,53 @@ func (r RateLimitModel) StepRunLimits() (value []StepRateLimitModel) {
 	return r.RelationsRateLimit.StepRunLimits
 }
 
+// WorkflowRunStickyStateModel represents the WorkflowRunStickyState model and is a wrapper for accessing fields and methods
+type WorkflowRunStickyStateModel struct {
+	InnerWorkflowRunStickyState
+	RelationsWorkflowRunStickyState
+}
+
+// InnerWorkflowRunStickyState holds the actual data
+type InnerWorkflowRunStickyState struct {
+	ID              BigInt         `json:"id"`
+	CreatedAt       DateTime       `json:"createdAt"`
+	UpdatedAt       DateTime       `json:"updatedAt"`
+	TenantID        string         `json:"tenantId"`
+	WorkflowRunID   string         `json:"workflowRunId"`
+	DesiredWorkerID *string        `json:"desiredWorkerId,omitempty"`
+	Strategy        StickyStrategy `json:"strategy"`
+}
+
+// RawWorkflowRunStickyStateModel is a struct for WorkflowRunStickyState when used in raw queries
+type RawWorkflowRunStickyStateModel struct {
+	ID              RawBigInt         `json:"id"`
+	CreatedAt       RawDateTime       `json:"createdAt"`
+	UpdatedAt       RawDateTime       `json:"updatedAt"`
+	TenantID        RawString         `json:"tenantId"`
+	WorkflowRunID   RawString         `json:"workflowRunId"`
+	DesiredWorkerID *RawString        `json:"desiredWorkerId,omitempty"`
+	Strategy        RawStickyStrategy `json:"strategy"`
+}
+
+// RelationsWorkflowRunStickyState holds the relation data separately
+type RelationsWorkflowRunStickyState struct {
+	WorkflowRun *WorkflowRunModel `json:"workflowRun,omitempty"`
+}
+
+func (r WorkflowRunStickyStateModel) WorkflowRun() (value *WorkflowRunModel) {
+	if r.RelationsWorkflowRunStickyState.WorkflowRun == nil {
+		panic("attempted to access workflowRun but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsWorkflowRunStickyState.WorkflowRun
+}
+
+func (r WorkflowRunStickyStateModel) DesiredWorkerID() (value String, ok bool) {
+	if r.InnerWorkflowRunStickyState.DesiredWorkerID == nil {
+		return value, false
+	}
+	return *r.InnerWorkflowRunStickyState.DesiredWorkerID, true
+}
+
 // WorkflowRunModel represents the WorkflowRun model and is a wrapper for accessing fields and methods
 type WorkflowRunModel struct {
 	InnerWorkflowRun
@@ -8645,6 +9128,7 @@ type RelationsWorkflowRun struct {
 	GetGroupKeyRun    *GetGroupKeyRunModel               `json:"getGroupKeyRun,omitempty"`
 	JobRuns           []JobRunModel                      `json:"jobRuns,omitempty"`
 	TriggeredBy       *WorkflowRunTriggeredByModel       `json:"triggeredBy,omitempty"`
+	Sticky            *WorkflowRunStickyStateModel       `json:"sticky,omitempty"`
 	Children          []WorkflowRunModel                 `json:"children,omitempty"`
 	ScheduledChildren []WorkflowTriggerScheduledRefModel `json:"scheduledChildren,omitempty"`
 	Parent            *WorkflowRunModel                  `json:"parent,omitempty"`
@@ -8705,6 +9189,13 @@ func (r WorkflowRunModel) TriggeredBy() (value *WorkflowRunTriggeredByModel, ok 
 		return value, false
 	}
 	return r.RelationsWorkflowRun.TriggeredBy, true
+}
+
+func (r WorkflowRunModel) Sticky() (value *WorkflowRunStickyStateModel, ok bool) {
+	if r.RelationsWorkflowRun.Sticky == nil {
+		return value, false
+	}
+	return r.RelationsWorkflowRun.Sticky, true
 }
 
 func (r WorkflowRunModel) Error() (value String, ok bool) {
@@ -9946,6 +10437,60 @@ func (r TickerModel) TenantAlerts() (value []TenantAlertingSettingsModel) {
 	return r.RelationsTicker.TenantAlerts
 }
 
+// WorkerLabelModel represents the WorkerLabel model and is a wrapper for accessing fields and methods
+type WorkerLabelModel struct {
+	InnerWorkerLabel
+	RelationsWorkerLabel
+}
+
+// InnerWorkerLabel holds the actual data
+type InnerWorkerLabel struct {
+	ID        BigInt   `json:"id"`
+	CreatedAt DateTime `json:"createdAt"`
+	UpdatedAt DateTime `json:"updatedAt"`
+	WorkerID  string   `json:"workerId"`
+	Key       string   `json:"key"`
+	StrValue  *string  `json:"strValue,omitempty"`
+	IntValue  *int     `json:"intValue,omitempty"`
+}
+
+// RawWorkerLabelModel is a struct for WorkerLabel when used in raw queries
+type RawWorkerLabelModel struct {
+	ID        RawBigInt   `json:"id"`
+	CreatedAt RawDateTime `json:"createdAt"`
+	UpdatedAt RawDateTime `json:"updatedAt"`
+	WorkerID  RawString   `json:"workerId"`
+	Key       RawString   `json:"key"`
+	StrValue  *RawString  `json:"strValue,omitempty"`
+	IntValue  *RawInt     `json:"intValue,omitempty"`
+}
+
+// RelationsWorkerLabel holds the relation data separately
+type RelationsWorkerLabel struct {
+	Worker *WorkerModel `json:"worker,omitempty"`
+}
+
+func (r WorkerLabelModel) Worker() (value *WorkerModel) {
+	if r.RelationsWorkerLabel.Worker == nil {
+		panic("attempted to access worker but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsWorkerLabel.Worker
+}
+
+func (r WorkerLabelModel) StrValue() (value String, ok bool) {
+	if r.InnerWorkerLabel.StrValue == nil {
+		return value, false
+	}
+	return *r.InnerWorkerLabel.StrValue, true
+}
+
+func (r WorkerLabelModel) IntValue() (value Int, ok bool) {
+	if r.InnerWorkerLabel.IntValue == nil {
+		return value, false
+	}
+	return *r.InnerWorkerLabel.IntValue, true
+}
+
 // WorkerModel represents the Worker model and is a wrapper for accessing fields and methods
 type WorkerModel struct {
 	InnerWorker
@@ -9986,6 +10531,7 @@ type RawWorkerModel struct {
 
 // RelationsWorker holds the relation data separately
 type RelationsWorker struct {
+	Labels       []WorkerLabelModel         `json:"labels,omitempty"`
 	Tenant       *TenantModel               `json:"tenant,omitempty"`
 	Dispatcher   *DispatcherModel           `json:"dispatcher,omitempty"`
 	Services     []ServiceModel             `json:"services,omitempty"`
@@ -10001,6 +10547,13 @@ func (r WorkerModel) DeletedAt() (value DateTime, ok bool) {
 		return value, false
 	}
 	return *r.InnerWorker.DeletedAt, true
+}
+
+func (r WorkerModel) Labels() (value []WorkerLabelModel) {
+	if r.RelationsWorker.Labels == nil {
+		panic("attempted to access labels but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsWorker.Labels
 }
 
 func (r WorkerModel) Tenant() (value *TenantModel) {
@@ -63484,6 +64037,11 @@ type workflowVersionQuery struct {
 
 	Concurrency workflowVersionQueryConcurrencyRelations
 
+	// Sticky
+	//
+	// @optional
+	Sticky workflowVersionQueryStickyStickyStrategy
+
 	Jobs workflowVersionQueryJobsRelations
 
 	OnFailureJob workflowVersionQueryOnFailureJobRelations
@@ -66531,6 +67089,182 @@ func (r workflowVersionQueryConcurrencyRelations) Unlink() workflowVersionSetPar
 
 func (r workflowVersionQueryConcurrencyWorkflowConcurrency) Field() workflowVersionPrismaFields {
 	return workflowVersionFieldConcurrency
+}
+
+// base struct
+type workflowVersionQueryStickyStickyStrategy struct{}
+
+// Set the optional value of Sticky
+func (r workflowVersionQueryStickyStickyStrategy) Set(value StickyStrategy) workflowVersionSetParam {
+
+	return workflowVersionSetParam{
+		data: builder.Field{
+			Name:  "sticky",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Sticky dynamically
+func (r workflowVersionQueryStickyStickyStrategy) SetIfPresent(value *StickyStrategy) workflowVersionSetParam {
+	if value == nil {
+		return workflowVersionSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of Sticky dynamically
+func (r workflowVersionQueryStickyStickyStrategy) SetOptional(value *StickyStrategy) workflowVersionSetParam {
+	if value == nil {
+
+		var v *StickyStrategy
+		return workflowVersionSetParam{
+			data: builder.Field{
+				Name:  "sticky",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowVersionQueryStickyStickyStrategy) Equals(value StickyStrategy) workflowVersionWithPrismaStickyEqualsParam {
+
+	return workflowVersionWithPrismaStickyEqualsParam{
+		data: builder.Field{
+			Name: "sticky",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryStickyStickyStrategy) EqualsIfPresent(value *StickyStrategy) workflowVersionWithPrismaStickyEqualsParam {
+	if value == nil {
+		return workflowVersionWithPrismaStickyEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowVersionQueryStickyStickyStrategy) EqualsOptional(value *StickyStrategy) workflowVersionDefaultParam {
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name: "sticky",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryStickyStickyStrategy) IsNull() workflowVersionDefaultParam {
+	var str *string = nil
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name: "sticky",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryStickyStickyStrategy) Order(direction SortOrder) workflowVersionDefaultParam {
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name:  "sticky",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowVersionQueryStickyStickyStrategy) Cursor(cursor StickyStrategy) workflowVersionCursorParam {
+	return workflowVersionCursorParam{
+		data: builder.Field{
+			Name:  "sticky",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowVersionQueryStickyStickyStrategy) In(value []StickyStrategy) workflowVersionDefaultParam {
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name: "sticky",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryStickyStickyStrategy) InIfPresent(value []StickyStrategy) workflowVersionDefaultParam {
+	if value == nil {
+		return workflowVersionDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowVersionQueryStickyStickyStrategy) NotIn(value []StickyStrategy) workflowVersionDefaultParam {
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name: "sticky",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryStickyStickyStrategy) NotInIfPresent(value []StickyStrategy) workflowVersionDefaultParam {
+	if value == nil {
+		return workflowVersionDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowVersionQueryStickyStickyStrategy) Not(value StickyStrategy) workflowVersionDefaultParam {
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name: "sticky",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryStickyStickyStrategy) NotIfPresent(value *StickyStrategy) workflowVersionDefaultParam {
+	if value == nil {
+		return workflowVersionDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+func (r workflowVersionQueryStickyStickyStrategy) Field() workflowVersionPrismaFields {
+	return workflowVersionFieldSticky
 }
 
 // base struct
@@ -85988,6 +86722,3275 @@ func (r actionQueryConcurrencyWorkflowConcurrency) Field() actionPrismaFields {
 	return actionFieldConcurrency
 }
 
+// StepDesiredWorkerLabel acts as a namespaces to access query methods for the StepDesiredWorkerLabel model
+var StepDesiredWorkerLabel = stepDesiredWorkerLabelQuery{}
+
+// stepDesiredWorkerLabelQuery exposes query functions for the stepDesiredWorkerLabel model
+type stepDesiredWorkerLabelQuery struct {
+
+	// ID
+	//
+	// @required
+	ID stepDesiredWorkerLabelQueryIDBigInt
+
+	// CreatedAt
+	//
+	// @required
+	CreatedAt stepDesiredWorkerLabelQueryCreatedAtDateTime
+
+	// UpdatedAt
+	//
+	// @required
+	UpdatedAt stepDesiredWorkerLabelQueryUpdatedAtDateTime
+
+	Step stepDesiredWorkerLabelQueryStepRelations
+
+	// StepID
+	//
+	// @required
+	StepID stepDesiredWorkerLabelQueryStepIDString
+
+	// Key
+	//
+	// @required
+	Key stepDesiredWorkerLabelQueryKeyString
+
+	// StrValue
+	//
+	// @optional
+	StrValue stepDesiredWorkerLabelQueryStrValueString
+
+	// IntValue
+	//
+	// @optional
+	IntValue stepDesiredWorkerLabelQueryIntValueInt
+
+	// Required
+	//
+	// @required
+	Required stepDesiredWorkerLabelQueryRequiredBoolean
+
+	// Comparator
+	//
+	// @required
+	Comparator stepDesiredWorkerLabelQueryComparatorWorkerLabelComparator
+
+	// Weight
+	//
+	// @required
+	Weight stepDesiredWorkerLabelQueryWeightInt
+}
+
+func (stepDesiredWorkerLabelQuery) Not(params ...StepDesiredWorkerLabelWhereParam) stepDesiredWorkerLabelDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (stepDesiredWorkerLabelQuery) Or(params ...StepDesiredWorkerLabelWhereParam) stepDesiredWorkerLabelDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (stepDesiredWorkerLabelQuery) And(params ...StepDesiredWorkerLabelWhereParam) stepDesiredWorkerLabelDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (stepDesiredWorkerLabelQuery) StepIDKey(
+	_stepID StepDesiredWorkerLabelWithPrismaStepIDWhereParam,
+
+	_key StepDesiredWorkerLabelWithPrismaKeyWhereParam,
+) StepDesiredWorkerLabelEqualsUniqueWhereParam {
+	var fields []builder.Field
+
+	fields = append(fields, _stepID.field())
+	fields = append(fields, _key.field())
+
+	return stepDesiredWorkerLabelEqualsUniqueParam{
+		data: builder.Field{
+			Name:   "stepId_key",
+			Fields: builder.TransformEquals(fields),
+		},
+	}
+}
+
+// base struct
+type stepDesiredWorkerLabelQueryIDBigInt struct{}
+
+// Set the required value of ID
+func (r stepDesiredWorkerLabelQueryIDBigInt) Set(value BigInt) stepDesiredWorkerLabelSetParam {
+
+	return stepDesiredWorkerLabelSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r stepDesiredWorkerLabelQueryIDBigInt) SetIfPresent(value *BigInt) stepDesiredWorkerLabelSetParam {
+	if value == nil {
+		return stepDesiredWorkerLabelSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the required value of ID
+func (r stepDesiredWorkerLabelQueryIDBigInt) Increment(value BigInt) stepDesiredWorkerLabelSetParam {
+	return stepDesiredWorkerLabelSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIDBigInt) IncrementIfPresent(value *BigInt) stepDesiredWorkerLabelSetParam {
+	if value == nil {
+		return stepDesiredWorkerLabelSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the required value of ID
+func (r stepDesiredWorkerLabelQueryIDBigInt) Decrement(value BigInt) stepDesiredWorkerLabelSetParam {
+	return stepDesiredWorkerLabelSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIDBigInt) DecrementIfPresent(value *BigInt) stepDesiredWorkerLabelSetParam {
+	if value == nil {
+		return stepDesiredWorkerLabelSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the required value of ID
+func (r stepDesiredWorkerLabelQueryIDBigInt) Multiply(value BigInt) stepDesiredWorkerLabelSetParam {
+	return stepDesiredWorkerLabelSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIDBigInt) MultiplyIfPresent(value *BigInt) stepDesiredWorkerLabelSetParam {
+	if value == nil {
+		return stepDesiredWorkerLabelSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the required value of ID
+func (r stepDesiredWorkerLabelQueryIDBigInt) Divide(value BigInt) stepDesiredWorkerLabelSetParam {
+	return stepDesiredWorkerLabelSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIDBigInt) DivideIfPresent(value *BigInt) stepDesiredWorkerLabelSetParam {
+	if value == nil {
+		return stepDesiredWorkerLabelSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryIDBigInt) Equals(value BigInt) stepDesiredWorkerLabelWithPrismaIDEqualsUniqueParam {
+
+	return stepDesiredWorkerLabelWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIDBigInt) EqualsIfPresent(value *BigInt) stepDesiredWorkerLabelWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return stepDesiredWorkerLabelWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryIDBigInt) Order(direction SortOrder) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIDBigInt) Cursor(cursor BigInt) stepDesiredWorkerLabelCursorParam {
+	return stepDesiredWorkerLabelCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIDBigInt) In(value []BigInt) stepDesiredWorkerLabelParamUnique {
+	return stepDesiredWorkerLabelParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIDBigInt) InIfPresent(value []BigInt) stepDesiredWorkerLabelParamUnique {
+	if value == nil {
+		return stepDesiredWorkerLabelParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r stepDesiredWorkerLabelQueryIDBigInt) NotIn(value []BigInt) stepDesiredWorkerLabelParamUnique {
+	return stepDesiredWorkerLabelParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIDBigInt) NotInIfPresent(value []BigInt) stepDesiredWorkerLabelParamUnique {
+	if value == nil {
+		return stepDesiredWorkerLabelParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepDesiredWorkerLabelQueryIDBigInt) Lt(value BigInt) stepDesiredWorkerLabelParamUnique {
+	return stepDesiredWorkerLabelParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIDBigInt) LtIfPresent(value *BigInt) stepDesiredWorkerLabelParamUnique {
+	if value == nil {
+		return stepDesiredWorkerLabelParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryIDBigInt) Lte(value BigInt) stepDesiredWorkerLabelParamUnique {
+	return stepDesiredWorkerLabelParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIDBigInt) LteIfPresent(value *BigInt) stepDesiredWorkerLabelParamUnique {
+	if value == nil {
+		return stepDesiredWorkerLabelParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryIDBigInt) Gt(value BigInt) stepDesiredWorkerLabelParamUnique {
+	return stepDesiredWorkerLabelParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIDBigInt) GtIfPresent(value *BigInt) stepDesiredWorkerLabelParamUnique {
+	if value == nil {
+		return stepDesiredWorkerLabelParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryIDBigInt) Gte(value BigInt) stepDesiredWorkerLabelParamUnique {
+	return stepDesiredWorkerLabelParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIDBigInt) GteIfPresent(value *BigInt) stepDesiredWorkerLabelParamUnique {
+	if value == nil {
+		return stepDesiredWorkerLabelParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryIDBigInt) Not(value BigInt) stepDesiredWorkerLabelParamUnique {
+	return stepDesiredWorkerLabelParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIDBigInt) NotIfPresent(value *BigInt) stepDesiredWorkerLabelParamUnique {
+	if value == nil {
+		return stepDesiredWorkerLabelParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryIDBigInt) Field() stepDesiredWorkerLabelPrismaFields {
+	return stepDesiredWorkerLabelFieldID
+}
+
+// base struct
+type stepDesiredWorkerLabelQueryCreatedAtDateTime struct{}
+
+// Set the required value of CreatedAt
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) Set(value DateTime) stepDesiredWorkerLabelSetParam {
+
+	return stepDesiredWorkerLabelSetParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of CreatedAt dynamically
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) SetIfPresent(value *DateTime) stepDesiredWorkerLabelSetParam {
+	if value == nil {
+		return stepDesiredWorkerLabelSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) Equals(value DateTime) stepDesiredWorkerLabelWithPrismaCreatedAtEqualsParam {
+
+	return stepDesiredWorkerLabelWithPrismaCreatedAtEqualsParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) EqualsIfPresent(value *DateTime) stepDesiredWorkerLabelWithPrismaCreatedAtEqualsParam {
+	if value == nil {
+		return stepDesiredWorkerLabelWithPrismaCreatedAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) Order(direction SortOrder) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) Cursor(cursor DateTime) stepDesiredWorkerLabelCursorParam {
+	return stepDesiredWorkerLabelCursorParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) In(value []DateTime) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) InIfPresent(value []DateTime) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) NotIn(value []DateTime) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) NotInIfPresent(value []DateTime) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) Lt(value DateTime) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) LtIfPresent(value *DateTime) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) Lte(value DateTime) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) LteIfPresent(value *DateTime) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) Gt(value DateTime) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) GtIfPresent(value *DateTime) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) Gte(value DateTime) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) GteIfPresent(value *DateTime) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) Not(value DateTime) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) NotIfPresent(value *DateTime) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) Before(value DateTime) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) BeforeIfPresent(value *DateTime) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) After(value DateTime) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) AfterIfPresent(value *DateTime) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) BeforeEquals(value DateTime) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) BeforeEqualsIfPresent(value *DateTime) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) AfterEquals(value DateTime) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) AfterEqualsIfPresent(value *DateTime) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryCreatedAtDateTime) Field() stepDesiredWorkerLabelPrismaFields {
+	return stepDesiredWorkerLabelFieldCreatedAt
+}
+
+// base struct
+type stepDesiredWorkerLabelQueryUpdatedAtDateTime struct{}
+
+// Set the required value of UpdatedAt
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) Set(value DateTime) stepDesiredWorkerLabelSetParam {
+
+	return stepDesiredWorkerLabelSetParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of UpdatedAt dynamically
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) SetIfPresent(value *DateTime) stepDesiredWorkerLabelSetParam {
+	if value == nil {
+		return stepDesiredWorkerLabelSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) Equals(value DateTime) stepDesiredWorkerLabelWithPrismaUpdatedAtEqualsParam {
+
+	return stepDesiredWorkerLabelWithPrismaUpdatedAtEqualsParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) EqualsIfPresent(value *DateTime) stepDesiredWorkerLabelWithPrismaUpdatedAtEqualsParam {
+	if value == nil {
+		return stepDesiredWorkerLabelWithPrismaUpdatedAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) Order(direction SortOrder) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) Cursor(cursor DateTime) stepDesiredWorkerLabelCursorParam {
+	return stepDesiredWorkerLabelCursorParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) In(value []DateTime) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) InIfPresent(value []DateTime) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) NotIn(value []DateTime) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) NotInIfPresent(value []DateTime) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) Lt(value DateTime) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) LtIfPresent(value *DateTime) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) Lte(value DateTime) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) LteIfPresent(value *DateTime) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) Gt(value DateTime) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) GtIfPresent(value *DateTime) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) Gte(value DateTime) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) GteIfPresent(value *DateTime) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) Not(value DateTime) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) NotIfPresent(value *DateTime) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) Before(value DateTime) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) BeforeIfPresent(value *DateTime) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) After(value DateTime) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) AfterIfPresent(value *DateTime) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) BeforeEquals(value DateTime) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) BeforeEqualsIfPresent(value *DateTime) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) AfterEquals(value DateTime) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) AfterEqualsIfPresent(value *DateTime) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryUpdatedAtDateTime) Field() stepDesiredWorkerLabelPrismaFields {
+	return stepDesiredWorkerLabelFieldUpdatedAt
+}
+
+// base struct
+type stepDesiredWorkerLabelQueryStepStep struct{}
+
+type stepDesiredWorkerLabelQueryStepRelations struct{}
+
+// StepDesiredWorkerLabel -> Step
+//
+// @relation
+// @required
+func (stepDesiredWorkerLabelQueryStepRelations) Where(
+	params ...StepWhereParam,
+) stepDesiredWorkerLabelDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "step",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (stepDesiredWorkerLabelQueryStepRelations) Fetch() stepDesiredWorkerLabelToStepFindUnique {
+	var v stepDesiredWorkerLabelToStepFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "step"
+	v.query.Outputs = stepOutput
+
+	return v
+}
+
+func (r stepDesiredWorkerLabelQueryStepRelations) Link(
+	params StepWhereParam,
+) stepDesiredWorkerLabelWithPrismaStepSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return stepDesiredWorkerLabelWithPrismaStepSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return stepDesiredWorkerLabelWithPrismaStepSetParam{
+		data: builder.Field{
+			Name: "step",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStepRelations) Unlink() stepDesiredWorkerLabelWithPrismaStepSetParam {
+	var v stepDesiredWorkerLabelWithPrismaStepSetParam
+
+	v = stepDesiredWorkerLabelWithPrismaStepSetParam{
+		data: builder.Field{
+			Name: "step",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r stepDesiredWorkerLabelQueryStepStep) Field() stepDesiredWorkerLabelPrismaFields {
+	return stepDesiredWorkerLabelFieldStep
+}
+
+// base struct
+type stepDesiredWorkerLabelQueryStepIDString struct{}
+
+// Set the required value of StepID
+func (r stepDesiredWorkerLabelQueryStepIDString) Set(value string) stepDesiredWorkerLabelSetParam {
+
+	return stepDesiredWorkerLabelSetParam{
+		data: builder.Field{
+			Name:  "stepId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of StepID dynamically
+func (r stepDesiredWorkerLabelQueryStepIDString) SetIfPresent(value *String) stepDesiredWorkerLabelSetParam {
+	if value == nil {
+		return stepDesiredWorkerLabelSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) Equals(value string) stepDesiredWorkerLabelWithPrismaStepIDEqualsParam {
+
+	return stepDesiredWorkerLabelWithPrismaStepIDEqualsParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) EqualsIfPresent(value *string) stepDesiredWorkerLabelWithPrismaStepIDEqualsParam {
+	if value == nil {
+		return stepDesiredWorkerLabelWithPrismaStepIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) Order(direction SortOrder) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name:  "stepId",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) Cursor(cursor string) stepDesiredWorkerLabelCursorParam {
+	return stepDesiredWorkerLabelCursorParam{
+		data: builder.Field{
+			Name:  "stepId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) In(value []string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) InIfPresent(value []string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) NotIn(value []string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) NotInIfPresent(value []string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) Lt(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) LtIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) Lte(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) LteIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) Gt(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) GtIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) Gte(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) GteIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) Contains(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) ContainsIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) StartsWith(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) StartsWithIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) EndsWith(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) EndsWithIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) Mode(value QueryMode) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) ModeIfPresent(value *QueryMode) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) Not(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) NotIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r stepDesiredWorkerLabelQueryStepIDString) HasPrefix(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r stepDesiredWorkerLabelQueryStepIDString) HasPrefixIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r stepDesiredWorkerLabelQueryStepIDString) HasSuffix(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r stepDesiredWorkerLabelQueryStepIDString) HasSuffixIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryStepIDString) Field() stepDesiredWorkerLabelPrismaFields {
+	return stepDesiredWorkerLabelFieldStepID
+}
+
+// base struct
+type stepDesiredWorkerLabelQueryKeyString struct{}
+
+// Set the required value of Key
+func (r stepDesiredWorkerLabelQueryKeyString) Set(value string) stepDesiredWorkerLabelWithPrismaKeySetParam {
+
+	return stepDesiredWorkerLabelWithPrismaKeySetParam{
+		data: builder.Field{
+			Name:  "key",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Key dynamically
+func (r stepDesiredWorkerLabelQueryKeyString) SetIfPresent(value *String) stepDesiredWorkerLabelWithPrismaKeySetParam {
+	if value == nil {
+		return stepDesiredWorkerLabelWithPrismaKeySetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) Equals(value string) stepDesiredWorkerLabelWithPrismaKeyEqualsParam {
+
+	return stepDesiredWorkerLabelWithPrismaKeyEqualsParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) EqualsIfPresent(value *string) stepDesiredWorkerLabelWithPrismaKeyEqualsParam {
+	if value == nil {
+		return stepDesiredWorkerLabelWithPrismaKeyEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) Order(direction SortOrder) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name:  "key",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) Cursor(cursor string) stepDesiredWorkerLabelCursorParam {
+	return stepDesiredWorkerLabelCursorParam{
+		data: builder.Field{
+			Name:  "key",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) In(value []string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) InIfPresent(value []string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) NotIn(value []string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) NotInIfPresent(value []string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) Lt(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) LtIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) Lte(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) LteIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) Gt(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) GtIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) Gte(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) GteIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) Contains(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) ContainsIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) StartsWith(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) StartsWithIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) EndsWith(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) EndsWithIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) Mode(value QueryMode) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) ModeIfPresent(value *QueryMode) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) Not(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) NotIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r stepDesiredWorkerLabelQueryKeyString) HasPrefix(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r stepDesiredWorkerLabelQueryKeyString) HasPrefixIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r stepDesiredWorkerLabelQueryKeyString) HasSuffix(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r stepDesiredWorkerLabelQueryKeyString) HasSuffixIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryKeyString) Field() stepDesiredWorkerLabelPrismaFields {
+	return stepDesiredWorkerLabelFieldKey
+}
+
+// base struct
+type stepDesiredWorkerLabelQueryStrValueString struct{}
+
+// Set the optional value of StrValue
+func (r stepDesiredWorkerLabelQueryStrValueString) Set(value string) stepDesiredWorkerLabelSetParam {
+
+	return stepDesiredWorkerLabelSetParam{
+		data: builder.Field{
+			Name:  "strValue",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of StrValue dynamically
+func (r stepDesiredWorkerLabelQueryStrValueString) SetIfPresent(value *String) stepDesiredWorkerLabelSetParam {
+	if value == nil {
+		return stepDesiredWorkerLabelSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of StrValue dynamically
+func (r stepDesiredWorkerLabelQueryStrValueString) SetOptional(value *String) stepDesiredWorkerLabelSetParam {
+	if value == nil {
+
+		var v *string
+		return stepDesiredWorkerLabelSetParam{
+			data: builder.Field{
+				Name:  "strValue",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) Equals(value string) stepDesiredWorkerLabelWithPrismaStrValueEqualsParam {
+
+	return stepDesiredWorkerLabelWithPrismaStrValueEqualsParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) EqualsIfPresent(value *string) stepDesiredWorkerLabelWithPrismaStrValueEqualsParam {
+	if value == nil {
+		return stepDesiredWorkerLabelWithPrismaStrValueEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) EqualsOptional(value *String) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) IsNull() stepDesiredWorkerLabelDefaultParam {
+	var str *string = nil
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) Order(direction SortOrder) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name:  "strValue",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) Cursor(cursor string) stepDesiredWorkerLabelCursorParam {
+	return stepDesiredWorkerLabelCursorParam{
+		data: builder.Field{
+			Name:  "strValue",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) In(value []string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) InIfPresent(value []string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) NotIn(value []string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) NotInIfPresent(value []string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) Lt(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) LtIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) Lte(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) LteIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) Gt(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) GtIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) Gte(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) GteIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) Contains(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) ContainsIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) StartsWith(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) StartsWithIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) EndsWith(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) EndsWithIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) Mode(value QueryMode) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) ModeIfPresent(value *QueryMode) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) Not(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) NotIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r stepDesiredWorkerLabelQueryStrValueString) HasPrefix(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r stepDesiredWorkerLabelQueryStrValueString) HasPrefixIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r stepDesiredWorkerLabelQueryStrValueString) HasSuffix(value string) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r stepDesiredWorkerLabelQueryStrValueString) HasSuffixIfPresent(value *string) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryStrValueString) Field() stepDesiredWorkerLabelPrismaFields {
+	return stepDesiredWorkerLabelFieldStrValue
+}
+
+// base struct
+type stepDesiredWorkerLabelQueryIntValueInt struct{}
+
+// Set the optional value of IntValue
+func (r stepDesiredWorkerLabelQueryIntValueInt) Set(value int) stepDesiredWorkerLabelSetParam {
+
+	return stepDesiredWorkerLabelSetParam{
+		data: builder.Field{
+			Name:  "intValue",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of IntValue dynamically
+func (r stepDesiredWorkerLabelQueryIntValueInt) SetIfPresent(value *Int) stepDesiredWorkerLabelSetParam {
+	if value == nil {
+		return stepDesiredWorkerLabelSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of IntValue dynamically
+func (r stepDesiredWorkerLabelQueryIntValueInt) SetOptional(value *Int) stepDesiredWorkerLabelSetParam {
+	if value == nil {
+
+		var v *int
+		return stepDesiredWorkerLabelSetParam{
+			data: builder.Field{
+				Name:  "intValue",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the optional value of IntValue
+func (r stepDesiredWorkerLabelQueryIntValueInt) Increment(value int) stepDesiredWorkerLabelSetParam {
+	return stepDesiredWorkerLabelSetParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) IncrementIfPresent(value *int) stepDesiredWorkerLabelSetParam {
+	if value == nil {
+		return stepDesiredWorkerLabelSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the optional value of IntValue
+func (r stepDesiredWorkerLabelQueryIntValueInt) Decrement(value int) stepDesiredWorkerLabelSetParam {
+	return stepDesiredWorkerLabelSetParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) DecrementIfPresent(value *int) stepDesiredWorkerLabelSetParam {
+	if value == nil {
+		return stepDesiredWorkerLabelSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the optional value of IntValue
+func (r stepDesiredWorkerLabelQueryIntValueInt) Multiply(value int) stepDesiredWorkerLabelSetParam {
+	return stepDesiredWorkerLabelSetParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) MultiplyIfPresent(value *int) stepDesiredWorkerLabelSetParam {
+	if value == nil {
+		return stepDesiredWorkerLabelSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the optional value of IntValue
+func (r stepDesiredWorkerLabelQueryIntValueInt) Divide(value int) stepDesiredWorkerLabelSetParam {
+	return stepDesiredWorkerLabelSetParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) DivideIfPresent(value *int) stepDesiredWorkerLabelSetParam {
+	if value == nil {
+		return stepDesiredWorkerLabelSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) Equals(value int) stepDesiredWorkerLabelWithPrismaIntValueEqualsParam {
+
+	return stepDesiredWorkerLabelWithPrismaIntValueEqualsParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) EqualsIfPresent(value *int) stepDesiredWorkerLabelWithPrismaIntValueEqualsParam {
+	if value == nil {
+		return stepDesiredWorkerLabelWithPrismaIntValueEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) EqualsOptional(value *Int) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) IsNull() stepDesiredWorkerLabelDefaultParam {
+	var str *string = nil
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) Order(direction SortOrder) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name:  "intValue",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) Cursor(cursor int) stepDesiredWorkerLabelCursorParam {
+	return stepDesiredWorkerLabelCursorParam{
+		data: builder.Field{
+			Name:  "intValue",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) In(value []int) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) InIfPresent(value []int) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) NotIn(value []int) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) NotInIfPresent(value []int) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) Lt(value int) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) LtIfPresent(value *int) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) Lte(value int) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) LteIfPresent(value *int) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) Gt(value int) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) GtIfPresent(value *int) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) Gte(value int) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) GteIfPresent(value *int) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) Not(value int) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) NotIfPresent(value *int) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) LT(value int) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r stepDesiredWorkerLabelQueryIntValueInt) LTIfPresent(value *int) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.LT(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) LTE(value int) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r stepDesiredWorkerLabelQueryIntValueInt) LTEIfPresent(value *int) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.LTE(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) GT(value int) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r stepDesiredWorkerLabelQueryIntValueInt) GTIfPresent(value *int) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.GT(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) GTE(value int) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r stepDesiredWorkerLabelQueryIntValueInt) GTEIfPresent(value *int) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.GTE(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryIntValueInt) Field() stepDesiredWorkerLabelPrismaFields {
+	return stepDesiredWorkerLabelFieldIntValue
+}
+
+// base struct
+type stepDesiredWorkerLabelQueryRequiredBoolean struct{}
+
+// Set the required value of Required
+func (r stepDesiredWorkerLabelQueryRequiredBoolean) Set(value bool) stepDesiredWorkerLabelWithPrismaRequiredSetParam {
+
+	return stepDesiredWorkerLabelWithPrismaRequiredSetParam{
+		data: builder.Field{
+			Name:  "required",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Required dynamically
+func (r stepDesiredWorkerLabelQueryRequiredBoolean) SetIfPresent(value *Boolean) stepDesiredWorkerLabelWithPrismaRequiredSetParam {
+	if value == nil {
+		return stepDesiredWorkerLabelWithPrismaRequiredSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryRequiredBoolean) Equals(value bool) stepDesiredWorkerLabelWithPrismaRequiredEqualsParam {
+
+	return stepDesiredWorkerLabelWithPrismaRequiredEqualsParam{
+		data: builder.Field{
+			Name: "required",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryRequiredBoolean) EqualsIfPresent(value *bool) stepDesiredWorkerLabelWithPrismaRequiredEqualsParam {
+	if value == nil {
+		return stepDesiredWorkerLabelWithPrismaRequiredEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryRequiredBoolean) Order(direction SortOrder) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name:  "required",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryRequiredBoolean) Cursor(cursor bool) stepDesiredWorkerLabelCursorParam {
+	return stepDesiredWorkerLabelCursorParam{
+		data: builder.Field{
+			Name:  "required",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryRequiredBoolean) Field() stepDesiredWorkerLabelPrismaFields {
+	return stepDesiredWorkerLabelFieldRequired
+}
+
+// base struct
+type stepDesiredWorkerLabelQueryComparatorWorkerLabelComparator struct{}
+
+// Set the required value of Comparator
+func (r stepDesiredWorkerLabelQueryComparatorWorkerLabelComparator) Set(value WorkerLabelComparator) stepDesiredWorkerLabelWithPrismaComparatorSetParam {
+
+	return stepDesiredWorkerLabelWithPrismaComparatorSetParam{
+		data: builder.Field{
+			Name:  "comparator",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Comparator dynamically
+func (r stepDesiredWorkerLabelQueryComparatorWorkerLabelComparator) SetIfPresent(value *WorkerLabelComparator) stepDesiredWorkerLabelWithPrismaComparatorSetParam {
+	if value == nil {
+		return stepDesiredWorkerLabelWithPrismaComparatorSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryComparatorWorkerLabelComparator) Equals(value WorkerLabelComparator) stepDesiredWorkerLabelWithPrismaComparatorEqualsParam {
+
+	return stepDesiredWorkerLabelWithPrismaComparatorEqualsParam{
+		data: builder.Field{
+			Name: "comparator",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryComparatorWorkerLabelComparator) EqualsIfPresent(value *WorkerLabelComparator) stepDesiredWorkerLabelWithPrismaComparatorEqualsParam {
+	if value == nil {
+		return stepDesiredWorkerLabelWithPrismaComparatorEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryComparatorWorkerLabelComparator) Order(direction SortOrder) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name:  "comparator",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryComparatorWorkerLabelComparator) Cursor(cursor WorkerLabelComparator) stepDesiredWorkerLabelCursorParam {
+	return stepDesiredWorkerLabelCursorParam{
+		data: builder.Field{
+			Name:  "comparator",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryComparatorWorkerLabelComparator) In(value []WorkerLabelComparator) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "comparator",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryComparatorWorkerLabelComparator) InIfPresent(value []WorkerLabelComparator) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r stepDesiredWorkerLabelQueryComparatorWorkerLabelComparator) NotIn(value []WorkerLabelComparator) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "comparator",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryComparatorWorkerLabelComparator) NotInIfPresent(value []WorkerLabelComparator) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepDesiredWorkerLabelQueryComparatorWorkerLabelComparator) Not(value WorkerLabelComparator) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "comparator",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryComparatorWorkerLabelComparator) NotIfPresent(value *WorkerLabelComparator) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryComparatorWorkerLabelComparator) Field() stepDesiredWorkerLabelPrismaFields {
+	return stepDesiredWorkerLabelFieldComparator
+}
+
+// base struct
+type stepDesiredWorkerLabelQueryWeightInt struct{}
+
+// Set the required value of Weight
+func (r stepDesiredWorkerLabelQueryWeightInt) Set(value int) stepDesiredWorkerLabelWithPrismaWeightSetParam {
+
+	return stepDesiredWorkerLabelWithPrismaWeightSetParam{
+		data: builder.Field{
+			Name:  "weight",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Weight dynamically
+func (r stepDesiredWorkerLabelQueryWeightInt) SetIfPresent(value *Int) stepDesiredWorkerLabelWithPrismaWeightSetParam {
+	if value == nil {
+		return stepDesiredWorkerLabelWithPrismaWeightSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the required value of Weight
+func (r stepDesiredWorkerLabelQueryWeightInt) Increment(value int) stepDesiredWorkerLabelWithPrismaWeightSetParam {
+	return stepDesiredWorkerLabelWithPrismaWeightSetParam{
+		data: builder.Field{
+			Name: "weight",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryWeightInt) IncrementIfPresent(value *int) stepDesiredWorkerLabelWithPrismaWeightSetParam {
+	if value == nil {
+		return stepDesiredWorkerLabelWithPrismaWeightSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the required value of Weight
+func (r stepDesiredWorkerLabelQueryWeightInt) Decrement(value int) stepDesiredWorkerLabelWithPrismaWeightSetParam {
+	return stepDesiredWorkerLabelWithPrismaWeightSetParam{
+		data: builder.Field{
+			Name: "weight",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryWeightInt) DecrementIfPresent(value *int) stepDesiredWorkerLabelWithPrismaWeightSetParam {
+	if value == nil {
+		return stepDesiredWorkerLabelWithPrismaWeightSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the required value of Weight
+func (r stepDesiredWorkerLabelQueryWeightInt) Multiply(value int) stepDesiredWorkerLabelWithPrismaWeightSetParam {
+	return stepDesiredWorkerLabelWithPrismaWeightSetParam{
+		data: builder.Field{
+			Name: "weight",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryWeightInt) MultiplyIfPresent(value *int) stepDesiredWorkerLabelWithPrismaWeightSetParam {
+	if value == nil {
+		return stepDesiredWorkerLabelWithPrismaWeightSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the required value of Weight
+func (r stepDesiredWorkerLabelQueryWeightInt) Divide(value int) stepDesiredWorkerLabelWithPrismaWeightSetParam {
+	return stepDesiredWorkerLabelWithPrismaWeightSetParam{
+		data: builder.Field{
+			Name: "weight",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryWeightInt) DivideIfPresent(value *int) stepDesiredWorkerLabelWithPrismaWeightSetParam {
+	if value == nil {
+		return stepDesiredWorkerLabelWithPrismaWeightSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryWeightInt) Equals(value int) stepDesiredWorkerLabelWithPrismaWeightEqualsParam {
+
+	return stepDesiredWorkerLabelWithPrismaWeightEqualsParam{
+		data: builder.Field{
+			Name: "weight",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryWeightInt) EqualsIfPresent(value *int) stepDesiredWorkerLabelWithPrismaWeightEqualsParam {
+	if value == nil {
+		return stepDesiredWorkerLabelWithPrismaWeightEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryWeightInt) Order(direction SortOrder) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name:  "weight",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryWeightInt) Cursor(cursor int) stepDesiredWorkerLabelCursorParam {
+	return stepDesiredWorkerLabelCursorParam{
+		data: builder.Field{
+			Name:  "weight",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryWeightInt) In(value []int) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "weight",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryWeightInt) InIfPresent(value []int) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r stepDesiredWorkerLabelQueryWeightInt) NotIn(value []int) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "weight",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryWeightInt) NotInIfPresent(value []int) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepDesiredWorkerLabelQueryWeightInt) Lt(value int) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "weight",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryWeightInt) LtIfPresent(value *int) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryWeightInt) Lte(value int) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "weight",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryWeightInt) LteIfPresent(value *int) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryWeightInt) Gt(value int) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "weight",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryWeightInt) GtIfPresent(value *int) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryWeightInt) Gte(value int) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "weight",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryWeightInt) GteIfPresent(value *int) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryWeightInt) Not(value int) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "weight",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepDesiredWorkerLabelQueryWeightInt) NotIfPresent(value *int) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r stepDesiredWorkerLabelQueryWeightInt) LT(value int) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "weight",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r stepDesiredWorkerLabelQueryWeightInt) LTIfPresent(value *int) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.LT(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r stepDesiredWorkerLabelQueryWeightInt) LTE(value int) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "weight",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r stepDesiredWorkerLabelQueryWeightInt) LTEIfPresent(value *int) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.LTE(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r stepDesiredWorkerLabelQueryWeightInt) GT(value int) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "weight",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r stepDesiredWorkerLabelQueryWeightInt) GTIfPresent(value *int) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.GT(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r stepDesiredWorkerLabelQueryWeightInt) GTE(value int) stepDesiredWorkerLabelDefaultParam {
+	return stepDesiredWorkerLabelDefaultParam{
+		data: builder.Field{
+			Name: "weight",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r stepDesiredWorkerLabelQueryWeightInt) GTEIfPresent(value *int) stepDesiredWorkerLabelDefaultParam {
+	if value == nil {
+		return stepDesiredWorkerLabelDefaultParam{}
+	}
+	return r.GTE(*value)
+}
+
+func (r stepDesiredWorkerLabelQueryWeightInt) Field() stepDesiredWorkerLabelPrismaFields {
+	return stepDesiredWorkerLabelFieldWeight
+}
+
 // Step acts as a namespaces to access query methods for the Step model
 var Step = stepQuery{}
 
@@ -86067,6 +90070,8 @@ type stepQuery struct {
 	ScheduleTimeout stepQueryScheduleTimeoutString
 
 	RateLimits stepQueryRateLimitsRelations
+
+	WorkerLabels stepQueryWorkerLabelsRelations
 }
 
 func (stepQuery) Not(params ...StepWhereParam) stepDefaultParam {
@@ -91351,6 +95356,178 @@ func (r stepQueryRateLimitsStepRateLimit) Field() stepPrismaFields {
 	return stepFieldRateLimits
 }
 
+// base struct
+type stepQueryWorkerLabelsStepDesiredWorkerLabel struct{}
+
+type stepQueryWorkerLabelsRelations struct{}
+
+// Step -> WorkerLabels
+//
+// @relation
+// @required
+func (stepQueryWorkerLabelsRelations) Some(
+	params ...StepDesiredWorkerLabelWhereParam,
+) stepDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return stepDefaultParam{
+		data: builder.Field{
+			Name: "workerLabels",
+			Fields: []builder.Field{
+				{
+					Name:   "some",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Step -> WorkerLabels
+//
+// @relation
+// @required
+func (stepQueryWorkerLabelsRelations) Every(
+	params ...StepDesiredWorkerLabelWhereParam,
+) stepDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return stepDefaultParam{
+		data: builder.Field{
+			Name: "workerLabels",
+			Fields: []builder.Field{
+				{
+					Name:   "every",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Step -> WorkerLabels
+//
+// @relation
+// @required
+func (stepQueryWorkerLabelsRelations) None(
+	params ...StepDesiredWorkerLabelWhereParam,
+) stepDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return stepDefaultParam{
+		data: builder.Field{
+			Name: "workerLabels",
+			Fields: []builder.Field{
+				{
+					Name:   "none",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (stepQueryWorkerLabelsRelations) Fetch(
+
+	params ...StepDesiredWorkerLabelWhereParam,
+
+) stepToWorkerLabelsFindMany {
+	var v stepToWorkerLabelsFindMany
+
+	v.query.Operation = "query"
+	v.query.Method = "workerLabels"
+	v.query.Outputs = stepDesiredWorkerLabelOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r stepQueryWorkerLabelsRelations) Link(
+	params ...StepDesiredWorkerLabelWhereParam,
+) stepSetParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return stepSetParam{
+		data: builder.Field{
+			Name: "workerLabels",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+
+					List:     true,
+					WrapList: true,
+				},
+			},
+		},
+	}
+}
+
+func (r stepQueryWorkerLabelsRelations) Unlink(
+	params ...StepDesiredWorkerLabelWhereParam,
+) stepSetParam {
+	var v stepSetParam
+
+	var fields []builder.Field
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+	v = stepSetParam{
+		data: builder.Field{
+			Name: "workerLabels",
+			Fields: []builder.Field{
+				{
+					Name:     "disconnect",
+					List:     true,
+					WrapList: true,
+					Fields:   builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r stepQueryWorkerLabelsStepDesiredWorkerLabel) Field() stepPrismaFields {
+	return stepFieldWorkerLabels
+}
+
 // StepRateLimit acts as a namespaces to access query methods for the StepRateLimit model
 var StepRateLimit = stepRateLimitQuery{}
 
@@ -95676,6 +99853,2332 @@ func (r rateLimitQueryStepRunLimitsStepRateLimit) Field() rateLimitPrismaFields 
 	return rateLimitFieldStepRunLimits
 }
 
+// WorkflowRunStickyState acts as a namespaces to access query methods for the WorkflowRunStickyState model
+var WorkflowRunStickyState = workflowRunStickyStateQuery{}
+
+// workflowRunStickyStateQuery exposes query functions for the workflowRunStickyState model
+type workflowRunStickyStateQuery struct {
+
+	// ID
+	//
+	// @required
+	ID workflowRunStickyStateQueryIDBigInt
+
+	// CreatedAt
+	//
+	// @required
+	CreatedAt workflowRunStickyStateQueryCreatedAtDateTime
+
+	// UpdatedAt
+	//
+	// @required
+	UpdatedAt workflowRunStickyStateQueryUpdatedAtDateTime
+
+	// TenantID
+	//
+	// @required
+	TenantID workflowRunStickyStateQueryTenantIDString
+
+	WorkflowRun workflowRunStickyStateQueryWorkflowRunRelations
+
+	// WorkflowRunID
+	//
+	// @required
+	// @unique
+	WorkflowRunID workflowRunStickyStateQueryWorkflowRunIDString
+
+	// DesiredWorkerID
+	//
+	// @optional
+	DesiredWorkerID workflowRunStickyStateQueryDesiredWorkerIDString
+
+	// Strategy
+	//
+	// @required
+	Strategy workflowRunStickyStateQueryStrategyStickyStrategy
+}
+
+func (workflowRunStickyStateQuery) Not(params ...WorkflowRunStickyStateWhereParam) workflowRunStickyStateDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (workflowRunStickyStateQuery) Or(params ...WorkflowRunStickyStateWhereParam) workflowRunStickyStateDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (workflowRunStickyStateQuery) And(params ...WorkflowRunStickyStateWhereParam) workflowRunStickyStateDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+// base struct
+type workflowRunStickyStateQueryIDBigInt struct{}
+
+// Set the required value of ID
+func (r workflowRunStickyStateQueryIDBigInt) Set(value BigInt) workflowRunStickyStateSetParam {
+
+	return workflowRunStickyStateSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r workflowRunStickyStateQueryIDBigInt) SetIfPresent(value *BigInt) workflowRunStickyStateSetParam {
+	if value == nil {
+		return workflowRunStickyStateSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the required value of ID
+func (r workflowRunStickyStateQueryIDBigInt) Increment(value BigInt) workflowRunStickyStateSetParam {
+	return workflowRunStickyStateSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryIDBigInt) IncrementIfPresent(value *BigInt) workflowRunStickyStateSetParam {
+	if value == nil {
+		return workflowRunStickyStateSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the required value of ID
+func (r workflowRunStickyStateQueryIDBigInt) Decrement(value BigInt) workflowRunStickyStateSetParam {
+	return workflowRunStickyStateSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryIDBigInt) DecrementIfPresent(value *BigInt) workflowRunStickyStateSetParam {
+	if value == nil {
+		return workflowRunStickyStateSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the required value of ID
+func (r workflowRunStickyStateQueryIDBigInt) Multiply(value BigInt) workflowRunStickyStateSetParam {
+	return workflowRunStickyStateSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryIDBigInt) MultiplyIfPresent(value *BigInt) workflowRunStickyStateSetParam {
+	if value == nil {
+		return workflowRunStickyStateSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the required value of ID
+func (r workflowRunStickyStateQueryIDBigInt) Divide(value BigInt) workflowRunStickyStateSetParam {
+	return workflowRunStickyStateSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryIDBigInt) DivideIfPresent(value *BigInt) workflowRunStickyStateSetParam {
+	if value == nil {
+		return workflowRunStickyStateSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r workflowRunStickyStateQueryIDBigInt) Equals(value BigInt) workflowRunStickyStateWithPrismaIDEqualsUniqueParam {
+
+	return workflowRunStickyStateWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryIDBigInt) EqualsIfPresent(value *BigInt) workflowRunStickyStateWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return workflowRunStickyStateWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowRunStickyStateQueryIDBigInt) Order(direction SortOrder) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryIDBigInt) Cursor(cursor BigInt) workflowRunStickyStateCursorParam {
+	return workflowRunStickyStateCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryIDBigInt) In(value []BigInt) workflowRunStickyStateParamUnique {
+	return workflowRunStickyStateParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryIDBigInt) InIfPresent(value []BigInt) workflowRunStickyStateParamUnique {
+	if value == nil {
+		return workflowRunStickyStateParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r workflowRunStickyStateQueryIDBigInt) NotIn(value []BigInt) workflowRunStickyStateParamUnique {
+	return workflowRunStickyStateParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryIDBigInt) NotInIfPresent(value []BigInt) workflowRunStickyStateParamUnique {
+	if value == nil {
+		return workflowRunStickyStateParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowRunStickyStateQueryIDBigInt) Lt(value BigInt) workflowRunStickyStateParamUnique {
+	return workflowRunStickyStateParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryIDBigInt) LtIfPresent(value *BigInt) workflowRunStickyStateParamUnique {
+	if value == nil {
+		return workflowRunStickyStateParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowRunStickyStateQueryIDBigInt) Lte(value BigInt) workflowRunStickyStateParamUnique {
+	return workflowRunStickyStateParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryIDBigInt) LteIfPresent(value *BigInt) workflowRunStickyStateParamUnique {
+	if value == nil {
+		return workflowRunStickyStateParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowRunStickyStateQueryIDBigInt) Gt(value BigInt) workflowRunStickyStateParamUnique {
+	return workflowRunStickyStateParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryIDBigInt) GtIfPresent(value *BigInt) workflowRunStickyStateParamUnique {
+	if value == nil {
+		return workflowRunStickyStateParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowRunStickyStateQueryIDBigInt) Gte(value BigInt) workflowRunStickyStateParamUnique {
+	return workflowRunStickyStateParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryIDBigInt) GteIfPresent(value *BigInt) workflowRunStickyStateParamUnique {
+	if value == nil {
+		return workflowRunStickyStateParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowRunStickyStateQueryIDBigInt) Not(value BigInt) workflowRunStickyStateParamUnique {
+	return workflowRunStickyStateParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryIDBigInt) NotIfPresent(value *BigInt) workflowRunStickyStateParamUnique {
+	if value == nil {
+		return workflowRunStickyStateParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+func (r workflowRunStickyStateQueryIDBigInt) Field() workflowRunStickyStatePrismaFields {
+	return workflowRunStickyStateFieldID
+}
+
+// base struct
+type workflowRunStickyStateQueryCreatedAtDateTime struct{}
+
+// Set the required value of CreatedAt
+func (r workflowRunStickyStateQueryCreatedAtDateTime) Set(value DateTime) workflowRunStickyStateSetParam {
+
+	return workflowRunStickyStateSetParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of CreatedAt dynamically
+func (r workflowRunStickyStateQueryCreatedAtDateTime) SetIfPresent(value *DateTime) workflowRunStickyStateSetParam {
+	if value == nil {
+		return workflowRunStickyStateSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowRunStickyStateQueryCreatedAtDateTime) Equals(value DateTime) workflowRunStickyStateWithPrismaCreatedAtEqualsParam {
+
+	return workflowRunStickyStateWithPrismaCreatedAtEqualsParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryCreatedAtDateTime) EqualsIfPresent(value *DateTime) workflowRunStickyStateWithPrismaCreatedAtEqualsParam {
+	if value == nil {
+		return workflowRunStickyStateWithPrismaCreatedAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowRunStickyStateQueryCreatedAtDateTime) Order(direction SortOrder) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryCreatedAtDateTime) Cursor(cursor DateTime) workflowRunStickyStateCursorParam {
+	return workflowRunStickyStateCursorParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryCreatedAtDateTime) In(value []DateTime) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryCreatedAtDateTime) InIfPresent(value []DateTime) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowRunStickyStateQueryCreatedAtDateTime) NotIn(value []DateTime) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryCreatedAtDateTime) NotInIfPresent(value []DateTime) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowRunStickyStateQueryCreatedAtDateTime) Lt(value DateTime) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryCreatedAtDateTime) LtIfPresent(value *DateTime) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowRunStickyStateQueryCreatedAtDateTime) Lte(value DateTime) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryCreatedAtDateTime) LteIfPresent(value *DateTime) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowRunStickyStateQueryCreatedAtDateTime) Gt(value DateTime) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryCreatedAtDateTime) GtIfPresent(value *DateTime) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowRunStickyStateQueryCreatedAtDateTime) Gte(value DateTime) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryCreatedAtDateTime) GteIfPresent(value *DateTime) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowRunStickyStateQueryCreatedAtDateTime) Not(value DateTime) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryCreatedAtDateTime) NotIfPresent(value *DateTime) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r workflowRunStickyStateQueryCreatedAtDateTime) Before(value DateTime) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r workflowRunStickyStateQueryCreatedAtDateTime) BeforeIfPresent(value *DateTime) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r workflowRunStickyStateQueryCreatedAtDateTime) After(value DateTime) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r workflowRunStickyStateQueryCreatedAtDateTime) AfterIfPresent(value *DateTime) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r workflowRunStickyStateQueryCreatedAtDateTime) BeforeEquals(value DateTime) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r workflowRunStickyStateQueryCreatedAtDateTime) BeforeEqualsIfPresent(value *DateTime) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r workflowRunStickyStateQueryCreatedAtDateTime) AfterEquals(value DateTime) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r workflowRunStickyStateQueryCreatedAtDateTime) AfterEqualsIfPresent(value *DateTime) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r workflowRunStickyStateQueryCreatedAtDateTime) Field() workflowRunStickyStatePrismaFields {
+	return workflowRunStickyStateFieldCreatedAt
+}
+
+// base struct
+type workflowRunStickyStateQueryUpdatedAtDateTime struct{}
+
+// Set the required value of UpdatedAt
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) Set(value DateTime) workflowRunStickyStateSetParam {
+
+	return workflowRunStickyStateSetParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of UpdatedAt dynamically
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) SetIfPresent(value *DateTime) workflowRunStickyStateSetParam {
+	if value == nil {
+		return workflowRunStickyStateSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) Equals(value DateTime) workflowRunStickyStateWithPrismaUpdatedAtEqualsParam {
+
+	return workflowRunStickyStateWithPrismaUpdatedAtEqualsParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) EqualsIfPresent(value *DateTime) workflowRunStickyStateWithPrismaUpdatedAtEqualsParam {
+	if value == nil {
+		return workflowRunStickyStateWithPrismaUpdatedAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) Order(direction SortOrder) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) Cursor(cursor DateTime) workflowRunStickyStateCursorParam {
+	return workflowRunStickyStateCursorParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) In(value []DateTime) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) InIfPresent(value []DateTime) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) NotIn(value []DateTime) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) NotInIfPresent(value []DateTime) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) Lt(value DateTime) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) LtIfPresent(value *DateTime) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) Lte(value DateTime) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) LteIfPresent(value *DateTime) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) Gt(value DateTime) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) GtIfPresent(value *DateTime) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) Gte(value DateTime) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) GteIfPresent(value *DateTime) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) Not(value DateTime) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) NotIfPresent(value *DateTime) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) Before(value DateTime) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) BeforeIfPresent(value *DateTime) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) After(value DateTime) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) AfterIfPresent(value *DateTime) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) BeforeEquals(value DateTime) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) BeforeEqualsIfPresent(value *DateTime) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) AfterEquals(value DateTime) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) AfterEqualsIfPresent(value *DateTime) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r workflowRunStickyStateQueryUpdatedAtDateTime) Field() workflowRunStickyStatePrismaFields {
+	return workflowRunStickyStateFieldUpdatedAt
+}
+
+// base struct
+type workflowRunStickyStateQueryTenantIDString struct{}
+
+// Set the required value of TenantID
+func (r workflowRunStickyStateQueryTenantIDString) Set(value string) workflowRunStickyStateWithPrismaTenantIDSetParam {
+
+	return workflowRunStickyStateWithPrismaTenantIDSetParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of TenantID dynamically
+func (r workflowRunStickyStateQueryTenantIDString) SetIfPresent(value *String) workflowRunStickyStateWithPrismaTenantIDSetParam {
+	if value == nil {
+		return workflowRunStickyStateWithPrismaTenantIDSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) Equals(value string) workflowRunStickyStateWithPrismaTenantIDEqualsParam {
+
+	return workflowRunStickyStateWithPrismaTenantIDEqualsParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) EqualsIfPresent(value *string) workflowRunStickyStateWithPrismaTenantIDEqualsParam {
+	if value == nil {
+		return workflowRunStickyStateWithPrismaTenantIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) Order(direction SortOrder) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) Cursor(cursor string) workflowRunStickyStateCursorParam {
+	return workflowRunStickyStateCursorParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) In(value []string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) InIfPresent(value []string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) NotIn(value []string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) NotInIfPresent(value []string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) Lt(value string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) LtIfPresent(value *string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) Lte(value string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) LteIfPresent(value *string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) Gt(value string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) GtIfPresent(value *string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) Gte(value string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) GteIfPresent(value *string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) Contains(value string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) ContainsIfPresent(value *string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) StartsWith(value string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) StartsWithIfPresent(value *string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) EndsWith(value string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) EndsWithIfPresent(value *string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) Mode(value QueryMode) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) ModeIfPresent(value *QueryMode) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) Not(value string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) NotIfPresent(value *string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r workflowRunStickyStateQueryTenantIDString) HasPrefix(value string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r workflowRunStickyStateQueryTenantIDString) HasPrefixIfPresent(value *string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r workflowRunStickyStateQueryTenantIDString) HasSuffix(value string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r workflowRunStickyStateQueryTenantIDString) HasSuffixIfPresent(value *string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r workflowRunStickyStateQueryTenantIDString) Field() workflowRunStickyStatePrismaFields {
+	return workflowRunStickyStateFieldTenantID
+}
+
+// base struct
+type workflowRunStickyStateQueryWorkflowRunWorkflowRun struct{}
+
+type workflowRunStickyStateQueryWorkflowRunRelations struct{}
+
+// WorkflowRunStickyState -> WorkflowRun
+//
+// @relation
+// @required
+func (workflowRunStickyStateQueryWorkflowRunRelations) Where(
+	params ...WorkflowRunWhereParam,
+) workflowRunStickyStateDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "workflowRun",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (workflowRunStickyStateQueryWorkflowRunRelations) Fetch() workflowRunStickyStateToWorkflowRunFindUnique {
+	var v workflowRunStickyStateToWorkflowRunFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "workflowRun"
+	v.query.Outputs = workflowRunOutput
+
+	return v
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunRelations) Link(
+	params WorkflowRunWhereParam,
+) workflowRunStickyStateWithPrismaWorkflowRunSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return workflowRunStickyStateWithPrismaWorkflowRunSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return workflowRunStickyStateWithPrismaWorkflowRunSetParam{
+		data: builder.Field{
+			Name: "workflowRun",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunRelations) Unlink() workflowRunStickyStateWithPrismaWorkflowRunSetParam {
+	var v workflowRunStickyStateWithPrismaWorkflowRunSetParam
+
+	v = workflowRunStickyStateWithPrismaWorkflowRunSetParam{
+		data: builder.Field{
+			Name: "workflowRun",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunWorkflowRun) Field() workflowRunStickyStatePrismaFields {
+	return workflowRunStickyStateFieldWorkflowRun
+}
+
+// base struct
+type workflowRunStickyStateQueryWorkflowRunIDString struct{}
+
+// Set the required value of WorkflowRunID
+func (r workflowRunStickyStateQueryWorkflowRunIDString) Set(value string) workflowRunStickyStateSetParam {
+
+	return workflowRunStickyStateSetParam{
+		data: builder.Field{
+			Name:  "workflowRunId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of WorkflowRunID dynamically
+func (r workflowRunStickyStateQueryWorkflowRunIDString) SetIfPresent(value *String) workflowRunStickyStateSetParam {
+	if value == nil {
+		return workflowRunStickyStateSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) Equals(value string) workflowRunStickyStateWithPrismaWorkflowRunIDEqualsUniqueParam {
+
+	return workflowRunStickyStateWithPrismaWorkflowRunIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) EqualsIfPresent(value *string) workflowRunStickyStateWithPrismaWorkflowRunIDEqualsUniqueParam {
+	if value == nil {
+		return workflowRunStickyStateWithPrismaWorkflowRunIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) Order(direction SortOrder) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name:  "workflowRunId",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) Cursor(cursor string) workflowRunStickyStateCursorParam {
+	return workflowRunStickyStateCursorParam{
+		data: builder.Field{
+			Name:  "workflowRunId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) In(value []string) workflowRunStickyStateParamUnique {
+	return workflowRunStickyStateParamUnique{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) InIfPresent(value []string) workflowRunStickyStateParamUnique {
+	if value == nil {
+		return workflowRunStickyStateParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) NotIn(value []string) workflowRunStickyStateParamUnique {
+	return workflowRunStickyStateParamUnique{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) NotInIfPresent(value []string) workflowRunStickyStateParamUnique {
+	if value == nil {
+		return workflowRunStickyStateParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) Lt(value string) workflowRunStickyStateParamUnique {
+	return workflowRunStickyStateParamUnique{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) LtIfPresent(value *string) workflowRunStickyStateParamUnique {
+	if value == nil {
+		return workflowRunStickyStateParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) Lte(value string) workflowRunStickyStateParamUnique {
+	return workflowRunStickyStateParamUnique{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) LteIfPresent(value *string) workflowRunStickyStateParamUnique {
+	if value == nil {
+		return workflowRunStickyStateParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) Gt(value string) workflowRunStickyStateParamUnique {
+	return workflowRunStickyStateParamUnique{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) GtIfPresent(value *string) workflowRunStickyStateParamUnique {
+	if value == nil {
+		return workflowRunStickyStateParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) Gte(value string) workflowRunStickyStateParamUnique {
+	return workflowRunStickyStateParamUnique{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) GteIfPresent(value *string) workflowRunStickyStateParamUnique {
+	if value == nil {
+		return workflowRunStickyStateParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) Contains(value string) workflowRunStickyStateParamUnique {
+	return workflowRunStickyStateParamUnique{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) ContainsIfPresent(value *string) workflowRunStickyStateParamUnique {
+	if value == nil {
+		return workflowRunStickyStateParamUnique{}
+	}
+	return r.Contains(*value)
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) StartsWith(value string) workflowRunStickyStateParamUnique {
+	return workflowRunStickyStateParamUnique{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) StartsWithIfPresent(value *string) workflowRunStickyStateParamUnique {
+	if value == nil {
+		return workflowRunStickyStateParamUnique{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) EndsWith(value string) workflowRunStickyStateParamUnique {
+	return workflowRunStickyStateParamUnique{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) EndsWithIfPresent(value *string) workflowRunStickyStateParamUnique {
+	if value == nil {
+		return workflowRunStickyStateParamUnique{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) Mode(value QueryMode) workflowRunStickyStateParamUnique {
+	return workflowRunStickyStateParamUnique{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) ModeIfPresent(value *QueryMode) workflowRunStickyStateParamUnique {
+	if value == nil {
+		return workflowRunStickyStateParamUnique{}
+	}
+	return r.Mode(*value)
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) Not(value string) workflowRunStickyStateParamUnique {
+	return workflowRunStickyStateParamUnique{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) NotIfPresent(value *string) workflowRunStickyStateParamUnique {
+	if value == nil {
+		return workflowRunStickyStateParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) HasPrefix(value string) workflowRunStickyStateParamUnique {
+	return workflowRunStickyStateParamUnique{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r workflowRunStickyStateQueryWorkflowRunIDString) HasPrefixIfPresent(value *string) workflowRunStickyStateParamUnique {
+	if value == nil {
+		return workflowRunStickyStateParamUnique{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) HasSuffix(value string) workflowRunStickyStateParamUnique {
+	return workflowRunStickyStateParamUnique{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r workflowRunStickyStateQueryWorkflowRunIDString) HasSuffixIfPresent(value *string) workflowRunStickyStateParamUnique {
+	if value == nil {
+		return workflowRunStickyStateParamUnique{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r workflowRunStickyStateQueryWorkflowRunIDString) Field() workflowRunStickyStatePrismaFields {
+	return workflowRunStickyStateFieldWorkflowRunID
+}
+
+// base struct
+type workflowRunStickyStateQueryDesiredWorkerIDString struct{}
+
+// Set the optional value of DesiredWorkerID
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) Set(value string) workflowRunStickyStateSetParam {
+
+	return workflowRunStickyStateSetParam{
+		data: builder.Field{
+			Name:  "desiredWorkerId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of DesiredWorkerID dynamically
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) SetIfPresent(value *String) workflowRunStickyStateSetParam {
+	if value == nil {
+		return workflowRunStickyStateSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of DesiredWorkerID dynamically
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) SetOptional(value *String) workflowRunStickyStateSetParam {
+	if value == nil {
+
+		var v *string
+		return workflowRunStickyStateSetParam{
+			data: builder.Field{
+				Name:  "desiredWorkerId",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) Equals(value string) workflowRunStickyStateWithPrismaDesiredWorkerIDEqualsParam {
+
+	return workflowRunStickyStateWithPrismaDesiredWorkerIDEqualsParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) EqualsIfPresent(value *string) workflowRunStickyStateWithPrismaDesiredWorkerIDEqualsParam {
+	if value == nil {
+		return workflowRunStickyStateWithPrismaDesiredWorkerIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) EqualsOptional(value *String) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) IsNull() workflowRunStickyStateDefaultParam {
+	var str *string = nil
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) Order(direction SortOrder) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name:  "desiredWorkerId",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) Cursor(cursor string) workflowRunStickyStateCursorParam {
+	return workflowRunStickyStateCursorParam{
+		data: builder.Field{
+			Name:  "desiredWorkerId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) In(value []string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) InIfPresent(value []string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) NotIn(value []string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) NotInIfPresent(value []string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) Lt(value string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) LtIfPresent(value *string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) Lte(value string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) LteIfPresent(value *string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) Gt(value string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) GtIfPresent(value *string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) Gte(value string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) GteIfPresent(value *string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) Contains(value string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) ContainsIfPresent(value *string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) StartsWith(value string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) StartsWithIfPresent(value *string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) EndsWith(value string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) EndsWithIfPresent(value *string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) Mode(value QueryMode) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) ModeIfPresent(value *QueryMode) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) Not(value string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) NotIfPresent(value *string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) HasPrefix(value string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) HasPrefixIfPresent(value *string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) HasSuffix(value string) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) HasSuffixIfPresent(value *string) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r workflowRunStickyStateQueryDesiredWorkerIDString) Field() workflowRunStickyStatePrismaFields {
+	return workflowRunStickyStateFieldDesiredWorkerID
+}
+
+// base struct
+type workflowRunStickyStateQueryStrategyStickyStrategy struct{}
+
+// Set the required value of Strategy
+func (r workflowRunStickyStateQueryStrategyStickyStrategy) Set(value StickyStrategy) workflowRunStickyStateWithPrismaStrategySetParam {
+
+	return workflowRunStickyStateWithPrismaStrategySetParam{
+		data: builder.Field{
+			Name:  "strategy",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Strategy dynamically
+func (r workflowRunStickyStateQueryStrategyStickyStrategy) SetIfPresent(value *StickyStrategy) workflowRunStickyStateWithPrismaStrategySetParam {
+	if value == nil {
+		return workflowRunStickyStateWithPrismaStrategySetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowRunStickyStateQueryStrategyStickyStrategy) Equals(value StickyStrategy) workflowRunStickyStateWithPrismaStrategyEqualsParam {
+
+	return workflowRunStickyStateWithPrismaStrategyEqualsParam{
+		data: builder.Field{
+			Name: "strategy",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryStrategyStickyStrategy) EqualsIfPresent(value *StickyStrategy) workflowRunStickyStateWithPrismaStrategyEqualsParam {
+	if value == nil {
+		return workflowRunStickyStateWithPrismaStrategyEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowRunStickyStateQueryStrategyStickyStrategy) Order(direction SortOrder) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name:  "strategy",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryStrategyStickyStrategy) Cursor(cursor StickyStrategy) workflowRunStickyStateCursorParam {
+	return workflowRunStickyStateCursorParam{
+		data: builder.Field{
+			Name:  "strategy",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryStrategyStickyStrategy) In(value []StickyStrategy) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "strategy",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryStrategyStickyStrategy) InIfPresent(value []StickyStrategy) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowRunStickyStateQueryStrategyStickyStrategy) NotIn(value []StickyStrategy) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "strategy",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryStrategyStickyStrategy) NotInIfPresent(value []StickyStrategy) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowRunStickyStateQueryStrategyStickyStrategy) Not(value StickyStrategy) workflowRunStickyStateDefaultParam {
+	return workflowRunStickyStateDefaultParam{
+		data: builder.Field{
+			Name: "strategy",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunStickyStateQueryStrategyStickyStrategy) NotIfPresent(value *StickyStrategy) workflowRunStickyStateDefaultParam {
+	if value == nil {
+		return workflowRunStickyStateDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+func (r workflowRunStickyStateQueryStrategyStickyStrategy) Field() workflowRunStickyStatePrismaFields {
+	return workflowRunStickyStateFieldStrategy
+}
+
 // WorkflowRun acts as a namespaces to access query methods for the WorkflowRun model
 var WorkflowRun = workflowRunQuery{}
 
@@ -95736,6 +102239,8 @@ type workflowRunQuery struct {
 	JobRuns workflowRunQueryJobRunsRelations
 
 	TriggeredBy workflowRunQueryTriggeredByRelations
+
+	Sticky workflowRunQueryStickyRelations
 
 	// Error
 	//
@@ -99319,6 +105824,94 @@ func (r workflowRunQueryTriggeredByRelations) Unlink() workflowRunSetParam {
 
 func (r workflowRunQueryTriggeredByWorkflowRunTriggeredBy) Field() workflowRunPrismaFields {
 	return workflowRunFieldTriggeredBy
+}
+
+// base struct
+type workflowRunQueryStickyWorkflowRunStickyState struct{}
+
+type workflowRunQueryStickyRelations struct{}
+
+// WorkflowRun -> Sticky
+//
+// @relation
+// @optional
+func (workflowRunQueryStickyRelations) Where(
+	params ...WorkflowRunStickyStateWhereParam,
+) workflowRunDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "sticky",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (workflowRunQueryStickyRelations) Fetch() workflowRunToStickyFindUnique {
+	var v workflowRunToStickyFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "sticky"
+	v.query.Outputs = workflowRunStickyStateOutput
+
+	return v
+}
+
+func (r workflowRunQueryStickyRelations) Link(
+	params WorkflowRunStickyStateWhereParam,
+) workflowRunSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return workflowRunSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return workflowRunSetParam{
+		data: builder.Field{
+			Name: "sticky",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryStickyRelations) Unlink() workflowRunSetParam {
+	var v workflowRunSetParam
+
+	v = workflowRunSetParam{
+		data: builder.Field{
+			Name: "sticky",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r workflowRunQueryStickyWorkflowRunStickyState) Field() workflowRunPrismaFields {
+	return workflowRunFieldSticky
 }
 
 // base struct
@@ -148551,6 +155144,2662 @@ func (r tickerQueryTenantAlertsTenantAlertingSettings) Field() tickerPrismaField
 	return tickerFieldTenantAlerts
 }
 
+// WorkerLabel acts as a namespaces to access query methods for the WorkerLabel model
+var WorkerLabel = workerLabelQuery{}
+
+// workerLabelQuery exposes query functions for the workerLabel model
+type workerLabelQuery struct {
+
+	// ID
+	//
+	// @required
+	ID workerLabelQueryIDBigInt
+
+	// CreatedAt
+	//
+	// @required
+	CreatedAt workerLabelQueryCreatedAtDateTime
+
+	// UpdatedAt
+	//
+	// @required
+	UpdatedAt workerLabelQueryUpdatedAtDateTime
+
+	Worker workerLabelQueryWorkerRelations
+
+	// WorkerID
+	//
+	// @required
+	WorkerID workerLabelQueryWorkerIDString
+
+	// Key
+	//
+	// @required
+	Key workerLabelQueryKeyString
+
+	// StrValue
+	//
+	// @optional
+	StrValue workerLabelQueryStrValueString
+
+	// IntValue
+	//
+	// @optional
+	IntValue workerLabelQueryIntValueInt
+}
+
+func (workerLabelQuery) Not(params ...WorkerLabelWhereParam) workerLabelDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (workerLabelQuery) Or(params ...WorkerLabelWhereParam) workerLabelDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (workerLabelQuery) And(params ...WorkerLabelWhereParam) workerLabelDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (workerLabelQuery) WorkerIDKey(
+	_workerID WorkerLabelWithPrismaWorkerIDWhereParam,
+
+	_key WorkerLabelWithPrismaKeyWhereParam,
+) WorkerLabelEqualsUniqueWhereParam {
+	var fields []builder.Field
+
+	fields = append(fields, _workerID.field())
+	fields = append(fields, _key.field())
+
+	return workerLabelEqualsUniqueParam{
+		data: builder.Field{
+			Name:   "workerId_key",
+			Fields: builder.TransformEquals(fields),
+		},
+	}
+}
+
+// base struct
+type workerLabelQueryIDBigInt struct{}
+
+// Set the required value of ID
+func (r workerLabelQueryIDBigInt) Set(value BigInt) workerLabelSetParam {
+
+	return workerLabelSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r workerLabelQueryIDBigInt) SetIfPresent(value *BigInt) workerLabelSetParam {
+	if value == nil {
+		return workerLabelSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the required value of ID
+func (r workerLabelQueryIDBigInt) Increment(value BigInt) workerLabelSetParam {
+	return workerLabelSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIDBigInt) IncrementIfPresent(value *BigInt) workerLabelSetParam {
+	if value == nil {
+		return workerLabelSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the required value of ID
+func (r workerLabelQueryIDBigInt) Decrement(value BigInt) workerLabelSetParam {
+	return workerLabelSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIDBigInt) DecrementIfPresent(value *BigInt) workerLabelSetParam {
+	if value == nil {
+		return workerLabelSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the required value of ID
+func (r workerLabelQueryIDBigInt) Multiply(value BigInt) workerLabelSetParam {
+	return workerLabelSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIDBigInt) MultiplyIfPresent(value *BigInt) workerLabelSetParam {
+	if value == nil {
+		return workerLabelSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the required value of ID
+func (r workerLabelQueryIDBigInt) Divide(value BigInt) workerLabelSetParam {
+	return workerLabelSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIDBigInt) DivideIfPresent(value *BigInt) workerLabelSetParam {
+	if value == nil {
+		return workerLabelSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r workerLabelQueryIDBigInt) Equals(value BigInt) workerLabelWithPrismaIDEqualsUniqueParam {
+
+	return workerLabelWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIDBigInt) EqualsIfPresent(value *BigInt) workerLabelWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return workerLabelWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workerLabelQueryIDBigInt) Order(direction SortOrder) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r workerLabelQueryIDBigInt) Cursor(cursor BigInt) workerLabelCursorParam {
+	return workerLabelCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workerLabelQueryIDBigInt) In(value []BigInt) workerLabelParamUnique {
+	return workerLabelParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIDBigInt) InIfPresent(value []BigInt) workerLabelParamUnique {
+	if value == nil {
+		return workerLabelParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r workerLabelQueryIDBigInt) NotIn(value []BigInt) workerLabelParamUnique {
+	return workerLabelParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIDBigInt) NotInIfPresent(value []BigInt) workerLabelParamUnique {
+	if value == nil {
+		return workerLabelParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workerLabelQueryIDBigInt) Lt(value BigInt) workerLabelParamUnique {
+	return workerLabelParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIDBigInt) LtIfPresent(value *BigInt) workerLabelParamUnique {
+	if value == nil {
+		return workerLabelParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workerLabelQueryIDBigInt) Lte(value BigInt) workerLabelParamUnique {
+	return workerLabelParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIDBigInt) LteIfPresent(value *BigInt) workerLabelParamUnique {
+	if value == nil {
+		return workerLabelParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workerLabelQueryIDBigInt) Gt(value BigInt) workerLabelParamUnique {
+	return workerLabelParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIDBigInt) GtIfPresent(value *BigInt) workerLabelParamUnique {
+	if value == nil {
+		return workerLabelParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workerLabelQueryIDBigInt) Gte(value BigInt) workerLabelParamUnique {
+	return workerLabelParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIDBigInt) GteIfPresent(value *BigInt) workerLabelParamUnique {
+	if value == nil {
+		return workerLabelParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workerLabelQueryIDBigInt) Not(value BigInt) workerLabelParamUnique {
+	return workerLabelParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIDBigInt) NotIfPresent(value *BigInt) workerLabelParamUnique {
+	if value == nil {
+		return workerLabelParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+func (r workerLabelQueryIDBigInt) Field() workerLabelPrismaFields {
+	return workerLabelFieldID
+}
+
+// base struct
+type workerLabelQueryCreatedAtDateTime struct{}
+
+// Set the required value of CreatedAt
+func (r workerLabelQueryCreatedAtDateTime) Set(value DateTime) workerLabelSetParam {
+
+	return workerLabelSetParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of CreatedAt dynamically
+func (r workerLabelQueryCreatedAtDateTime) SetIfPresent(value *DateTime) workerLabelSetParam {
+	if value == nil {
+		return workerLabelSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workerLabelQueryCreatedAtDateTime) Equals(value DateTime) workerLabelWithPrismaCreatedAtEqualsParam {
+
+	return workerLabelWithPrismaCreatedAtEqualsParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryCreatedAtDateTime) EqualsIfPresent(value *DateTime) workerLabelWithPrismaCreatedAtEqualsParam {
+	if value == nil {
+		return workerLabelWithPrismaCreatedAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workerLabelQueryCreatedAtDateTime) Order(direction SortOrder) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r workerLabelQueryCreatedAtDateTime) Cursor(cursor DateTime) workerLabelCursorParam {
+	return workerLabelCursorParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workerLabelQueryCreatedAtDateTime) In(value []DateTime) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryCreatedAtDateTime) InIfPresent(value []DateTime) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workerLabelQueryCreatedAtDateTime) NotIn(value []DateTime) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryCreatedAtDateTime) NotInIfPresent(value []DateTime) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workerLabelQueryCreatedAtDateTime) Lt(value DateTime) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryCreatedAtDateTime) LtIfPresent(value *DateTime) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workerLabelQueryCreatedAtDateTime) Lte(value DateTime) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryCreatedAtDateTime) LteIfPresent(value *DateTime) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workerLabelQueryCreatedAtDateTime) Gt(value DateTime) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryCreatedAtDateTime) GtIfPresent(value *DateTime) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workerLabelQueryCreatedAtDateTime) Gte(value DateTime) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryCreatedAtDateTime) GteIfPresent(value *DateTime) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workerLabelQueryCreatedAtDateTime) Not(value DateTime) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryCreatedAtDateTime) NotIfPresent(value *DateTime) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r workerLabelQueryCreatedAtDateTime) Before(value DateTime) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r workerLabelQueryCreatedAtDateTime) BeforeIfPresent(value *DateTime) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r workerLabelQueryCreatedAtDateTime) After(value DateTime) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r workerLabelQueryCreatedAtDateTime) AfterIfPresent(value *DateTime) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r workerLabelQueryCreatedAtDateTime) BeforeEquals(value DateTime) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r workerLabelQueryCreatedAtDateTime) BeforeEqualsIfPresent(value *DateTime) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r workerLabelQueryCreatedAtDateTime) AfterEquals(value DateTime) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r workerLabelQueryCreatedAtDateTime) AfterEqualsIfPresent(value *DateTime) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r workerLabelQueryCreatedAtDateTime) Field() workerLabelPrismaFields {
+	return workerLabelFieldCreatedAt
+}
+
+// base struct
+type workerLabelQueryUpdatedAtDateTime struct{}
+
+// Set the required value of UpdatedAt
+func (r workerLabelQueryUpdatedAtDateTime) Set(value DateTime) workerLabelSetParam {
+
+	return workerLabelSetParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of UpdatedAt dynamically
+func (r workerLabelQueryUpdatedAtDateTime) SetIfPresent(value *DateTime) workerLabelSetParam {
+	if value == nil {
+		return workerLabelSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workerLabelQueryUpdatedAtDateTime) Equals(value DateTime) workerLabelWithPrismaUpdatedAtEqualsParam {
+
+	return workerLabelWithPrismaUpdatedAtEqualsParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryUpdatedAtDateTime) EqualsIfPresent(value *DateTime) workerLabelWithPrismaUpdatedAtEqualsParam {
+	if value == nil {
+		return workerLabelWithPrismaUpdatedAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workerLabelQueryUpdatedAtDateTime) Order(direction SortOrder) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r workerLabelQueryUpdatedAtDateTime) Cursor(cursor DateTime) workerLabelCursorParam {
+	return workerLabelCursorParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workerLabelQueryUpdatedAtDateTime) In(value []DateTime) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryUpdatedAtDateTime) InIfPresent(value []DateTime) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workerLabelQueryUpdatedAtDateTime) NotIn(value []DateTime) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryUpdatedAtDateTime) NotInIfPresent(value []DateTime) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workerLabelQueryUpdatedAtDateTime) Lt(value DateTime) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryUpdatedAtDateTime) LtIfPresent(value *DateTime) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workerLabelQueryUpdatedAtDateTime) Lte(value DateTime) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryUpdatedAtDateTime) LteIfPresent(value *DateTime) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workerLabelQueryUpdatedAtDateTime) Gt(value DateTime) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryUpdatedAtDateTime) GtIfPresent(value *DateTime) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workerLabelQueryUpdatedAtDateTime) Gte(value DateTime) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryUpdatedAtDateTime) GteIfPresent(value *DateTime) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workerLabelQueryUpdatedAtDateTime) Not(value DateTime) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryUpdatedAtDateTime) NotIfPresent(value *DateTime) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r workerLabelQueryUpdatedAtDateTime) Before(value DateTime) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r workerLabelQueryUpdatedAtDateTime) BeforeIfPresent(value *DateTime) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r workerLabelQueryUpdatedAtDateTime) After(value DateTime) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r workerLabelQueryUpdatedAtDateTime) AfterIfPresent(value *DateTime) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r workerLabelQueryUpdatedAtDateTime) BeforeEquals(value DateTime) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r workerLabelQueryUpdatedAtDateTime) BeforeEqualsIfPresent(value *DateTime) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r workerLabelQueryUpdatedAtDateTime) AfterEquals(value DateTime) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r workerLabelQueryUpdatedAtDateTime) AfterEqualsIfPresent(value *DateTime) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r workerLabelQueryUpdatedAtDateTime) Field() workerLabelPrismaFields {
+	return workerLabelFieldUpdatedAt
+}
+
+// base struct
+type workerLabelQueryWorkerWorker struct{}
+
+type workerLabelQueryWorkerRelations struct{}
+
+// WorkerLabel -> Worker
+//
+// @relation
+// @required
+func (workerLabelQueryWorkerRelations) Where(
+	params ...WorkerWhereParam,
+) workerLabelDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "worker",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (workerLabelQueryWorkerRelations) Fetch() workerLabelToWorkerFindUnique {
+	var v workerLabelToWorkerFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "worker"
+	v.query.Outputs = workerOutput
+
+	return v
+}
+
+func (r workerLabelQueryWorkerRelations) Link(
+	params WorkerWhereParam,
+) workerLabelWithPrismaWorkerSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return workerLabelWithPrismaWorkerSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return workerLabelWithPrismaWorkerSetParam{
+		data: builder.Field{
+			Name: "worker",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryWorkerRelations) Unlink() workerLabelWithPrismaWorkerSetParam {
+	var v workerLabelWithPrismaWorkerSetParam
+
+	v = workerLabelWithPrismaWorkerSetParam{
+		data: builder.Field{
+			Name: "worker",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r workerLabelQueryWorkerWorker) Field() workerLabelPrismaFields {
+	return workerLabelFieldWorker
+}
+
+// base struct
+type workerLabelQueryWorkerIDString struct{}
+
+// Set the required value of WorkerID
+func (r workerLabelQueryWorkerIDString) Set(value string) workerLabelSetParam {
+
+	return workerLabelSetParam{
+		data: builder.Field{
+			Name:  "workerId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of WorkerID dynamically
+func (r workerLabelQueryWorkerIDString) SetIfPresent(value *String) workerLabelSetParam {
+	if value == nil {
+		return workerLabelSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workerLabelQueryWorkerIDString) Equals(value string) workerLabelWithPrismaWorkerIDEqualsParam {
+
+	return workerLabelWithPrismaWorkerIDEqualsParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryWorkerIDString) EqualsIfPresent(value *string) workerLabelWithPrismaWorkerIDEqualsParam {
+	if value == nil {
+		return workerLabelWithPrismaWorkerIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workerLabelQueryWorkerIDString) Order(direction SortOrder) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name:  "workerId",
+			Value: direction,
+		},
+	}
+}
+
+func (r workerLabelQueryWorkerIDString) Cursor(cursor string) workerLabelCursorParam {
+	return workerLabelCursorParam{
+		data: builder.Field{
+			Name:  "workerId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workerLabelQueryWorkerIDString) In(value []string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryWorkerIDString) InIfPresent(value []string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workerLabelQueryWorkerIDString) NotIn(value []string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryWorkerIDString) NotInIfPresent(value []string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workerLabelQueryWorkerIDString) Lt(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryWorkerIDString) LtIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workerLabelQueryWorkerIDString) Lte(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryWorkerIDString) LteIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workerLabelQueryWorkerIDString) Gt(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryWorkerIDString) GtIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workerLabelQueryWorkerIDString) Gte(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryWorkerIDString) GteIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workerLabelQueryWorkerIDString) Contains(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryWorkerIDString) ContainsIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r workerLabelQueryWorkerIDString) StartsWith(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryWorkerIDString) StartsWithIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r workerLabelQueryWorkerIDString) EndsWith(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryWorkerIDString) EndsWithIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r workerLabelQueryWorkerIDString) Mode(value QueryMode) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryWorkerIDString) ModeIfPresent(value *QueryMode) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r workerLabelQueryWorkerIDString) Not(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryWorkerIDString) NotIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r workerLabelQueryWorkerIDString) HasPrefix(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r workerLabelQueryWorkerIDString) HasPrefixIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r workerLabelQueryWorkerIDString) HasSuffix(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r workerLabelQueryWorkerIDString) HasSuffixIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r workerLabelQueryWorkerIDString) Field() workerLabelPrismaFields {
+	return workerLabelFieldWorkerID
+}
+
+// base struct
+type workerLabelQueryKeyString struct{}
+
+// Set the required value of Key
+func (r workerLabelQueryKeyString) Set(value string) workerLabelWithPrismaKeySetParam {
+
+	return workerLabelWithPrismaKeySetParam{
+		data: builder.Field{
+			Name:  "key",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Key dynamically
+func (r workerLabelQueryKeyString) SetIfPresent(value *String) workerLabelWithPrismaKeySetParam {
+	if value == nil {
+		return workerLabelWithPrismaKeySetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workerLabelQueryKeyString) Equals(value string) workerLabelWithPrismaKeyEqualsParam {
+
+	return workerLabelWithPrismaKeyEqualsParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryKeyString) EqualsIfPresent(value *string) workerLabelWithPrismaKeyEqualsParam {
+	if value == nil {
+		return workerLabelWithPrismaKeyEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workerLabelQueryKeyString) Order(direction SortOrder) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name:  "key",
+			Value: direction,
+		},
+	}
+}
+
+func (r workerLabelQueryKeyString) Cursor(cursor string) workerLabelCursorParam {
+	return workerLabelCursorParam{
+		data: builder.Field{
+			Name:  "key",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workerLabelQueryKeyString) In(value []string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryKeyString) InIfPresent(value []string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workerLabelQueryKeyString) NotIn(value []string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryKeyString) NotInIfPresent(value []string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workerLabelQueryKeyString) Lt(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryKeyString) LtIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workerLabelQueryKeyString) Lte(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryKeyString) LteIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workerLabelQueryKeyString) Gt(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryKeyString) GtIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workerLabelQueryKeyString) Gte(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryKeyString) GteIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workerLabelQueryKeyString) Contains(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryKeyString) ContainsIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r workerLabelQueryKeyString) StartsWith(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryKeyString) StartsWithIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r workerLabelQueryKeyString) EndsWith(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryKeyString) EndsWithIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r workerLabelQueryKeyString) Mode(value QueryMode) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryKeyString) ModeIfPresent(value *QueryMode) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r workerLabelQueryKeyString) Not(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryKeyString) NotIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r workerLabelQueryKeyString) HasPrefix(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r workerLabelQueryKeyString) HasPrefixIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r workerLabelQueryKeyString) HasSuffix(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r workerLabelQueryKeyString) HasSuffixIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r workerLabelQueryKeyString) Field() workerLabelPrismaFields {
+	return workerLabelFieldKey
+}
+
+// base struct
+type workerLabelQueryStrValueString struct{}
+
+// Set the optional value of StrValue
+func (r workerLabelQueryStrValueString) Set(value string) workerLabelSetParam {
+
+	return workerLabelSetParam{
+		data: builder.Field{
+			Name:  "strValue",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of StrValue dynamically
+func (r workerLabelQueryStrValueString) SetIfPresent(value *String) workerLabelSetParam {
+	if value == nil {
+		return workerLabelSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of StrValue dynamically
+func (r workerLabelQueryStrValueString) SetOptional(value *String) workerLabelSetParam {
+	if value == nil {
+
+		var v *string
+		return workerLabelSetParam{
+			data: builder.Field{
+				Name:  "strValue",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workerLabelQueryStrValueString) Equals(value string) workerLabelWithPrismaStrValueEqualsParam {
+
+	return workerLabelWithPrismaStrValueEqualsParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryStrValueString) EqualsIfPresent(value *string) workerLabelWithPrismaStrValueEqualsParam {
+	if value == nil {
+		return workerLabelWithPrismaStrValueEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workerLabelQueryStrValueString) EqualsOptional(value *String) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryStrValueString) IsNull() workerLabelDefaultParam {
+	var str *string = nil
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryStrValueString) Order(direction SortOrder) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name:  "strValue",
+			Value: direction,
+		},
+	}
+}
+
+func (r workerLabelQueryStrValueString) Cursor(cursor string) workerLabelCursorParam {
+	return workerLabelCursorParam{
+		data: builder.Field{
+			Name:  "strValue",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workerLabelQueryStrValueString) In(value []string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryStrValueString) InIfPresent(value []string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workerLabelQueryStrValueString) NotIn(value []string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryStrValueString) NotInIfPresent(value []string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workerLabelQueryStrValueString) Lt(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryStrValueString) LtIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workerLabelQueryStrValueString) Lte(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryStrValueString) LteIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workerLabelQueryStrValueString) Gt(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryStrValueString) GtIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workerLabelQueryStrValueString) Gte(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryStrValueString) GteIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workerLabelQueryStrValueString) Contains(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryStrValueString) ContainsIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r workerLabelQueryStrValueString) StartsWith(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryStrValueString) StartsWithIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r workerLabelQueryStrValueString) EndsWith(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryStrValueString) EndsWithIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r workerLabelQueryStrValueString) Mode(value QueryMode) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryStrValueString) ModeIfPresent(value *QueryMode) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r workerLabelQueryStrValueString) Not(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryStrValueString) NotIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r workerLabelQueryStrValueString) HasPrefix(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r workerLabelQueryStrValueString) HasPrefixIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r workerLabelQueryStrValueString) HasSuffix(value string) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "strValue",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r workerLabelQueryStrValueString) HasSuffixIfPresent(value *string) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r workerLabelQueryStrValueString) Field() workerLabelPrismaFields {
+	return workerLabelFieldStrValue
+}
+
+// base struct
+type workerLabelQueryIntValueInt struct{}
+
+// Set the optional value of IntValue
+func (r workerLabelQueryIntValueInt) Set(value int) workerLabelSetParam {
+
+	return workerLabelSetParam{
+		data: builder.Field{
+			Name:  "intValue",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of IntValue dynamically
+func (r workerLabelQueryIntValueInt) SetIfPresent(value *Int) workerLabelSetParam {
+	if value == nil {
+		return workerLabelSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of IntValue dynamically
+func (r workerLabelQueryIntValueInt) SetOptional(value *Int) workerLabelSetParam {
+	if value == nil {
+
+		var v *int
+		return workerLabelSetParam{
+			data: builder.Field{
+				Name:  "intValue",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the optional value of IntValue
+func (r workerLabelQueryIntValueInt) Increment(value int) workerLabelSetParam {
+	return workerLabelSetParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIntValueInt) IncrementIfPresent(value *int) workerLabelSetParam {
+	if value == nil {
+		return workerLabelSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the optional value of IntValue
+func (r workerLabelQueryIntValueInt) Decrement(value int) workerLabelSetParam {
+	return workerLabelSetParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIntValueInt) DecrementIfPresent(value *int) workerLabelSetParam {
+	if value == nil {
+		return workerLabelSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the optional value of IntValue
+func (r workerLabelQueryIntValueInt) Multiply(value int) workerLabelSetParam {
+	return workerLabelSetParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIntValueInt) MultiplyIfPresent(value *int) workerLabelSetParam {
+	if value == nil {
+		return workerLabelSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the optional value of IntValue
+func (r workerLabelQueryIntValueInt) Divide(value int) workerLabelSetParam {
+	return workerLabelSetParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIntValueInt) DivideIfPresent(value *int) workerLabelSetParam {
+	if value == nil {
+		return workerLabelSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r workerLabelQueryIntValueInt) Equals(value int) workerLabelWithPrismaIntValueEqualsParam {
+
+	return workerLabelWithPrismaIntValueEqualsParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIntValueInt) EqualsIfPresent(value *int) workerLabelWithPrismaIntValueEqualsParam {
+	if value == nil {
+		return workerLabelWithPrismaIntValueEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workerLabelQueryIntValueInt) EqualsOptional(value *Int) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIntValueInt) IsNull() workerLabelDefaultParam {
+	var str *string = nil
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIntValueInt) Order(direction SortOrder) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name:  "intValue",
+			Value: direction,
+		},
+	}
+}
+
+func (r workerLabelQueryIntValueInt) Cursor(cursor int) workerLabelCursorParam {
+	return workerLabelCursorParam{
+		data: builder.Field{
+			Name:  "intValue",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workerLabelQueryIntValueInt) In(value []int) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIntValueInt) InIfPresent(value []int) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workerLabelQueryIntValueInt) NotIn(value []int) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIntValueInt) NotInIfPresent(value []int) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workerLabelQueryIntValueInt) Lt(value int) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIntValueInt) LtIfPresent(value *int) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workerLabelQueryIntValueInt) Lte(value int) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIntValueInt) LteIfPresent(value *int) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workerLabelQueryIntValueInt) Gt(value int) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIntValueInt) GtIfPresent(value *int) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workerLabelQueryIntValueInt) Gte(value int) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIntValueInt) GteIfPresent(value *int) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workerLabelQueryIntValueInt) Not(value int) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerLabelQueryIntValueInt) NotIfPresent(value *int) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r workerLabelQueryIntValueInt) LT(value int) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r workerLabelQueryIntValueInt) LTIfPresent(value *int) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.LT(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r workerLabelQueryIntValueInt) LTE(value int) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r workerLabelQueryIntValueInt) LTEIfPresent(value *int) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.LTE(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r workerLabelQueryIntValueInt) GT(value int) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r workerLabelQueryIntValueInt) GTIfPresent(value *int) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.GT(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r workerLabelQueryIntValueInt) GTE(value int) workerLabelDefaultParam {
+	return workerLabelDefaultParam{
+		data: builder.Field{
+			Name: "intValue",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r workerLabelQueryIntValueInt) GTEIfPresent(value *int) workerLabelDefaultParam {
+	if value == nil {
+		return workerLabelDefaultParam{}
+	}
+	return r.GTE(*value)
+}
+
+func (r workerLabelQueryIntValueInt) Field() workerLabelPrismaFields {
+	return workerLabelFieldIntValue
+}
+
 // Worker acts as a namespaces to access query methods for the Worker model
 var Worker = workerQuery{}
 
@@ -148576,6 +157825,8 @@ type workerQuery struct {
 	//
 	// @optional
 	DeletedAt workerQueryDeletedAtDateTime
+
+	Labels workerQueryLabelsRelations
 
 	Tenant workerQueryTenantRelations
 
@@ -150008,6 +159259,178 @@ func (r workerQueryDeletedAtDateTime) AfterEqualsIfPresent(value *DateTime) work
 
 func (r workerQueryDeletedAtDateTime) Field() workerPrismaFields {
 	return workerFieldDeletedAt
+}
+
+// base struct
+type workerQueryLabelsWorkerLabel struct{}
+
+type workerQueryLabelsRelations struct{}
+
+// Worker -> Labels
+//
+// @relation
+// @required
+func (workerQueryLabelsRelations) Some(
+	params ...WorkerLabelWhereParam,
+) workerDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "labels",
+			Fields: []builder.Field{
+				{
+					Name:   "some",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Worker -> Labels
+//
+// @relation
+// @required
+func (workerQueryLabelsRelations) Every(
+	params ...WorkerLabelWhereParam,
+) workerDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "labels",
+			Fields: []builder.Field{
+				{
+					Name:   "every",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Worker -> Labels
+//
+// @relation
+// @required
+func (workerQueryLabelsRelations) None(
+	params ...WorkerLabelWhereParam,
+) workerDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "labels",
+			Fields: []builder.Field{
+				{
+					Name:   "none",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (workerQueryLabelsRelations) Fetch(
+
+	params ...WorkerLabelWhereParam,
+
+) workerToLabelsFindMany {
+	var v workerToLabelsFindMany
+
+	v.query.Operation = "query"
+	v.query.Method = "labels"
+	v.query.Outputs = workerLabelOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r workerQueryLabelsRelations) Link(
+	params ...WorkerLabelWhereParam,
+) workerSetParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workerSetParam{
+		data: builder.Field{
+			Name: "labels",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+
+					List:     true,
+					WrapList: true,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryLabelsRelations) Unlink(
+	params ...WorkerLabelWhereParam,
+) workerSetParam {
+	var v workerSetParam
+
+	var fields []builder.Field
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+	v = workerSetParam{
+		data: builder.Field{
+			Name: "labels",
+			Fields: []builder.Field{
+				{
+					Name:     "disconnect",
+					List:     true,
+					WrapList: true,
+					Fields:   builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r workerQueryLabelsWorkerLabel) Field() workerPrismaFields {
+	return workerFieldLabels
 }
 
 // base struct
@@ -192201,6 +201624,7 @@ var workflowVersionOutput = []builder.Output{
 	{Name: "version"},
 	{Name: "order"},
 	{Name: "workflowId"},
+	{Name: "sticky"},
 	{Name: "onFailureJobId"},
 	{Name: "scheduleTimeout"},
 }
@@ -193226,6 +202650,84 @@ func (p workflowVersionWithPrismaConcurrencyEqualsUniqueParam) concurrencyField(
 
 func (workflowVersionWithPrismaConcurrencyEqualsUniqueParam) unique() {}
 func (workflowVersionWithPrismaConcurrencyEqualsUniqueParam) equals() {}
+
+type WorkflowVersionWithPrismaStickyEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowVersionModel()
+	stickyField()
+}
+
+type WorkflowVersionWithPrismaStickySetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowVersionModel()
+	stickyField()
+}
+
+type workflowVersionWithPrismaStickySetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowVersionWithPrismaStickySetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowVersionWithPrismaStickySetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowVersionWithPrismaStickySetParam) workflowVersionModel() {}
+
+func (p workflowVersionWithPrismaStickySetParam) stickyField() {}
+
+type WorkflowVersionWithPrismaStickyWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowVersionModel()
+	stickyField()
+}
+
+type workflowVersionWithPrismaStickyEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowVersionWithPrismaStickyEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowVersionWithPrismaStickyEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowVersionWithPrismaStickyEqualsParam) workflowVersionModel() {}
+
+func (p workflowVersionWithPrismaStickyEqualsParam) stickyField() {}
+
+func (workflowVersionWithPrismaStickySetParam) settable()  {}
+func (workflowVersionWithPrismaStickyEqualsParam) equals() {}
+
+type workflowVersionWithPrismaStickyEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowVersionWithPrismaStickyEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowVersionWithPrismaStickyEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowVersionWithPrismaStickyEqualsUniqueParam) workflowVersionModel() {}
+func (p workflowVersionWithPrismaStickyEqualsUniqueParam) stickyField()          {}
+
+func (workflowVersionWithPrismaStickyEqualsUniqueParam) unique() {}
+func (workflowVersionWithPrismaStickyEqualsUniqueParam) equals() {}
 
 type WorkflowVersionWithPrismaJobsEqualsSetParam interface {
 	field() builder.Field
@@ -200205,6 +209707,1046 @@ func (p actionWithPrismaConcurrencyEqualsUniqueParam) concurrencyField() {}
 func (actionWithPrismaConcurrencyEqualsUniqueParam) unique() {}
 func (actionWithPrismaConcurrencyEqualsUniqueParam) equals() {}
 
+type stepDesiredWorkerLabelActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var stepDesiredWorkerLabelOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "createdAt"},
+	{Name: "updatedAt"},
+	{Name: "stepId"},
+	{Name: "key"},
+	{Name: "strValue"},
+	{Name: "intValue"},
+	{Name: "required"},
+	{Name: "comparator"},
+	{Name: "weight"},
+}
+
+type StepDesiredWorkerLabelRelationWith interface {
+	getQuery() builder.Query
+	with()
+	stepDesiredWorkerLabelRelation()
+}
+
+type StepDesiredWorkerLabelWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+}
+
+type stepDesiredWorkerLabelDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelDefaultParam) stepDesiredWorkerLabelModel() {}
+
+type StepDesiredWorkerLabelOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+}
+
+type stepDesiredWorkerLabelOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelOrderByParam) stepDesiredWorkerLabelModel() {}
+
+type StepDesiredWorkerLabelCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+	isCursor()
+}
+
+type stepDesiredWorkerLabelCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelCursorParam) isCursor() {}
+
+func (p stepDesiredWorkerLabelCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelCursorParam) stepDesiredWorkerLabelModel() {}
+
+type StepDesiredWorkerLabelParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	stepDesiredWorkerLabelModel()
+}
+
+type stepDesiredWorkerLabelParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelParamUnique) stepDesiredWorkerLabelModel() {}
+
+func (stepDesiredWorkerLabelParamUnique) unique() {}
+
+func (p stepDesiredWorkerLabelParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type StepDesiredWorkerLabelEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepDesiredWorkerLabelModel()
+}
+
+type stepDesiredWorkerLabelEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelEqualsParam) stepDesiredWorkerLabelModel() {}
+
+func (stepDesiredWorkerLabelEqualsParam) equals() {}
+
+func (p stepDesiredWorkerLabelEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type StepDesiredWorkerLabelEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	stepDesiredWorkerLabelModel()
+}
+
+type stepDesiredWorkerLabelEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelEqualsUniqueParam) stepDesiredWorkerLabelModel() {}
+
+func (stepDesiredWorkerLabelEqualsUniqueParam) unique() {}
+func (stepDesiredWorkerLabelEqualsUniqueParam) equals() {}
+
+func (p stepDesiredWorkerLabelEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type StepDesiredWorkerLabelSetParam interface {
+	field() builder.Field
+	settable()
+	stepDesiredWorkerLabelModel()
+}
+
+type stepDesiredWorkerLabelSetParam struct {
+	data builder.Field
+}
+
+func (stepDesiredWorkerLabelSetParam) settable() {}
+
+func (p stepDesiredWorkerLabelSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelSetParam) stepDesiredWorkerLabelModel() {}
+
+type StepDesiredWorkerLabelWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepDesiredWorkerLabelModel()
+	idField()
+}
+
+type StepDesiredWorkerLabelWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+	idField()
+}
+
+type stepDesiredWorkerLabelWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaIDSetParam) stepDesiredWorkerLabelModel() {}
+
+func (p stepDesiredWorkerLabelWithPrismaIDSetParam) idField() {}
+
+type StepDesiredWorkerLabelWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+	idField()
+}
+
+type stepDesiredWorkerLabelWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaIDEqualsParam) stepDesiredWorkerLabelModel() {}
+
+func (p stepDesiredWorkerLabelWithPrismaIDEqualsParam) idField() {}
+
+func (stepDesiredWorkerLabelWithPrismaIDSetParam) settable()  {}
+func (stepDesiredWorkerLabelWithPrismaIDEqualsParam) equals() {}
+
+type stepDesiredWorkerLabelWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaIDEqualsUniqueParam) stepDesiredWorkerLabelModel() {}
+func (p stepDesiredWorkerLabelWithPrismaIDEqualsUniqueParam) idField()                     {}
+
+func (stepDesiredWorkerLabelWithPrismaIDEqualsUniqueParam) unique() {}
+func (stepDesiredWorkerLabelWithPrismaIDEqualsUniqueParam) equals() {}
+
+type StepDesiredWorkerLabelWithPrismaCreatedAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepDesiredWorkerLabelModel()
+	createdAtField()
+}
+
+type StepDesiredWorkerLabelWithPrismaCreatedAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+	createdAtField()
+}
+
+type stepDesiredWorkerLabelWithPrismaCreatedAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaCreatedAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaCreatedAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaCreatedAtSetParam) stepDesiredWorkerLabelModel() {}
+
+func (p stepDesiredWorkerLabelWithPrismaCreatedAtSetParam) createdAtField() {}
+
+type StepDesiredWorkerLabelWithPrismaCreatedAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+	createdAtField()
+}
+
+type stepDesiredWorkerLabelWithPrismaCreatedAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaCreatedAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaCreatedAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaCreatedAtEqualsParam) stepDesiredWorkerLabelModel() {}
+
+func (p stepDesiredWorkerLabelWithPrismaCreatedAtEqualsParam) createdAtField() {}
+
+func (stepDesiredWorkerLabelWithPrismaCreatedAtSetParam) settable()  {}
+func (stepDesiredWorkerLabelWithPrismaCreatedAtEqualsParam) equals() {}
+
+type stepDesiredWorkerLabelWithPrismaCreatedAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaCreatedAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaCreatedAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaCreatedAtEqualsUniqueParam) stepDesiredWorkerLabelModel() {}
+func (p stepDesiredWorkerLabelWithPrismaCreatedAtEqualsUniqueParam) createdAtField()              {}
+
+func (stepDesiredWorkerLabelWithPrismaCreatedAtEqualsUniqueParam) unique() {}
+func (stepDesiredWorkerLabelWithPrismaCreatedAtEqualsUniqueParam) equals() {}
+
+type StepDesiredWorkerLabelWithPrismaUpdatedAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepDesiredWorkerLabelModel()
+	updatedAtField()
+}
+
+type StepDesiredWorkerLabelWithPrismaUpdatedAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+	updatedAtField()
+}
+
+type stepDesiredWorkerLabelWithPrismaUpdatedAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaUpdatedAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaUpdatedAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaUpdatedAtSetParam) stepDesiredWorkerLabelModel() {}
+
+func (p stepDesiredWorkerLabelWithPrismaUpdatedAtSetParam) updatedAtField() {}
+
+type StepDesiredWorkerLabelWithPrismaUpdatedAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+	updatedAtField()
+}
+
+type stepDesiredWorkerLabelWithPrismaUpdatedAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaUpdatedAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaUpdatedAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaUpdatedAtEqualsParam) stepDesiredWorkerLabelModel() {}
+
+func (p stepDesiredWorkerLabelWithPrismaUpdatedAtEqualsParam) updatedAtField() {}
+
+func (stepDesiredWorkerLabelWithPrismaUpdatedAtSetParam) settable()  {}
+func (stepDesiredWorkerLabelWithPrismaUpdatedAtEqualsParam) equals() {}
+
+type stepDesiredWorkerLabelWithPrismaUpdatedAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaUpdatedAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaUpdatedAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaUpdatedAtEqualsUniqueParam) stepDesiredWorkerLabelModel() {}
+func (p stepDesiredWorkerLabelWithPrismaUpdatedAtEqualsUniqueParam) updatedAtField()              {}
+
+func (stepDesiredWorkerLabelWithPrismaUpdatedAtEqualsUniqueParam) unique() {}
+func (stepDesiredWorkerLabelWithPrismaUpdatedAtEqualsUniqueParam) equals() {}
+
+type StepDesiredWorkerLabelWithPrismaStepEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepDesiredWorkerLabelModel()
+	stepField()
+}
+
+type StepDesiredWorkerLabelWithPrismaStepSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+	stepField()
+}
+
+type stepDesiredWorkerLabelWithPrismaStepSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStepSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStepSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStepSetParam) stepDesiredWorkerLabelModel() {}
+
+func (p stepDesiredWorkerLabelWithPrismaStepSetParam) stepField() {}
+
+type StepDesiredWorkerLabelWithPrismaStepWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+	stepField()
+}
+
+type stepDesiredWorkerLabelWithPrismaStepEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStepEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStepEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStepEqualsParam) stepDesiredWorkerLabelModel() {}
+
+func (p stepDesiredWorkerLabelWithPrismaStepEqualsParam) stepField() {}
+
+func (stepDesiredWorkerLabelWithPrismaStepSetParam) settable()  {}
+func (stepDesiredWorkerLabelWithPrismaStepEqualsParam) equals() {}
+
+type stepDesiredWorkerLabelWithPrismaStepEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStepEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStepEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStepEqualsUniqueParam) stepDesiredWorkerLabelModel() {}
+func (p stepDesiredWorkerLabelWithPrismaStepEqualsUniqueParam) stepField()                   {}
+
+func (stepDesiredWorkerLabelWithPrismaStepEqualsUniqueParam) unique() {}
+func (stepDesiredWorkerLabelWithPrismaStepEqualsUniqueParam) equals() {}
+
+type StepDesiredWorkerLabelWithPrismaStepIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepDesiredWorkerLabelModel()
+	stepIDField()
+}
+
+type StepDesiredWorkerLabelWithPrismaStepIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+	stepIDField()
+}
+
+type stepDesiredWorkerLabelWithPrismaStepIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStepIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStepIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStepIDSetParam) stepDesiredWorkerLabelModel() {}
+
+func (p stepDesiredWorkerLabelWithPrismaStepIDSetParam) stepIDField() {}
+
+type StepDesiredWorkerLabelWithPrismaStepIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+	stepIDField()
+}
+
+type stepDesiredWorkerLabelWithPrismaStepIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStepIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStepIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStepIDEqualsParam) stepDesiredWorkerLabelModel() {}
+
+func (p stepDesiredWorkerLabelWithPrismaStepIDEqualsParam) stepIDField() {}
+
+func (stepDesiredWorkerLabelWithPrismaStepIDSetParam) settable()  {}
+func (stepDesiredWorkerLabelWithPrismaStepIDEqualsParam) equals() {}
+
+type stepDesiredWorkerLabelWithPrismaStepIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStepIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStepIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStepIDEqualsUniqueParam) stepDesiredWorkerLabelModel() {}
+func (p stepDesiredWorkerLabelWithPrismaStepIDEqualsUniqueParam) stepIDField()                 {}
+
+func (stepDesiredWorkerLabelWithPrismaStepIDEqualsUniqueParam) unique() {}
+func (stepDesiredWorkerLabelWithPrismaStepIDEqualsUniqueParam) equals() {}
+
+type StepDesiredWorkerLabelWithPrismaKeyEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepDesiredWorkerLabelModel()
+	keyField()
+}
+
+type StepDesiredWorkerLabelWithPrismaKeySetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+	keyField()
+}
+
+type stepDesiredWorkerLabelWithPrismaKeySetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaKeySetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaKeySetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaKeySetParam) stepDesiredWorkerLabelModel() {}
+
+func (p stepDesiredWorkerLabelWithPrismaKeySetParam) keyField() {}
+
+type StepDesiredWorkerLabelWithPrismaKeyWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+	keyField()
+}
+
+type stepDesiredWorkerLabelWithPrismaKeyEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaKeyEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaKeyEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaKeyEqualsParam) stepDesiredWorkerLabelModel() {}
+
+func (p stepDesiredWorkerLabelWithPrismaKeyEqualsParam) keyField() {}
+
+func (stepDesiredWorkerLabelWithPrismaKeySetParam) settable()  {}
+func (stepDesiredWorkerLabelWithPrismaKeyEqualsParam) equals() {}
+
+type stepDesiredWorkerLabelWithPrismaKeyEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaKeyEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaKeyEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaKeyEqualsUniqueParam) stepDesiredWorkerLabelModel() {}
+func (p stepDesiredWorkerLabelWithPrismaKeyEqualsUniqueParam) keyField()                    {}
+
+func (stepDesiredWorkerLabelWithPrismaKeyEqualsUniqueParam) unique() {}
+func (stepDesiredWorkerLabelWithPrismaKeyEqualsUniqueParam) equals() {}
+
+type StepDesiredWorkerLabelWithPrismaStrValueEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepDesiredWorkerLabelModel()
+	strValueField()
+}
+
+type StepDesiredWorkerLabelWithPrismaStrValueSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+	strValueField()
+}
+
+type stepDesiredWorkerLabelWithPrismaStrValueSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStrValueSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStrValueSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStrValueSetParam) stepDesiredWorkerLabelModel() {}
+
+func (p stepDesiredWorkerLabelWithPrismaStrValueSetParam) strValueField() {}
+
+type StepDesiredWorkerLabelWithPrismaStrValueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+	strValueField()
+}
+
+type stepDesiredWorkerLabelWithPrismaStrValueEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStrValueEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStrValueEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStrValueEqualsParam) stepDesiredWorkerLabelModel() {}
+
+func (p stepDesiredWorkerLabelWithPrismaStrValueEqualsParam) strValueField() {}
+
+func (stepDesiredWorkerLabelWithPrismaStrValueSetParam) settable()  {}
+func (stepDesiredWorkerLabelWithPrismaStrValueEqualsParam) equals() {}
+
+type stepDesiredWorkerLabelWithPrismaStrValueEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStrValueEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStrValueEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaStrValueEqualsUniqueParam) stepDesiredWorkerLabelModel() {}
+func (p stepDesiredWorkerLabelWithPrismaStrValueEqualsUniqueParam) strValueField()               {}
+
+func (stepDesiredWorkerLabelWithPrismaStrValueEqualsUniqueParam) unique() {}
+func (stepDesiredWorkerLabelWithPrismaStrValueEqualsUniqueParam) equals() {}
+
+type StepDesiredWorkerLabelWithPrismaIntValueEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepDesiredWorkerLabelModel()
+	intValueField()
+}
+
+type StepDesiredWorkerLabelWithPrismaIntValueSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+	intValueField()
+}
+
+type stepDesiredWorkerLabelWithPrismaIntValueSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaIntValueSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaIntValueSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaIntValueSetParam) stepDesiredWorkerLabelModel() {}
+
+func (p stepDesiredWorkerLabelWithPrismaIntValueSetParam) intValueField() {}
+
+type StepDesiredWorkerLabelWithPrismaIntValueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+	intValueField()
+}
+
+type stepDesiredWorkerLabelWithPrismaIntValueEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaIntValueEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaIntValueEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaIntValueEqualsParam) stepDesiredWorkerLabelModel() {}
+
+func (p stepDesiredWorkerLabelWithPrismaIntValueEqualsParam) intValueField() {}
+
+func (stepDesiredWorkerLabelWithPrismaIntValueSetParam) settable()  {}
+func (stepDesiredWorkerLabelWithPrismaIntValueEqualsParam) equals() {}
+
+type stepDesiredWorkerLabelWithPrismaIntValueEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaIntValueEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaIntValueEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaIntValueEqualsUniqueParam) stepDesiredWorkerLabelModel() {}
+func (p stepDesiredWorkerLabelWithPrismaIntValueEqualsUniqueParam) intValueField()               {}
+
+func (stepDesiredWorkerLabelWithPrismaIntValueEqualsUniqueParam) unique() {}
+func (stepDesiredWorkerLabelWithPrismaIntValueEqualsUniqueParam) equals() {}
+
+type StepDesiredWorkerLabelWithPrismaRequiredEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepDesiredWorkerLabelModel()
+	requiredField()
+}
+
+type StepDesiredWorkerLabelWithPrismaRequiredSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+	requiredField()
+}
+
+type stepDesiredWorkerLabelWithPrismaRequiredSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaRequiredSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaRequiredSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaRequiredSetParam) stepDesiredWorkerLabelModel() {}
+
+func (p stepDesiredWorkerLabelWithPrismaRequiredSetParam) requiredField() {}
+
+type StepDesiredWorkerLabelWithPrismaRequiredWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+	requiredField()
+}
+
+type stepDesiredWorkerLabelWithPrismaRequiredEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaRequiredEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaRequiredEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaRequiredEqualsParam) stepDesiredWorkerLabelModel() {}
+
+func (p stepDesiredWorkerLabelWithPrismaRequiredEqualsParam) requiredField() {}
+
+func (stepDesiredWorkerLabelWithPrismaRequiredSetParam) settable()  {}
+func (stepDesiredWorkerLabelWithPrismaRequiredEqualsParam) equals() {}
+
+type stepDesiredWorkerLabelWithPrismaRequiredEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaRequiredEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaRequiredEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaRequiredEqualsUniqueParam) stepDesiredWorkerLabelModel() {}
+func (p stepDesiredWorkerLabelWithPrismaRequiredEqualsUniqueParam) requiredField()               {}
+
+func (stepDesiredWorkerLabelWithPrismaRequiredEqualsUniqueParam) unique() {}
+func (stepDesiredWorkerLabelWithPrismaRequiredEqualsUniqueParam) equals() {}
+
+type StepDesiredWorkerLabelWithPrismaComparatorEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepDesiredWorkerLabelModel()
+	comparatorField()
+}
+
+type StepDesiredWorkerLabelWithPrismaComparatorSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+	comparatorField()
+}
+
+type stepDesiredWorkerLabelWithPrismaComparatorSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaComparatorSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaComparatorSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaComparatorSetParam) stepDesiredWorkerLabelModel() {}
+
+func (p stepDesiredWorkerLabelWithPrismaComparatorSetParam) comparatorField() {}
+
+type StepDesiredWorkerLabelWithPrismaComparatorWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+	comparatorField()
+}
+
+type stepDesiredWorkerLabelWithPrismaComparatorEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaComparatorEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaComparatorEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaComparatorEqualsParam) stepDesiredWorkerLabelModel() {}
+
+func (p stepDesiredWorkerLabelWithPrismaComparatorEqualsParam) comparatorField() {}
+
+func (stepDesiredWorkerLabelWithPrismaComparatorSetParam) settable()  {}
+func (stepDesiredWorkerLabelWithPrismaComparatorEqualsParam) equals() {}
+
+type stepDesiredWorkerLabelWithPrismaComparatorEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaComparatorEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaComparatorEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaComparatorEqualsUniqueParam) stepDesiredWorkerLabelModel() {}
+func (p stepDesiredWorkerLabelWithPrismaComparatorEqualsUniqueParam) comparatorField()             {}
+
+func (stepDesiredWorkerLabelWithPrismaComparatorEqualsUniqueParam) unique() {}
+func (stepDesiredWorkerLabelWithPrismaComparatorEqualsUniqueParam) equals() {}
+
+type StepDesiredWorkerLabelWithPrismaWeightEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepDesiredWorkerLabelModel()
+	weightField()
+}
+
+type StepDesiredWorkerLabelWithPrismaWeightSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+	weightField()
+}
+
+type stepDesiredWorkerLabelWithPrismaWeightSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaWeightSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaWeightSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaWeightSetParam) stepDesiredWorkerLabelModel() {}
+
+func (p stepDesiredWorkerLabelWithPrismaWeightSetParam) weightField() {}
+
+type StepDesiredWorkerLabelWithPrismaWeightWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepDesiredWorkerLabelModel()
+	weightField()
+}
+
+type stepDesiredWorkerLabelWithPrismaWeightEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaWeightEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaWeightEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaWeightEqualsParam) stepDesiredWorkerLabelModel() {}
+
+func (p stepDesiredWorkerLabelWithPrismaWeightEqualsParam) weightField() {}
+
+func (stepDesiredWorkerLabelWithPrismaWeightSetParam) settable()  {}
+func (stepDesiredWorkerLabelWithPrismaWeightEqualsParam) equals() {}
+
+type stepDesiredWorkerLabelWithPrismaWeightEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaWeightEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepDesiredWorkerLabelWithPrismaWeightEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelWithPrismaWeightEqualsUniqueParam) stepDesiredWorkerLabelModel() {}
+func (p stepDesiredWorkerLabelWithPrismaWeightEqualsUniqueParam) weightField()                 {}
+
+func (stepDesiredWorkerLabelWithPrismaWeightEqualsUniqueParam) unique() {}
+func (stepDesiredWorkerLabelWithPrismaWeightEqualsUniqueParam) equals() {}
+
 type stepActions struct {
 	// client holds the prisma client
 	client *PrismaClient
@@ -201871,6 +212413,84 @@ func (p stepWithPrismaRateLimitsEqualsUniqueParam) rateLimitsField() {}
 func (stepWithPrismaRateLimitsEqualsUniqueParam) unique() {}
 func (stepWithPrismaRateLimitsEqualsUniqueParam) equals() {}
 
+type StepWithPrismaWorkerLabelsEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepModel()
+	workerLabelsField()
+}
+
+type StepWithPrismaWorkerLabelsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepModel()
+	workerLabelsField()
+}
+
+type stepWithPrismaWorkerLabelsSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepWithPrismaWorkerLabelsSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepWithPrismaWorkerLabelsSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepWithPrismaWorkerLabelsSetParam) stepModel() {}
+
+func (p stepWithPrismaWorkerLabelsSetParam) workerLabelsField() {}
+
+type StepWithPrismaWorkerLabelsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepModel()
+	workerLabelsField()
+}
+
+type stepWithPrismaWorkerLabelsEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepWithPrismaWorkerLabelsEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepWithPrismaWorkerLabelsEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepWithPrismaWorkerLabelsEqualsParam) stepModel() {}
+
+func (p stepWithPrismaWorkerLabelsEqualsParam) workerLabelsField() {}
+
+func (stepWithPrismaWorkerLabelsSetParam) settable()  {}
+func (stepWithPrismaWorkerLabelsEqualsParam) equals() {}
+
+type stepWithPrismaWorkerLabelsEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepWithPrismaWorkerLabelsEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepWithPrismaWorkerLabelsEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepWithPrismaWorkerLabelsEqualsUniqueParam) stepModel()         {}
+func (p stepWithPrismaWorkerLabelsEqualsUniqueParam) workerLabelsField() {}
+
+func (stepWithPrismaWorkerLabelsEqualsUniqueParam) unique() {}
+func (stepWithPrismaWorkerLabelsEqualsUniqueParam) equals() {}
+
 type stepRateLimitActions struct {
 	// client holds the prisma client
 	client *PrismaClient
@@ -203395,6 +214015,811 @@ func (p rateLimitWithPrismaStepRunLimitsEqualsUniqueParam) stepRunLimitsField() 
 func (rateLimitWithPrismaStepRunLimitsEqualsUniqueParam) unique() {}
 func (rateLimitWithPrismaStepRunLimitsEqualsUniqueParam) equals() {}
 
+type workflowRunStickyStateActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var workflowRunStickyStateOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "createdAt"},
+	{Name: "updatedAt"},
+	{Name: "tenantId"},
+	{Name: "workflowRunId"},
+	{Name: "desiredWorkerId"},
+	{Name: "strategy"},
+}
+
+type WorkflowRunStickyStateRelationWith interface {
+	getQuery() builder.Query
+	with()
+	workflowRunStickyStateRelation()
+}
+
+type WorkflowRunStickyStateWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunStickyStateModel()
+}
+
+type workflowRunStickyStateDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateDefaultParam) workflowRunStickyStateModel() {}
+
+type WorkflowRunStickyStateOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunStickyStateModel()
+}
+
+type workflowRunStickyStateOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateOrderByParam) workflowRunStickyStateModel() {}
+
+type WorkflowRunStickyStateCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunStickyStateModel()
+	isCursor()
+}
+
+type workflowRunStickyStateCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateCursorParam) isCursor() {}
+
+func (p workflowRunStickyStateCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateCursorParam) workflowRunStickyStateModel() {}
+
+type WorkflowRunStickyStateParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	workflowRunStickyStateModel()
+}
+
+type workflowRunStickyStateParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateParamUnique) workflowRunStickyStateModel() {}
+
+func (workflowRunStickyStateParamUnique) unique() {}
+
+func (p workflowRunStickyStateParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type WorkflowRunStickyStateEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowRunStickyStateModel()
+}
+
+type workflowRunStickyStateEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateEqualsParam) workflowRunStickyStateModel() {}
+
+func (workflowRunStickyStateEqualsParam) equals() {}
+
+func (p workflowRunStickyStateEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type WorkflowRunStickyStateEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	workflowRunStickyStateModel()
+}
+
+type workflowRunStickyStateEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateEqualsUniqueParam) workflowRunStickyStateModel() {}
+
+func (workflowRunStickyStateEqualsUniqueParam) unique() {}
+func (workflowRunStickyStateEqualsUniqueParam) equals() {}
+
+func (p workflowRunStickyStateEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type WorkflowRunStickyStateSetParam interface {
+	field() builder.Field
+	settable()
+	workflowRunStickyStateModel()
+}
+
+type workflowRunStickyStateSetParam struct {
+	data builder.Field
+}
+
+func (workflowRunStickyStateSetParam) settable() {}
+
+func (p workflowRunStickyStateSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateSetParam) workflowRunStickyStateModel() {}
+
+type WorkflowRunStickyStateWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowRunStickyStateModel()
+	idField()
+}
+
+type WorkflowRunStickyStateWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunStickyStateModel()
+	idField()
+}
+
+type workflowRunStickyStateWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaIDSetParam) workflowRunStickyStateModel() {}
+
+func (p workflowRunStickyStateWithPrismaIDSetParam) idField() {}
+
+type WorkflowRunStickyStateWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunStickyStateModel()
+	idField()
+}
+
+type workflowRunStickyStateWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaIDEqualsParam) workflowRunStickyStateModel() {}
+
+func (p workflowRunStickyStateWithPrismaIDEqualsParam) idField() {}
+
+func (workflowRunStickyStateWithPrismaIDSetParam) settable()  {}
+func (workflowRunStickyStateWithPrismaIDEqualsParam) equals() {}
+
+type workflowRunStickyStateWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaIDEqualsUniqueParam) workflowRunStickyStateModel() {}
+func (p workflowRunStickyStateWithPrismaIDEqualsUniqueParam) idField()                     {}
+
+func (workflowRunStickyStateWithPrismaIDEqualsUniqueParam) unique() {}
+func (workflowRunStickyStateWithPrismaIDEqualsUniqueParam) equals() {}
+
+type WorkflowRunStickyStateWithPrismaCreatedAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowRunStickyStateModel()
+	createdAtField()
+}
+
+type WorkflowRunStickyStateWithPrismaCreatedAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunStickyStateModel()
+	createdAtField()
+}
+
+type workflowRunStickyStateWithPrismaCreatedAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaCreatedAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaCreatedAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaCreatedAtSetParam) workflowRunStickyStateModel() {}
+
+func (p workflowRunStickyStateWithPrismaCreatedAtSetParam) createdAtField() {}
+
+type WorkflowRunStickyStateWithPrismaCreatedAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunStickyStateModel()
+	createdAtField()
+}
+
+type workflowRunStickyStateWithPrismaCreatedAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaCreatedAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaCreatedAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaCreatedAtEqualsParam) workflowRunStickyStateModel() {}
+
+func (p workflowRunStickyStateWithPrismaCreatedAtEqualsParam) createdAtField() {}
+
+func (workflowRunStickyStateWithPrismaCreatedAtSetParam) settable()  {}
+func (workflowRunStickyStateWithPrismaCreatedAtEqualsParam) equals() {}
+
+type workflowRunStickyStateWithPrismaCreatedAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaCreatedAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaCreatedAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaCreatedAtEqualsUniqueParam) workflowRunStickyStateModel() {}
+func (p workflowRunStickyStateWithPrismaCreatedAtEqualsUniqueParam) createdAtField()              {}
+
+func (workflowRunStickyStateWithPrismaCreatedAtEqualsUniqueParam) unique() {}
+func (workflowRunStickyStateWithPrismaCreatedAtEqualsUniqueParam) equals() {}
+
+type WorkflowRunStickyStateWithPrismaUpdatedAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowRunStickyStateModel()
+	updatedAtField()
+}
+
+type WorkflowRunStickyStateWithPrismaUpdatedAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunStickyStateModel()
+	updatedAtField()
+}
+
+type workflowRunStickyStateWithPrismaUpdatedAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaUpdatedAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaUpdatedAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaUpdatedAtSetParam) workflowRunStickyStateModel() {}
+
+func (p workflowRunStickyStateWithPrismaUpdatedAtSetParam) updatedAtField() {}
+
+type WorkflowRunStickyStateWithPrismaUpdatedAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunStickyStateModel()
+	updatedAtField()
+}
+
+type workflowRunStickyStateWithPrismaUpdatedAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaUpdatedAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaUpdatedAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaUpdatedAtEqualsParam) workflowRunStickyStateModel() {}
+
+func (p workflowRunStickyStateWithPrismaUpdatedAtEqualsParam) updatedAtField() {}
+
+func (workflowRunStickyStateWithPrismaUpdatedAtSetParam) settable()  {}
+func (workflowRunStickyStateWithPrismaUpdatedAtEqualsParam) equals() {}
+
+type workflowRunStickyStateWithPrismaUpdatedAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaUpdatedAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaUpdatedAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaUpdatedAtEqualsUniqueParam) workflowRunStickyStateModel() {}
+func (p workflowRunStickyStateWithPrismaUpdatedAtEqualsUniqueParam) updatedAtField()              {}
+
+func (workflowRunStickyStateWithPrismaUpdatedAtEqualsUniqueParam) unique() {}
+func (workflowRunStickyStateWithPrismaUpdatedAtEqualsUniqueParam) equals() {}
+
+type WorkflowRunStickyStateWithPrismaTenantIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowRunStickyStateModel()
+	tenantIDField()
+}
+
+type WorkflowRunStickyStateWithPrismaTenantIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunStickyStateModel()
+	tenantIDField()
+}
+
+type workflowRunStickyStateWithPrismaTenantIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaTenantIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaTenantIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaTenantIDSetParam) workflowRunStickyStateModel() {}
+
+func (p workflowRunStickyStateWithPrismaTenantIDSetParam) tenantIDField() {}
+
+type WorkflowRunStickyStateWithPrismaTenantIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunStickyStateModel()
+	tenantIDField()
+}
+
+type workflowRunStickyStateWithPrismaTenantIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaTenantIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaTenantIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaTenantIDEqualsParam) workflowRunStickyStateModel() {}
+
+func (p workflowRunStickyStateWithPrismaTenantIDEqualsParam) tenantIDField() {}
+
+func (workflowRunStickyStateWithPrismaTenantIDSetParam) settable()  {}
+func (workflowRunStickyStateWithPrismaTenantIDEqualsParam) equals() {}
+
+type workflowRunStickyStateWithPrismaTenantIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaTenantIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaTenantIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaTenantIDEqualsUniqueParam) workflowRunStickyStateModel() {}
+func (p workflowRunStickyStateWithPrismaTenantIDEqualsUniqueParam) tenantIDField()               {}
+
+func (workflowRunStickyStateWithPrismaTenantIDEqualsUniqueParam) unique() {}
+func (workflowRunStickyStateWithPrismaTenantIDEqualsUniqueParam) equals() {}
+
+type WorkflowRunStickyStateWithPrismaWorkflowRunEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowRunStickyStateModel()
+	workflowRunField()
+}
+
+type WorkflowRunStickyStateWithPrismaWorkflowRunSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunStickyStateModel()
+	workflowRunField()
+}
+
+type workflowRunStickyStateWithPrismaWorkflowRunSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaWorkflowRunSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaWorkflowRunSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaWorkflowRunSetParam) workflowRunStickyStateModel() {}
+
+func (p workflowRunStickyStateWithPrismaWorkflowRunSetParam) workflowRunField() {}
+
+type WorkflowRunStickyStateWithPrismaWorkflowRunWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunStickyStateModel()
+	workflowRunField()
+}
+
+type workflowRunStickyStateWithPrismaWorkflowRunEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaWorkflowRunEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaWorkflowRunEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaWorkflowRunEqualsParam) workflowRunStickyStateModel() {}
+
+func (p workflowRunStickyStateWithPrismaWorkflowRunEqualsParam) workflowRunField() {}
+
+func (workflowRunStickyStateWithPrismaWorkflowRunSetParam) settable()  {}
+func (workflowRunStickyStateWithPrismaWorkflowRunEqualsParam) equals() {}
+
+type workflowRunStickyStateWithPrismaWorkflowRunEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaWorkflowRunEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaWorkflowRunEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaWorkflowRunEqualsUniqueParam) workflowRunStickyStateModel() {}
+func (p workflowRunStickyStateWithPrismaWorkflowRunEqualsUniqueParam) workflowRunField()            {}
+
+func (workflowRunStickyStateWithPrismaWorkflowRunEqualsUniqueParam) unique() {}
+func (workflowRunStickyStateWithPrismaWorkflowRunEqualsUniqueParam) equals() {}
+
+type WorkflowRunStickyStateWithPrismaWorkflowRunIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowRunStickyStateModel()
+	workflowRunIDField()
+}
+
+type WorkflowRunStickyStateWithPrismaWorkflowRunIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunStickyStateModel()
+	workflowRunIDField()
+}
+
+type workflowRunStickyStateWithPrismaWorkflowRunIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaWorkflowRunIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaWorkflowRunIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaWorkflowRunIDSetParam) workflowRunStickyStateModel() {}
+
+func (p workflowRunStickyStateWithPrismaWorkflowRunIDSetParam) workflowRunIDField() {}
+
+type WorkflowRunStickyStateWithPrismaWorkflowRunIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunStickyStateModel()
+	workflowRunIDField()
+}
+
+type workflowRunStickyStateWithPrismaWorkflowRunIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaWorkflowRunIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaWorkflowRunIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaWorkflowRunIDEqualsParam) workflowRunStickyStateModel() {}
+
+func (p workflowRunStickyStateWithPrismaWorkflowRunIDEqualsParam) workflowRunIDField() {}
+
+func (workflowRunStickyStateWithPrismaWorkflowRunIDSetParam) settable()  {}
+func (workflowRunStickyStateWithPrismaWorkflowRunIDEqualsParam) equals() {}
+
+type workflowRunStickyStateWithPrismaWorkflowRunIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaWorkflowRunIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaWorkflowRunIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaWorkflowRunIDEqualsUniqueParam) workflowRunStickyStateModel() {
+}
+func (p workflowRunStickyStateWithPrismaWorkflowRunIDEqualsUniqueParam) workflowRunIDField() {}
+
+func (workflowRunStickyStateWithPrismaWorkflowRunIDEqualsUniqueParam) unique() {}
+func (workflowRunStickyStateWithPrismaWorkflowRunIDEqualsUniqueParam) equals() {}
+
+type WorkflowRunStickyStateWithPrismaDesiredWorkerIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowRunStickyStateModel()
+	desiredWorkerIDField()
+}
+
+type WorkflowRunStickyStateWithPrismaDesiredWorkerIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunStickyStateModel()
+	desiredWorkerIDField()
+}
+
+type workflowRunStickyStateWithPrismaDesiredWorkerIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaDesiredWorkerIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaDesiredWorkerIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaDesiredWorkerIDSetParam) workflowRunStickyStateModel() {}
+
+func (p workflowRunStickyStateWithPrismaDesiredWorkerIDSetParam) desiredWorkerIDField() {}
+
+type WorkflowRunStickyStateWithPrismaDesiredWorkerIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunStickyStateModel()
+	desiredWorkerIDField()
+}
+
+type workflowRunStickyStateWithPrismaDesiredWorkerIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaDesiredWorkerIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaDesiredWorkerIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaDesiredWorkerIDEqualsParam) workflowRunStickyStateModel() {}
+
+func (p workflowRunStickyStateWithPrismaDesiredWorkerIDEqualsParam) desiredWorkerIDField() {}
+
+func (workflowRunStickyStateWithPrismaDesiredWorkerIDSetParam) settable()  {}
+func (workflowRunStickyStateWithPrismaDesiredWorkerIDEqualsParam) equals() {}
+
+type workflowRunStickyStateWithPrismaDesiredWorkerIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaDesiredWorkerIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaDesiredWorkerIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaDesiredWorkerIDEqualsUniqueParam) workflowRunStickyStateModel() {
+}
+func (p workflowRunStickyStateWithPrismaDesiredWorkerIDEqualsUniqueParam) desiredWorkerIDField() {}
+
+func (workflowRunStickyStateWithPrismaDesiredWorkerIDEqualsUniqueParam) unique() {}
+func (workflowRunStickyStateWithPrismaDesiredWorkerIDEqualsUniqueParam) equals() {}
+
+type WorkflowRunStickyStateWithPrismaStrategyEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowRunStickyStateModel()
+	strategyField()
+}
+
+type WorkflowRunStickyStateWithPrismaStrategySetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunStickyStateModel()
+	strategyField()
+}
+
+type workflowRunStickyStateWithPrismaStrategySetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaStrategySetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaStrategySetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaStrategySetParam) workflowRunStickyStateModel() {}
+
+func (p workflowRunStickyStateWithPrismaStrategySetParam) strategyField() {}
+
+type WorkflowRunStickyStateWithPrismaStrategyWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunStickyStateModel()
+	strategyField()
+}
+
+type workflowRunStickyStateWithPrismaStrategyEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaStrategyEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaStrategyEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaStrategyEqualsParam) workflowRunStickyStateModel() {}
+
+func (p workflowRunStickyStateWithPrismaStrategyEqualsParam) strategyField() {}
+
+func (workflowRunStickyStateWithPrismaStrategySetParam) settable()  {}
+func (workflowRunStickyStateWithPrismaStrategyEqualsParam) equals() {}
+
+type workflowRunStickyStateWithPrismaStrategyEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunStickyStateWithPrismaStrategyEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunStickyStateWithPrismaStrategyEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateWithPrismaStrategyEqualsUniqueParam) workflowRunStickyStateModel() {}
+func (p workflowRunStickyStateWithPrismaStrategyEqualsUniqueParam) strategyField()               {}
+
+func (workflowRunStickyStateWithPrismaStrategyEqualsUniqueParam) unique() {}
+func (workflowRunStickyStateWithPrismaStrategyEqualsUniqueParam) equals() {}
+
 type workflowRunActions struct {
 	// client holds the prisma client
 	client *PrismaClient
@@ -204676,6 +216101,84 @@ func (p workflowRunWithPrismaTriggeredByEqualsUniqueParam) triggeredByField() {}
 
 func (workflowRunWithPrismaTriggeredByEqualsUniqueParam) unique() {}
 func (workflowRunWithPrismaTriggeredByEqualsUniqueParam) equals() {}
+
+type WorkflowRunWithPrismaStickyEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowRunModel()
+	stickyField()
+}
+
+type WorkflowRunWithPrismaStickySetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunModel()
+	stickyField()
+}
+
+type workflowRunWithPrismaStickySetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunWithPrismaStickySetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunWithPrismaStickySetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunWithPrismaStickySetParam) workflowRunModel() {}
+
+func (p workflowRunWithPrismaStickySetParam) stickyField() {}
+
+type WorkflowRunWithPrismaStickyWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunModel()
+	stickyField()
+}
+
+type workflowRunWithPrismaStickyEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunWithPrismaStickyEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunWithPrismaStickyEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunWithPrismaStickyEqualsParam) workflowRunModel() {}
+
+func (p workflowRunWithPrismaStickyEqualsParam) stickyField() {}
+
+func (workflowRunWithPrismaStickySetParam) settable()  {}
+func (workflowRunWithPrismaStickyEqualsParam) equals() {}
+
+type workflowRunWithPrismaStickyEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunWithPrismaStickyEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunWithPrismaStickyEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunWithPrismaStickyEqualsUniqueParam) workflowRunModel() {}
+func (p workflowRunWithPrismaStickyEqualsUniqueParam) stickyField()      {}
+
+func (workflowRunWithPrismaStickyEqualsUniqueParam) unique() {}
+func (workflowRunWithPrismaStickyEqualsUniqueParam) equals() {}
 
 type WorkflowRunWithPrismaErrorEqualsSetParam interface {
 	field() builder.Field
@@ -219525,6 +231028,809 @@ func (p tickerWithPrismaTenantAlertsEqualsUniqueParam) tenantAlertsField() {}
 func (tickerWithPrismaTenantAlertsEqualsUniqueParam) unique() {}
 func (tickerWithPrismaTenantAlertsEqualsUniqueParam) equals() {}
 
+type workerLabelActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var workerLabelOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "createdAt"},
+	{Name: "updatedAt"},
+	{Name: "workerId"},
+	{Name: "key"},
+	{Name: "strValue"},
+	{Name: "intValue"},
+}
+
+type WorkerLabelRelationWith interface {
+	getQuery() builder.Query
+	with()
+	workerLabelRelation()
+}
+
+type WorkerLabelWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerLabelModel()
+}
+
+type workerLabelDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelDefaultParam) workerLabelModel() {}
+
+type WorkerLabelOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerLabelModel()
+}
+
+type workerLabelOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelOrderByParam) workerLabelModel() {}
+
+type WorkerLabelCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerLabelModel()
+	isCursor()
+}
+
+type workerLabelCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelCursorParam) isCursor() {}
+
+func (p workerLabelCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelCursorParam) workerLabelModel() {}
+
+type WorkerLabelParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	workerLabelModel()
+}
+
+type workerLabelParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelParamUnique) workerLabelModel() {}
+
+func (workerLabelParamUnique) unique() {}
+
+func (p workerLabelParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type WorkerLabelEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerLabelModel()
+}
+
+type workerLabelEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelEqualsParam) workerLabelModel() {}
+
+func (workerLabelEqualsParam) equals() {}
+
+func (p workerLabelEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type WorkerLabelEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	workerLabelModel()
+}
+
+type workerLabelEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelEqualsUniqueParam) workerLabelModel() {}
+
+func (workerLabelEqualsUniqueParam) unique() {}
+func (workerLabelEqualsUniqueParam) equals() {}
+
+func (p workerLabelEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type WorkerLabelSetParam interface {
+	field() builder.Field
+	settable()
+	workerLabelModel()
+}
+
+type workerLabelSetParam struct {
+	data builder.Field
+}
+
+func (workerLabelSetParam) settable() {}
+
+func (p workerLabelSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelSetParam) workerLabelModel() {}
+
+type WorkerLabelWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerLabelModel()
+	idField()
+}
+
+type WorkerLabelWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerLabelModel()
+	idField()
+}
+
+type workerLabelWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaIDSetParam) workerLabelModel() {}
+
+func (p workerLabelWithPrismaIDSetParam) idField() {}
+
+type WorkerLabelWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerLabelModel()
+	idField()
+}
+
+type workerLabelWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaIDEqualsParam) workerLabelModel() {}
+
+func (p workerLabelWithPrismaIDEqualsParam) idField() {}
+
+func (workerLabelWithPrismaIDSetParam) settable()  {}
+func (workerLabelWithPrismaIDEqualsParam) equals() {}
+
+type workerLabelWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaIDEqualsUniqueParam) workerLabelModel() {}
+func (p workerLabelWithPrismaIDEqualsUniqueParam) idField()          {}
+
+func (workerLabelWithPrismaIDEqualsUniqueParam) unique() {}
+func (workerLabelWithPrismaIDEqualsUniqueParam) equals() {}
+
+type WorkerLabelWithPrismaCreatedAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerLabelModel()
+	createdAtField()
+}
+
+type WorkerLabelWithPrismaCreatedAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerLabelModel()
+	createdAtField()
+}
+
+type workerLabelWithPrismaCreatedAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaCreatedAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaCreatedAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaCreatedAtSetParam) workerLabelModel() {}
+
+func (p workerLabelWithPrismaCreatedAtSetParam) createdAtField() {}
+
+type WorkerLabelWithPrismaCreatedAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerLabelModel()
+	createdAtField()
+}
+
+type workerLabelWithPrismaCreatedAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaCreatedAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaCreatedAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaCreatedAtEqualsParam) workerLabelModel() {}
+
+func (p workerLabelWithPrismaCreatedAtEqualsParam) createdAtField() {}
+
+func (workerLabelWithPrismaCreatedAtSetParam) settable()  {}
+func (workerLabelWithPrismaCreatedAtEqualsParam) equals() {}
+
+type workerLabelWithPrismaCreatedAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaCreatedAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaCreatedAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaCreatedAtEqualsUniqueParam) workerLabelModel() {}
+func (p workerLabelWithPrismaCreatedAtEqualsUniqueParam) createdAtField()   {}
+
+func (workerLabelWithPrismaCreatedAtEqualsUniqueParam) unique() {}
+func (workerLabelWithPrismaCreatedAtEqualsUniqueParam) equals() {}
+
+type WorkerLabelWithPrismaUpdatedAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerLabelModel()
+	updatedAtField()
+}
+
+type WorkerLabelWithPrismaUpdatedAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerLabelModel()
+	updatedAtField()
+}
+
+type workerLabelWithPrismaUpdatedAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaUpdatedAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaUpdatedAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaUpdatedAtSetParam) workerLabelModel() {}
+
+func (p workerLabelWithPrismaUpdatedAtSetParam) updatedAtField() {}
+
+type WorkerLabelWithPrismaUpdatedAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerLabelModel()
+	updatedAtField()
+}
+
+type workerLabelWithPrismaUpdatedAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaUpdatedAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaUpdatedAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaUpdatedAtEqualsParam) workerLabelModel() {}
+
+func (p workerLabelWithPrismaUpdatedAtEqualsParam) updatedAtField() {}
+
+func (workerLabelWithPrismaUpdatedAtSetParam) settable()  {}
+func (workerLabelWithPrismaUpdatedAtEqualsParam) equals() {}
+
+type workerLabelWithPrismaUpdatedAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaUpdatedAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaUpdatedAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaUpdatedAtEqualsUniqueParam) workerLabelModel() {}
+func (p workerLabelWithPrismaUpdatedAtEqualsUniqueParam) updatedAtField()   {}
+
+func (workerLabelWithPrismaUpdatedAtEqualsUniqueParam) unique() {}
+func (workerLabelWithPrismaUpdatedAtEqualsUniqueParam) equals() {}
+
+type WorkerLabelWithPrismaWorkerEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerLabelModel()
+	workerField()
+}
+
+type WorkerLabelWithPrismaWorkerSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerLabelModel()
+	workerField()
+}
+
+type workerLabelWithPrismaWorkerSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaWorkerSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaWorkerSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaWorkerSetParam) workerLabelModel() {}
+
+func (p workerLabelWithPrismaWorkerSetParam) workerField() {}
+
+type WorkerLabelWithPrismaWorkerWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerLabelModel()
+	workerField()
+}
+
+type workerLabelWithPrismaWorkerEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaWorkerEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaWorkerEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaWorkerEqualsParam) workerLabelModel() {}
+
+func (p workerLabelWithPrismaWorkerEqualsParam) workerField() {}
+
+func (workerLabelWithPrismaWorkerSetParam) settable()  {}
+func (workerLabelWithPrismaWorkerEqualsParam) equals() {}
+
+type workerLabelWithPrismaWorkerEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaWorkerEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaWorkerEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaWorkerEqualsUniqueParam) workerLabelModel() {}
+func (p workerLabelWithPrismaWorkerEqualsUniqueParam) workerField()      {}
+
+func (workerLabelWithPrismaWorkerEqualsUniqueParam) unique() {}
+func (workerLabelWithPrismaWorkerEqualsUniqueParam) equals() {}
+
+type WorkerLabelWithPrismaWorkerIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerLabelModel()
+	workerIDField()
+}
+
+type WorkerLabelWithPrismaWorkerIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerLabelModel()
+	workerIDField()
+}
+
+type workerLabelWithPrismaWorkerIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaWorkerIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaWorkerIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaWorkerIDSetParam) workerLabelModel() {}
+
+func (p workerLabelWithPrismaWorkerIDSetParam) workerIDField() {}
+
+type WorkerLabelWithPrismaWorkerIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerLabelModel()
+	workerIDField()
+}
+
+type workerLabelWithPrismaWorkerIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaWorkerIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaWorkerIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaWorkerIDEqualsParam) workerLabelModel() {}
+
+func (p workerLabelWithPrismaWorkerIDEqualsParam) workerIDField() {}
+
+func (workerLabelWithPrismaWorkerIDSetParam) settable()  {}
+func (workerLabelWithPrismaWorkerIDEqualsParam) equals() {}
+
+type workerLabelWithPrismaWorkerIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaWorkerIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaWorkerIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaWorkerIDEqualsUniqueParam) workerLabelModel() {}
+func (p workerLabelWithPrismaWorkerIDEqualsUniqueParam) workerIDField()    {}
+
+func (workerLabelWithPrismaWorkerIDEqualsUniqueParam) unique() {}
+func (workerLabelWithPrismaWorkerIDEqualsUniqueParam) equals() {}
+
+type WorkerLabelWithPrismaKeyEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerLabelModel()
+	keyField()
+}
+
+type WorkerLabelWithPrismaKeySetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerLabelModel()
+	keyField()
+}
+
+type workerLabelWithPrismaKeySetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaKeySetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaKeySetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaKeySetParam) workerLabelModel() {}
+
+func (p workerLabelWithPrismaKeySetParam) keyField() {}
+
+type WorkerLabelWithPrismaKeyWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerLabelModel()
+	keyField()
+}
+
+type workerLabelWithPrismaKeyEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaKeyEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaKeyEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaKeyEqualsParam) workerLabelModel() {}
+
+func (p workerLabelWithPrismaKeyEqualsParam) keyField() {}
+
+func (workerLabelWithPrismaKeySetParam) settable()  {}
+func (workerLabelWithPrismaKeyEqualsParam) equals() {}
+
+type workerLabelWithPrismaKeyEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaKeyEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaKeyEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaKeyEqualsUniqueParam) workerLabelModel() {}
+func (p workerLabelWithPrismaKeyEqualsUniqueParam) keyField()         {}
+
+func (workerLabelWithPrismaKeyEqualsUniqueParam) unique() {}
+func (workerLabelWithPrismaKeyEqualsUniqueParam) equals() {}
+
+type WorkerLabelWithPrismaStrValueEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerLabelModel()
+	strValueField()
+}
+
+type WorkerLabelWithPrismaStrValueSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerLabelModel()
+	strValueField()
+}
+
+type workerLabelWithPrismaStrValueSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaStrValueSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaStrValueSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaStrValueSetParam) workerLabelModel() {}
+
+func (p workerLabelWithPrismaStrValueSetParam) strValueField() {}
+
+type WorkerLabelWithPrismaStrValueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerLabelModel()
+	strValueField()
+}
+
+type workerLabelWithPrismaStrValueEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaStrValueEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaStrValueEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaStrValueEqualsParam) workerLabelModel() {}
+
+func (p workerLabelWithPrismaStrValueEqualsParam) strValueField() {}
+
+func (workerLabelWithPrismaStrValueSetParam) settable()  {}
+func (workerLabelWithPrismaStrValueEqualsParam) equals() {}
+
+type workerLabelWithPrismaStrValueEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaStrValueEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaStrValueEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaStrValueEqualsUniqueParam) workerLabelModel() {}
+func (p workerLabelWithPrismaStrValueEqualsUniqueParam) strValueField()    {}
+
+func (workerLabelWithPrismaStrValueEqualsUniqueParam) unique() {}
+func (workerLabelWithPrismaStrValueEqualsUniqueParam) equals() {}
+
+type WorkerLabelWithPrismaIntValueEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerLabelModel()
+	intValueField()
+}
+
+type WorkerLabelWithPrismaIntValueSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerLabelModel()
+	intValueField()
+}
+
+type workerLabelWithPrismaIntValueSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaIntValueSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaIntValueSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaIntValueSetParam) workerLabelModel() {}
+
+func (p workerLabelWithPrismaIntValueSetParam) intValueField() {}
+
+type WorkerLabelWithPrismaIntValueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerLabelModel()
+	intValueField()
+}
+
+type workerLabelWithPrismaIntValueEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaIntValueEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaIntValueEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaIntValueEqualsParam) workerLabelModel() {}
+
+func (p workerLabelWithPrismaIntValueEqualsParam) intValueField() {}
+
+func (workerLabelWithPrismaIntValueSetParam) settable()  {}
+func (workerLabelWithPrismaIntValueEqualsParam) equals() {}
+
+type workerLabelWithPrismaIntValueEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerLabelWithPrismaIntValueEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerLabelWithPrismaIntValueEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelWithPrismaIntValueEqualsUniqueParam) workerLabelModel() {}
+func (p workerLabelWithPrismaIntValueEqualsUniqueParam) intValueField()    {}
+
+func (workerLabelWithPrismaIntValueEqualsUniqueParam) unique() {}
+func (workerLabelWithPrismaIntValueEqualsUniqueParam) equals() {}
+
 type workerActions struct {
 	// client holds the prisma client
 	client *PrismaClient
@@ -220020,6 +232326,84 @@ func (p workerWithPrismaDeletedAtEqualsUniqueParam) deletedAtField() {}
 
 func (workerWithPrismaDeletedAtEqualsUniqueParam) unique() {}
 func (workerWithPrismaDeletedAtEqualsUniqueParam) equals() {}
+
+type WorkerWithPrismaLabelsEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerModel()
+	labelsField()
+}
+
+type WorkerWithPrismaLabelsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerModel()
+	labelsField()
+}
+
+type workerWithPrismaLabelsSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaLabelsSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaLabelsSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaLabelsSetParam) workerModel() {}
+
+func (p workerWithPrismaLabelsSetParam) labelsField() {}
+
+type WorkerWithPrismaLabelsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerModel()
+	labelsField()
+}
+
+type workerWithPrismaLabelsEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaLabelsEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaLabelsEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaLabelsEqualsParam) workerModel() {}
+
+func (p workerWithPrismaLabelsEqualsParam) labelsField() {}
+
+func (workerWithPrismaLabelsSetParam) settable()  {}
+func (workerWithPrismaLabelsEqualsParam) equals() {}
+
+type workerWithPrismaLabelsEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaLabelsEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaLabelsEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaLabelsEqualsUniqueParam) workerModel() {}
+func (p workerWithPrismaLabelsEqualsUniqueParam) labelsField() {}
+
+func (workerWithPrismaLabelsEqualsUniqueParam) unique() {}
+func (workerWithPrismaLabelsEqualsUniqueParam) equals() {}
 
 type WorkerWithPrismaTenantEqualsSetParam interface {
 	field() builder.Field
@@ -230100,6 +242484,82 @@ func (r actionCreateOne) Tx() ActionUniqueTxResult {
 	return v
 }
 
+// Creates a single stepDesiredWorkerLabel.
+func (r stepDesiredWorkerLabelActions) CreateOne(
+	_step StepDesiredWorkerLabelWithPrismaStepSetParam,
+	_key StepDesiredWorkerLabelWithPrismaKeySetParam,
+	_required StepDesiredWorkerLabelWithPrismaRequiredSetParam,
+	_comparator StepDesiredWorkerLabelWithPrismaComparatorSetParam,
+	_weight StepDesiredWorkerLabelWithPrismaWeightSetParam,
+
+	optional ...StepDesiredWorkerLabelSetParam,
+) stepDesiredWorkerLabelCreateOne {
+	var v stepDesiredWorkerLabelCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "StepDesiredWorkerLabel"
+	v.query.Outputs = stepDesiredWorkerLabelOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _step.field())
+	fields = append(fields, _key.field())
+	fields = append(fields, _required.field())
+	fields = append(fields, _comparator.field())
+	fields = append(fields, _weight.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r stepDesiredWorkerLabelCreateOne) With(params ...StepDesiredWorkerLabelRelationWith) stepDesiredWorkerLabelCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type stepDesiredWorkerLabelCreateOne struct {
+	query builder.Query
+}
+
+func (p stepDesiredWorkerLabelCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p stepDesiredWorkerLabelCreateOne) stepDesiredWorkerLabelModel() {}
+
+func (r stepDesiredWorkerLabelCreateOne) Exec(ctx context.Context) (*StepDesiredWorkerLabelModel, error) {
+	var v StepDesiredWorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepDesiredWorkerLabelCreateOne) Tx() StepDesiredWorkerLabelUniqueTxResult {
+	v := newStepDesiredWorkerLabelUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 // Creates a single step.
 func (r stepActions) CreateOne(
 	_tenant StepWithPrismaTenantSetParam,
@@ -230317,6 +242777,78 @@ func (r rateLimitCreateOne) Exec(ctx context.Context) (*RateLimitModel, error) {
 
 func (r rateLimitCreateOne) Tx() RateLimitUniqueTxResult {
 	v := newRateLimitUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+// Creates a single workflowRunStickyState.
+func (r workflowRunStickyStateActions) CreateOne(
+	_tenantID WorkflowRunStickyStateWithPrismaTenantIDSetParam,
+	_workflowRun WorkflowRunStickyStateWithPrismaWorkflowRunSetParam,
+	_strategy WorkflowRunStickyStateWithPrismaStrategySetParam,
+
+	optional ...WorkflowRunStickyStateSetParam,
+) workflowRunStickyStateCreateOne {
+	var v workflowRunStickyStateCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "WorkflowRunStickyState"
+	v.query.Outputs = workflowRunStickyStateOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _tenantID.field())
+	fields = append(fields, _workflowRun.field())
+	fields = append(fields, _strategy.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r workflowRunStickyStateCreateOne) With(params ...WorkflowRunStickyStateRelationWith) workflowRunStickyStateCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type workflowRunStickyStateCreateOne struct {
+	query builder.Query
+}
+
+func (p workflowRunStickyStateCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunStickyStateCreateOne) workflowRunStickyStateModel() {}
+
+func (r workflowRunStickyStateCreateOne) Exec(ctx context.Context) (*WorkflowRunStickyStateModel, error) {
+	var v WorkflowRunStickyStateModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunStickyStateCreateOne) Tx() WorkflowRunStickyStateUniqueTxResult {
+	v := newWorkflowRunStickyStateUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -231015,6 +243547,76 @@ func (r tickerCreateOne) Exec(ctx context.Context) (*TickerModel, error) {
 
 func (r tickerCreateOne) Tx() TickerUniqueTxResult {
 	v := newTickerUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+// Creates a single workerLabel.
+func (r workerLabelActions) CreateOne(
+	_worker WorkerLabelWithPrismaWorkerSetParam,
+	_key WorkerLabelWithPrismaKeySetParam,
+
+	optional ...WorkerLabelSetParam,
+) workerLabelCreateOne {
+	var v workerLabelCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "WorkerLabel"
+	v.query.Outputs = workerLabelOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _worker.field())
+	fields = append(fields, _key.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r workerLabelCreateOne) With(params ...WorkerLabelRelationWith) workerLabelCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type workerLabelCreateOne struct {
+	query builder.Query
+}
+
+func (p workerLabelCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p workerLabelCreateOne) workerLabelModel() {}
+
+func (r workerLabelCreateOne) Exec(ctx context.Context) (*WorkerLabelModel, error) {
+	var v WorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerLabelCreateOne) Tx() WorkerLabelUniqueTxResult {
+	v := newWorkerLabelUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -302993,6 +315595,1210 @@ func (r actionDeleteMany) Tx() ActionManyTxResult {
 	return v
 }
 
+type stepDesiredWorkerLabelToStepFindUnique struct {
+	query builder.Query
+}
+
+func (r stepDesiredWorkerLabelToStepFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r stepDesiredWorkerLabelToStepFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepDesiredWorkerLabelToStepFindUnique) with()                           {}
+func (r stepDesiredWorkerLabelToStepFindUnique) stepDesiredWorkerLabelModel()    {}
+func (r stepDesiredWorkerLabelToStepFindUnique) stepDesiredWorkerLabelRelation() {}
+
+func (r stepDesiredWorkerLabelToStepFindUnique) With(params ...StepRelationWith) stepDesiredWorkerLabelToStepFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r stepDesiredWorkerLabelToStepFindUnique) Select(params ...stepDesiredWorkerLabelPrismaFields) stepDesiredWorkerLabelToStepFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepDesiredWorkerLabelToStepFindUnique) Omit(params ...stepDesiredWorkerLabelPrismaFields) stepDesiredWorkerLabelToStepFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range stepDesiredWorkerLabelOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepDesiredWorkerLabelToStepFindUnique) Exec(ctx context.Context) (
+	*StepDesiredWorkerLabelModel,
+	error,
+) {
+	var v *StepDesiredWorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r stepDesiredWorkerLabelToStepFindUnique) ExecInner(ctx context.Context) (
+	*InnerStepDesiredWorkerLabel,
+	error,
+) {
+	var v *InnerStepDesiredWorkerLabel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r stepDesiredWorkerLabelToStepFindUnique) Update(params ...StepDesiredWorkerLabelSetParam) stepDesiredWorkerLabelToStepUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "StepDesiredWorkerLabel"
+
+	var v stepDesiredWorkerLabelToStepUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type stepDesiredWorkerLabelToStepUpdateUnique struct {
+	query builder.Query
+}
+
+func (r stepDesiredWorkerLabelToStepUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepDesiredWorkerLabelToStepUpdateUnique) stepDesiredWorkerLabelModel() {}
+
+func (r stepDesiredWorkerLabelToStepUpdateUnique) Exec(ctx context.Context) (*StepDesiredWorkerLabelModel, error) {
+	var v StepDesiredWorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepDesiredWorkerLabelToStepUpdateUnique) Tx() StepDesiredWorkerLabelUniqueTxResult {
+	v := newStepDesiredWorkerLabelUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r stepDesiredWorkerLabelToStepFindUnique) Delete() stepDesiredWorkerLabelToStepDeleteUnique {
+	var v stepDesiredWorkerLabelToStepDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "StepDesiredWorkerLabel"
+
+	return v
+}
+
+type stepDesiredWorkerLabelToStepDeleteUnique struct {
+	query builder.Query
+}
+
+func (r stepDesiredWorkerLabelToStepDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p stepDesiredWorkerLabelToStepDeleteUnique) stepDesiredWorkerLabelModel() {}
+
+func (r stepDesiredWorkerLabelToStepDeleteUnique) Exec(ctx context.Context) (*StepDesiredWorkerLabelModel, error) {
+	var v StepDesiredWorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepDesiredWorkerLabelToStepDeleteUnique) Tx() StepDesiredWorkerLabelUniqueTxResult {
+	v := newStepDesiredWorkerLabelUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type stepDesiredWorkerLabelToStepFindFirst struct {
+	query builder.Query
+}
+
+func (r stepDesiredWorkerLabelToStepFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r stepDesiredWorkerLabelToStepFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepDesiredWorkerLabelToStepFindFirst) with()                           {}
+func (r stepDesiredWorkerLabelToStepFindFirst) stepDesiredWorkerLabelModel()    {}
+func (r stepDesiredWorkerLabelToStepFindFirst) stepDesiredWorkerLabelRelation() {}
+
+func (r stepDesiredWorkerLabelToStepFindFirst) With(params ...StepRelationWith) stepDesiredWorkerLabelToStepFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r stepDesiredWorkerLabelToStepFindFirst) Select(params ...stepDesiredWorkerLabelPrismaFields) stepDesiredWorkerLabelToStepFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepDesiredWorkerLabelToStepFindFirst) Omit(params ...stepDesiredWorkerLabelPrismaFields) stepDesiredWorkerLabelToStepFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range stepDesiredWorkerLabelOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepDesiredWorkerLabelToStepFindFirst) OrderBy(params ...StepOrderByParam) stepDesiredWorkerLabelToStepFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r stepDesiredWorkerLabelToStepFindFirst) Skip(count int) stepDesiredWorkerLabelToStepFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r stepDesiredWorkerLabelToStepFindFirst) Take(count int) stepDesiredWorkerLabelToStepFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r stepDesiredWorkerLabelToStepFindFirst) Cursor(cursor StepDesiredWorkerLabelCursorParam) stepDesiredWorkerLabelToStepFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r stepDesiredWorkerLabelToStepFindFirst) Exec(ctx context.Context) (
+	*StepDesiredWorkerLabelModel,
+	error,
+) {
+	var v *StepDesiredWorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r stepDesiredWorkerLabelToStepFindFirst) ExecInner(ctx context.Context) (
+	*InnerStepDesiredWorkerLabel,
+	error,
+) {
+	var v *InnerStepDesiredWorkerLabel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type stepDesiredWorkerLabelToStepFindMany struct {
+	query builder.Query
+}
+
+func (r stepDesiredWorkerLabelToStepFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r stepDesiredWorkerLabelToStepFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepDesiredWorkerLabelToStepFindMany) with()                           {}
+func (r stepDesiredWorkerLabelToStepFindMany) stepDesiredWorkerLabelModel()    {}
+func (r stepDesiredWorkerLabelToStepFindMany) stepDesiredWorkerLabelRelation() {}
+
+func (r stepDesiredWorkerLabelToStepFindMany) With(params ...StepRelationWith) stepDesiredWorkerLabelToStepFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r stepDesiredWorkerLabelToStepFindMany) Select(params ...stepDesiredWorkerLabelPrismaFields) stepDesiredWorkerLabelToStepFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepDesiredWorkerLabelToStepFindMany) Omit(params ...stepDesiredWorkerLabelPrismaFields) stepDesiredWorkerLabelToStepFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range stepDesiredWorkerLabelOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepDesiredWorkerLabelToStepFindMany) OrderBy(params ...StepOrderByParam) stepDesiredWorkerLabelToStepFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r stepDesiredWorkerLabelToStepFindMany) Skip(count int) stepDesiredWorkerLabelToStepFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r stepDesiredWorkerLabelToStepFindMany) Take(count int) stepDesiredWorkerLabelToStepFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r stepDesiredWorkerLabelToStepFindMany) Cursor(cursor StepDesiredWorkerLabelCursorParam) stepDesiredWorkerLabelToStepFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r stepDesiredWorkerLabelToStepFindMany) Exec(ctx context.Context) (
+	[]StepDesiredWorkerLabelModel,
+	error,
+) {
+	var v []StepDesiredWorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r stepDesiredWorkerLabelToStepFindMany) ExecInner(ctx context.Context) (
+	[]InnerStepDesiredWorkerLabel,
+	error,
+) {
+	var v []InnerStepDesiredWorkerLabel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r stepDesiredWorkerLabelToStepFindMany) Update(params ...StepDesiredWorkerLabelSetParam) stepDesiredWorkerLabelToStepUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "StepDesiredWorkerLabel"
+
+	r.query.Outputs = countOutput
+
+	var v stepDesiredWorkerLabelToStepUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type stepDesiredWorkerLabelToStepUpdateMany struct {
+	query builder.Query
+}
+
+func (r stepDesiredWorkerLabelToStepUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepDesiredWorkerLabelToStepUpdateMany) stepDesiredWorkerLabelModel() {}
+
+func (r stepDesiredWorkerLabelToStepUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepDesiredWorkerLabelToStepUpdateMany) Tx() StepDesiredWorkerLabelManyTxResult {
+	v := newStepDesiredWorkerLabelManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r stepDesiredWorkerLabelToStepFindMany) Delete() stepDesiredWorkerLabelToStepDeleteMany {
+	var v stepDesiredWorkerLabelToStepDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "StepDesiredWorkerLabel"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type stepDesiredWorkerLabelToStepDeleteMany struct {
+	query builder.Query
+}
+
+func (r stepDesiredWorkerLabelToStepDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p stepDesiredWorkerLabelToStepDeleteMany) stepDesiredWorkerLabelModel() {}
+
+func (r stepDesiredWorkerLabelToStepDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepDesiredWorkerLabelToStepDeleteMany) Tx() StepDesiredWorkerLabelManyTxResult {
+	v := newStepDesiredWorkerLabelManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type stepDesiredWorkerLabelFindUnique struct {
+	query builder.Query
+}
+
+func (r stepDesiredWorkerLabelFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r stepDesiredWorkerLabelFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepDesiredWorkerLabelFindUnique) with()                           {}
+func (r stepDesiredWorkerLabelFindUnique) stepDesiredWorkerLabelModel()    {}
+func (r stepDesiredWorkerLabelFindUnique) stepDesiredWorkerLabelRelation() {}
+
+func (r stepDesiredWorkerLabelActions) FindUnique(
+	params StepDesiredWorkerLabelEqualsUniqueWhereParam,
+) stepDesiredWorkerLabelFindUnique {
+	var v stepDesiredWorkerLabelFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "StepDesiredWorkerLabel"
+	v.query.Outputs = stepDesiredWorkerLabelOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r stepDesiredWorkerLabelFindUnique) With(params ...StepDesiredWorkerLabelRelationWith) stepDesiredWorkerLabelFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r stepDesiredWorkerLabelFindUnique) Select(params ...stepDesiredWorkerLabelPrismaFields) stepDesiredWorkerLabelFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepDesiredWorkerLabelFindUnique) Omit(params ...stepDesiredWorkerLabelPrismaFields) stepDesiredWorkerLabelFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range stepDesiredWorkerLabelOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepDesiredWorkerLabelFindUnique) Exec(ctx context.Context) (
+	*StepDesiredWorkerLabelModel,
+	error,
+) {
+	var v *StepDesiredWorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r stepDesiredWorkerLabelFindUnique) ExecInner(ctx context.Context) (
+	*InnerStepDesiredWorkerLabel,
+	error,
+) {
+	var v *InnerStepDesiredWorkerLabel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r stepDesiredWorkerLabelFindUnique) Update(params ...StepDesiredWorkerLabelSetParam) stepDesiredWorkerLabelUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "StepDesiredWorkerLabel"
+
+	var v stepDesiredWorkerLabelUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type stepDesiredWorkerLabelUpdateUnique struct {
+	query builder.Query
+}
+
+func (r stepDesiredWorkerLabelUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepDesiredWorkerLabelUpdateUnique) stepDesiredWorkerLabelModel() {}
+
+func (r stepDesiredWorkerLabelUpdateUnique) Exec(ctx context.Context) (*StepDesiredWorkerLabelModel, error) {
+	var v StepDesiredWorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepDesiredWorkerLabelUpdateUnique) Tx() StepDesiredWorkerLabelUniqueTxResult {
+	v := newStepDesiredWorkerLabelUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r stepDesiredWorkerLabelFindUnique) Delete() stepDesiredWorkerLabelDeleteUnique {
+	var v stepDesiredWorkerLabelDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "StepDesiredWorkerLabel"
+
+	return v
+}
+
+type stepDesiredWorkerLabelDeleteUnique struct {
+	query builder.Query
+}
+
+func (r stepDesiredWorkerLabelDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p stepDesiredWorkerLabelDeleteUnique) stepDesiredWorkerLabelModel() {}
+
+func (r stepDesiredWorkerLabelDeleteUnique) Exec(ctx context.Context) (*StepDesiredWorkerLabelModel, error) {
+	var v StepDesiredWorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepDesiredWorkerLabelDeleteUnique) Tx() StepDesiredWorkerLabelUniqueTxResult {
+	v := newStepDesiredWorkerLabelUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type stepDesiredWorkerLabelFindFirst struct {
+	query builder.Query
+}
+
+func (r stepDesiredWorkerLabelFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r stepDesiredWorkerLabelFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepDesiredWorkerLabelFindFirst) with()                           {}
+func (r stepDesiredWorkerLabelFindFirst) stepDesiredWorkerLabelModel()    {}
+func (r stepDesiredWorkerLabelFindFirst) stepDesiredWorkerLabelRelation() {}
+
+func (r stepDesiredWorkerLabelActions) FindFirst(
+	params ...StepDesiredWorkerLabelWhereParam,
+) stepDesiredWorkerLabelFindFirst {
+	var v stepDesiredWorkerLabelFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "StepDesiredWorkerLabel"
+	v.query.Outputs = stepDesiredWorkerLabelOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r stepDesiredWorkerLabelFindFirst) With(params ...StepDesiredWorkerLabelRelationWith) stepDesiredWorkerLabelFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r stepDesiredWorkerLabelFindFirst) Select(params ...stepDesiredWorkerLabelPrismaFields) stepDesiredWorkerLabelFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepDesiredWorkerLabelFindFirst) Omit(params ...stepDesiredWorkerLabelPrismaFields) stepDesiredWorkerLabelFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range stepDesiredWorkerLabelOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepDesiredWorkerLabelFindFirst) OrderBy(params ...StepDesiredWorkerLabelOrderByParam) stepDesiredWorkerLabelFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r stepDesiredWorkerLabelFindFirst) Skip(count int) stepDesiredWorkerLabelFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r stepDesiredWorkerLabelFindFirst) Take(count int) stepDesiredWorkerLabelFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r stepDesiredWorkerLabelFindFirst) Cursor(cursor StepDesiredWorkerLabelCursorParam) stepDesiredWorkerLabelFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r stepDesiredWorkerLabelFindFirst) Exec(ctx context.Context) (
+	*StepDesiredWorkerLabelModel,
+	error,
+) {
+	var v *StepDesiredWorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r stepDesiredWorkerLabelFindFirst) ExecInner(ctx context.Context) (
+	*InnerStepDesiredWorkerLabel,
+	error,
+) {
+	var v *InnerStepDesiredWorkerLabel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type stepDesiredWorkerLabelFindMany struct {
+	query builder.Query
+}
+
+func (r stepDesiredWorkerLabelFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r stepDesiredWorkerLabelFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepDesiredWorkerLabelFindMany) with()                           {}
+func (r stepDesiredWorkerLabelFindMany) stepDesiredWorkerLabelModel()    {}
+func (r stepDesiredWorkerLabelFindMany) stepDesiredWorkerLabelRelation() {}
+
+func (r stepDesiredWorkerLabelActions) FindMany(
+	params ...StepDesiredWorkerLabelWhereParam,
+) stepDesiredWorkerLabelFindMany {
+	var v stepDesiredWorkerLabelFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "StepDesiredWorkerLabel"
+	v.query.Outputs = stepDesiredWorkerLabelOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r stepDesiredWorkerLabelFindMany) With(params ...StepDesiredWorkerLabelRelationWith) stepDesiredWorkerLabelFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r stepDesiredWorkerLabelFindMany) Select(params ...stepDesiredWorkerLabelPrismaFields) stepDesiredWorkerLabelFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepDesiredWorkerLabelFindMany) Omit(params ...stepDesiredWorkerLabelPrismaFields) stepDesiredWorkerLabelFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range stepDesiredWorkerLabelOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepDesiredWorkerLabelFindMany) OrderBy(params ...StepDesiredWorkerLabelOrderByParam) stepDesiredWorkerLabelFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r stepDesiredWorkerLabelFindMany) Skip(count int) stepDesiredWorkerLabelFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r stepDesiredWorkerLabelFindMany) Take(count int) stepDesiredWorkerLabelFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r stepDesiredWorkerLabelFindMany) Cursor(cursor StepDesiredWorkerLabelCursorParam) stepDesiredWorkerLabelFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r stepDesiredWorkerLabelFindMany) Exec(ctx context.Context) (
+	[]StepDesiredWorkerLabelModel,
+	error,
+) {
+	var v []StepDesiredWorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r stepDesiredWorkerLabelFindMany) ExecInner(ctx context.Context) (
+	[]InnerStepDesiredWorkerLabel,
+	error,
+) {
+	var v []InnerStepDesiredWorkerLabel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r stepDesiredWorkerLabelFindMany) Update(params ...StepDesiredWorkerLabelSetParam) stepDesiredWorkerLabelUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "StepDesiredWorkerLabel"
+
+	r.query.Outputs = countOutput
+
+	var v stepDesiredWorkerLabelUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type stepDesiredWorkerLabelUpdateMany struct {
+	query builder.Query
+}
+
+func (r stepDesiredWorkerLabelUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepDesiredWorkerLabelUpdateMany) stepDesiredWorkerLabelModel() {}
+
+func (r stepDesiredWorkerLabelUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepDesiredWorkerLabelUpdateMany) Tx() StepDesiredWorkerLabelManyTxResult {
+	v := newStepDesiredWorkerLabelManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r stepDesiredWorkerLabelFindMany) Delete() stepDesiredWorkerLabelDeleteMany {
+	var v stepDesiredWorkerLabelDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "StepDesiredWorkerLabel"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type stepDesiredWorkerLabelDeleteMany struct {
+	query builder.Query
+}
+
+func (r stepDesiredWorkerLabelDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p stepDesiredWorkerLabelDeleteMany) stepDesiredWorkerLabelModel() {}
+
+func (r stepDesiredWorkerLabelDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepDesiredWorkerLabelDeleteMany) Tx() StepDesiredWorkerLabelManyTxResult {
+	v := newStepDesiredWorkerLabelManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 type stepToTenantFindUnique struct {
 	query builder.Query
 }
@@ -306865,6 +320671,560 @@ func (r stepToRateLimitsDeleteMany) Exec(ctx context.Context) (*BatchResult, err
 }
 
 func (r stepToRateLimitsDeleteMany) Tx() StepManyTxResult {
+	v := newStepManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type stepToWorkerLabelsFindUnique struct {
+	query builder.Query
+}
+
+func (r stepToWorkerLabelsFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r stepToWorkerLabelsFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepToWorkerLabelsFindUnique) with()         {}
+func (r stepToWorkerLabelsFindUnique) stepModel()    {}
+func (r stepToWorkerLabelsFindUnique) stepRelation() {}
+
+func (r stepToWorkerLabelsFindUnique) With(params ...StepDesiredWorkerLabelRelationWith) stepToWorkerLabelsFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r stepToWorkerLabelsFindUnique) Select(params ...stepPrismaFields) stepToWorkerLabelsFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepToWorkerLabelsFindUnique) Omit(params ...stepPrismaFields) stepToWorkerLabelsFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range stepOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepToWorkerLabelsFindUnique) Exec(ctx context.Context) (
+	*StepModel,
+	error,
+) {
+	var v *StepModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r stepToWorkerLabelsFindUnique) ExecInner(ctx context.Context) (
+	*InnerStep,
+	error,
+) {
+	var v *InnerStep
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r stepToWorkerLabelsFindUnique) Update(params ...StepSetParam) stepToWorkerLabelsUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Step"
+
+	var v stepToWorkerLabelsUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type stepToWorkerLabelsUpdateUnique struct {
+	query builder.Query
+}
+
+func (r stepToWorkerLabelsUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepToWorkerLabelsUpdateUnique) stepModel() {}
+
+func (r stepToWorkerLabelsUpdateUnique) Exec(ctx context.Context) (*StepModel, error) {
+	var v StepModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepToWorkerLabelsUpdateUnique) Tx() StepUniqueTxResult {
+	v := newStepUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r stepToWorkerLabelsFindUnique) Delete() stepToWorkerLabelsDeleteUnique {
+	var v stepToWorkerLabelsDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Step"
+
+	return v
+}
+
+type stepToWorkerLabelsDeleteUnique struct {
+	query builder.Query
+}
+
+func (r stepToWorkerLabelsDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p stepToWorkerLabelsDeleteUnique) stepModel() {}
+
+func (r stepToWorkerLabelsDeleteUnique) Exec(ctx context.Context) (*StepModel, error) {
+	var v StepModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepToWorkerLabelsDeleteUnique) Tx() StepUniqueTxResult {
+	v := newStepUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type stepToWorkerLabelsFindFirst struct {
+	query builder.Query
+}
+
+func (r stepToWorkerLabelsFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r stepToWorkerLabelsFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepToWorkerLabelsFindFirst) with()         {}
+func (r stepToWorkerLabelsFindFirst) stepModel()    {}
+func (r stepToWorkerLabelsFindFirst) stepRelation() {}
+
+func (r stepToWorkerLabelsFindFirst) With(params ...StepDesiredWorkerLabelRelationWith) stepToWorkerLabelsFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r stepToWorkerLabelsFindFirst) Select(params ...stepPrismaFields) stepToWorkerLabelsFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepToWorkerLabelsFindFirst) Omit(params ...stepPrismaFields) stepToWorkerLabelsFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range stepOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepToWorkerLabelsFindFirst) OrderBy(params ...StepDesiredWorkerLabelOrderByParam) stepToWorkerLabelsFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r stepToWorkerLabelsFindFirst) Skip(count int) stepToWorkerLabelsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r stepToWorkerLabelsFindFirst) Take(count int) stepToWorkerLabelsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r stepToWorkerLabelsFindFirst) Cursor(cursor StepCursorParam) stepToWorkerLabelsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r stepToWorkerLabelsFindFirst) Exec(ctx context.Context) (
+	*StepModel,
+	error,
+) {
+	var v *StepModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r stepToWorkerLabelsFindFirst) ExecInner(ctx context.Context) (
+	*InnerStep,
+	error,
+) {
+	var v *InnerStep
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type stepToWorkerLabelsFindMany struct {
+	query builder.Query
+}
+
+func (r stepToWorkerLabelsFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r stepToWorkerLabelsFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepToWorkerLabelsFindMany) with()         {}
+func (r stepToWorkerLabelsFindMany) stepModel()    {}
+func (r stepToWorkerLabelsFindMany) stepRelation() {}
+
+func (r stepToWorkerLabelsFindMany) With(params ...StepDesiredWorkerLabelRelationWith) stepToWorkerLabelsFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r stepToWorkerLabelsFindMany) Select(params ...stepPrismaFields) stepToWorkerLabelsFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepToWorkerLabelsFindMany) Omit(params ...stepPrismaFields) stepToWorkerLabelsFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range stepOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepToWorkerLabelsFindMany) OrderBy(params ...StepDesiredWorkerLabelOrderByParam) stepToWorkerLabelsFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r stepToWorkerLabelsFindMany) Skip(count int) stepToWorkerLabelsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r stepToWorkerLabelsFindMany) Take(count int) stepToWorkerLabelsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r stepToWorkerLabelsFindMany) Cursor(cursor StepCursorParam) stepToWorkerLabelsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r stepToWorkerLabelsFindMany) Exec(ctx context.Context) (
+	[]StepModel,
+	error,
+) {
+	var v []StepModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r stepToWorkerLabelsFindMany) ExecInner(ctx context.Context) (
+	[]InnerStep,
+	error,
+) {
+	var v []InnerStep
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r stepToWorkerLabelsFindMany) Update(params ...StepSetParam) stepToWorkerLabelsUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Step"
+
+	r.query.Outputs = countOutput
+
+	var v stepToWorkerLabelsUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type stepToWorkerLabelsUpdateMany struct {
+	query builder.Query
+}
+
+func (r stepToWorkerLabelsUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepToWorkerLabelsUpdateMany) stepModel() {}
+
+func (r stepToWorkerLabelsUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepToWorkerLabelsUpdateMany) Tx() StepManyTxResult {
+	v := newStepManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r stepToWorkerLabelsFindMany) Delete() stepToWorkerLabelsDeleteMany {
+	var v stepToWorkerLabelsDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Step"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type stepToWorkerLabelsDeleteMany struct {
+	query builder.Query
+}
+
+func (r stepToWorkerLabelsDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p stepToWorkerLabelsDeleteMany) stepModel() {}
+
+func (r stepToWorkerLabelsDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepToWorkerLabelsDeleteMany) Tx() StepManyTxResult {
 	v := newStepManyTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
@@ -311591,6 +325951,1210 @@ func (r rateLimitDeleteMany) Tx() RateLimitManyTxResult {
 	return v
 }
 
+type workflowRunStickyStateToWorkflowRunFindUnique struct {
+	query builder.Query
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindUnique) with()                           {}
+func (r workflowRunStickyStateToWorkflowRunFindUnique) workflowRunStickyStateModel()    {}
+func (r workflowRunStickyStateToWorkflowRunFindUnique) workflowRunStickyStateRelation() {}
+
+func (r workflowRunStickyStateToWorkflowRunFindUnique) With(params ...WorkflowRunRelationWith) workflowRunStickyStateToWorkflowRunFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindUnique) Select(params ...workflowRunStickyStatePrismaFields) workflowRunStickyStateToWorkflowRunFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindUnique) Omit(params ...workflowRunStickyStatePrismaFields) workflowRunStickyStateToWorkflowRunFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workflowRunStickyStateOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindUnique) Exec(ctx context.Context) (
+	*WorkflowRunStickyStateModel,
+	error,
+) {
+	var v *WorkflowRunStickyStateModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindUnique) ExecInner(ctx context.Context) (
+	*InnerWorkflowRunStickyState,
+	error,
+) {
+	var v *InnerWorkflowRunStickyState
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindUnique) Update(params ...WorkflowRunStickyStateSetParam) workflowRunStickyStateToWorkflowRunUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "WorkflowRunStickyState"
+
+	var v workflowRunStickyStateToWorkflowRunUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workflowRunStickyStateToWorkflowRunUpdateUnique struct {
+	query builder.Query
+}
+
+func (r workflowRunStickyStateToWorkflowRunUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunStickyStateToWorkflowRunUpdateUnique) workflowRunStickyStateModel() {}
+
+func (r workflowRunStickyStateToWorkflowRunUpdateUnique) Exec(ctx context.Context) (*WorkflowRunStickyStateModel, error) {
+	var v WorkflowRunStickyStateModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunStickyStateToWorkflowRunUpdateUnique) Tx() WorkflowRunStickyStateUniqueTxResult {
+	v := newWorkflowRunStickyStateUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindUnique) Delete() workflowRunStickyStateToWorkflowRunDeleteUnique {
+	var v workflowRunStickyStateToWorkflowRunDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "WorkflowRunStickyState"
+
+	return v
+}
+
+type workflowRunStickyStateToWorkflowRunDeleteUnique struct {
+	query builder.Query
+}
+
+func (r workflowRunStickyStateToWorkflowRunDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workflowRunStickyStateToWorkflowRunDeleteUnique) workflowRunStickyStateModel() {}
+
+func (r workflowRunStickyStateToWorkflowRunDeleteUnique) Exec(ctx context.Context) (*WorkflowRunStickyStateModel, error) {
+	var v WorkflowRunStickyStateModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunStickyStateToWorkflowRunDeleteUnique) Tx() WorkflowRunStickyStateUniqueTxResult {
+	v := newWorkflowRunStickyStateUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workflowRunStickyStateToWorkflowRunFindFirst struct {
+	query builder.Query
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindFirst) with()                           {}
+func (r workflowRunStickyStateToWorkflowRunFindFirst) workflowRunStickyStateModel()    {}
+func (r workflowRunStickyStateToWorkflowRunFindFirst) workflowRunStickyStateRelation() {}
+
+func (r workflowRunStickyStateToWorkflowRunFindFirst) With(params ...WorkflowRunRelationWith) workflowRunStickyStateToWorkflowRunFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindFirst) Select(params ...workflowRunStickyStatePrismaFields) workflowRunStickyStateToWorkflowRunFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindFirst) Omit(params ...workflowRunStickyStatePrismaFields) workflowRunStickyStateToWorkflowRunFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workflowRunStickyStateOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindFirst) OrderBy(params ...WorkflowRunOrderByParam) workflowRunStickyStateToWorkflowRunFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindFirst) Skip(count int) workflowRunStickyStateToWorkflowRunFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindFirst) Take(count int) workflowRunStickyStateToWorkflowRunFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindFirst) Cursor(cursor WorkflowRunStickyStateCursorParam) workflowRunStickyStateToWorkflowRunFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindFirst) Exec(ctx context.Context) (
+	*WorkflowRunStickyStateModel,
+	error,
+) {
+	var v *WorkflowRunStickyStateModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindFirst) ExecInner(ctx context.Context) (
+	*InnerWorkflowRunStickyState,
+	error,
+) {
+	var v *InnerWorkflowRunStickyState
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type workflowRunStickyStateToWorkflowRunFindMany struct {
+	query builder.Query
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindMany) with()                           {}
+func (r workflowRunStickyStateToWorkflowRunFindMany) workflowRunStickyStateModel()    {}
+func (r workflowRunStickyStateToWorkflowRunFindMany) workflowRunStickyStateRelation() {}
+
+func (r workflowRunStickyStateToWorkflowRunFindMany) With(params ...WorkflowRunRelationWith) workflowRunStickyStateToWorkflowRunFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindMany) Select(params ...workflowRunStickyStatePrismaFields) workflowRunStickyStateToWorkflowRunFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindMany) Omit(params ...workflowRunStickyStatePrismaFields) workflowRunStickyStateToWorkflowRunFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workflowRunStickyStateOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindMany) OrderBy(params ...WorkflowRunOrderByParam) workflowRunStickyStateToWorkflowRunFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindMany) Skip(count int) workflowRunStickyStateToWorkflowRunFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindMany) Take(count int) workflowRunStickyStateToWorkflowRunFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindMany) Cursor(cursor WorkflowRunStickyStateCursorParam) workflowRunStickyStateToWorkflowRunFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindMany) Exec(ctx context.Context) (
+	[]WorkflowRunStickyStateModel,
+	error,
+) {
+	var v []WorkflowRunStickyStateModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindMany) ExecInner(ctx context.Context) (
+	[]InnerWorkflowRunStickyState,
+	error,
+) {
+	var v []InnerWorkflowRunStickyState
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindMany) Update(params ...WorkflowRunStickyStateSetParam) workflowRunStickyStateToWorkflowRunUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "WorkflowRunStickyState"
+
+	r.query.Outputs = countOutput
+
+	var v workflowRunStickyStateToWorkflowRunUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workflowRunStickyStateToWorkflowRunUpdateMany struct {
+	query builder.Query
+}
+
+func (r workflowRunStickyStateToWorkflowRunUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunStickyStateToWorkflowRunUpdateMany) workflowRunStickyStateModel() {}
+
+func (r workflowRunStickyStateToWorkflowRunUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunStickyStateToWorkflowRunUpdateMany) Tx() WorkflowRunStickyStateManyTxResult {
+	v := newWorkflowRunStickyStateManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workflowRunStickyStateToWorkflowRunFindMany) Delete() workflowRunStickyStateToWorkflowRunDeleteMany {
+	var v workflowRunStickyStateToWorkflowRunDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "WorkflowRunStickyState"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type workflowRunStickyStateToWorkflowRunDeleteMany struct {
+	query builder.Query
+}
+
+func (r workflowRunStickyStateToWorkflowRunDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workflowRunStickyStateToWorkflowRunDeleteMany) workflowRunStickyStateModel() {}
+
+func (r workflowRunStickyStateToWorkflowRunDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunStickyStateToWorkflowRunDeleteMany) Tx() WorkflowRunStickyStateManyTxResult {
+	v := newWorkflowRunStickyStateManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workflowRunStickyStateFindUnique struct {
+	query builder.Query
+}
+
+func (r workflowRunStickyStateFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunStickyStateFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunStickyStateFindUnique) with()                           {}
+func (r workflowRunStickyStateFindUnique) workflowRunStickyStateModel()    {}
+func (r workflowRunStickyStateFindUnique) workflowRunStickyStateRelation() {}
+
+func (r workflowRunStickyStateActions) FindUnique(
+	params WorkflowRunStickyStateEqualsUniqueWhereParam,
+) workflowRunStickyStateFindUnique {
+	var v workflowRunStickyStateFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "WorkflowRunStickyState"
+	v.query.Outputs = workflowRunStickyStateOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r workflowRunStickyStateFindUnique) With(params ...WorkflowRunStickyStateRelationWith) workflowRunStickyStateFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workflowRunStickyStateFindUnique) Select(params ...workflowRunStickyStatePrismaFields) workflowRunStickyStateFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunStickyStateFindUnique) Omit(params ...workflowRunStickyStatePrismaFields) workflowRunStickyStateFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workflowRunStickyStateOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunStickyStateFindUnique) Exec(ctx context.Context) (
+	*WorkflowRunStickyStateModel,
+	error,
+) {
+	var v *WorkflowRunStickyStateModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workflowRunStickyStateFindUnique) ExecInner(ctx context.Context) (
+	*InnerWorkflowRunStickyState,
+	error,
+) {
+	var v *InnerWorkflowRunStickyState
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workflowRunStickyStateFindUnique) Update(params ...WorkflowRunStickyStateSetParam) workflowRunStickyStateUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "WorkflowRunStickyState"
+
+	var v workflowRunStickyStateUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workflowRunStickyStateUpdateUnique struct {
+	query builder.Query
+}
+
+func (r workflowRunStickyStateUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunStickyStateUpdateUnique) workflowRunStickyStateModel() {}
+
+func (r workflowRunStickyStateUpdateUnique) Exec(ctx context.Context) (*WorkflowRunStickyStateModel, error) {
+	var v WorkflowRunStickyStateModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunStickyStateUpdateUnique) Tx() WorkflowRunStickyStateUniqueTxResult {
+	v := newWorkflowRunStickyStateUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workflowRunStickyStateFindUnique) Delete() workflowRunStickyStateDeleteUnique {
+	var v workflowRunStickyStateDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "WorkflowRunStickyState"
+
+	return v
+}
+
+type workflowRunStickyStateDeleteUnique struct {
+	query builder.Query
+}
+
+func (r workflowRunStickyStateDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workflowRunStickyStateDeleteUnique) workflowRunStickyStateModel() {}
+
+func (r workflowRunStickyStateDeleteUnique) Exec(ctx context.Context) (*WorkflowRunStickyStateModel, error) {
+	var v WorkflowRunStickyStateModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunStickyStateDeleteUnique) Tx() WorkflowRunStickyStateUniqueTxResult {
+	v := newWorkflowRunStickyStateUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workflowRunStickyStateFindFirst struct {
+	query builder.Query
+}
+
+func (r workflowRunStickyStateFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunStickyStateFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunStickyStateFindFirst) with()                           {}
+func (r workflowRunStickyStateFindFirst) workflowRunStickyStateModel()    {}
+func (r workflowRunStickyStateFindFirst) workflowRunStickyStateRelation() {}
+
+func (r workflowRunStickyStateActions) FindFirst(
+	params ...WorkflowRunStickyStateWhereParam,
+) workflowRunStickyStateFindFirst {
+	var v workflowRunStickyStateFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "WorkflowRunStickyState"
+	v.query.Outputs = workflowRunStickyStateOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r workflowRunStickyStateFindFirst) With(params ...WorkflowRunStickyStateRelationWith) workflowRunStickyStateFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workflowRunStickyStateFindFirst) Select(params ...workflowRunStickyStatePrismaFields) workflowRunStickyStateFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunStickyStateFindFirst) Omit(params ...workflowRunStickyStatePrismaFields) workflowRunStickyStateFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workflowRunStickyStateOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunStickyStateFindFirst) OrderBy(params ...WorkflowRunStickyStateOrderByParam) workflowRunStickyStateFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workflowRunStickyStateFindFirst) Skip(count int) workflowRunStickyStateFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowRunStickyStateFindFirst) Take(count int) workflowRunStickyStateFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowRunStickyStateFindFirst) Cursor(cursor WorkflowRunStickyStateCursorParam) workflowRunStickyStateFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workflowRunStickyStateFindFirst) Exec(ctx context.Context) (
+	*WorkflowRunStickyStateModel,
+	error,
+) {
+	var v *WorkflowRunStickyStateModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workflowRunStickyStateFindFirst) ExecInner(ctx context.Context) (
+	*InnerWorkflowRunStickyState,
+	error,
+) {
+	var v *InnerWorkflowRunStickyState
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type workflowRunStickyStateFindMany struct {
+	query builder.Query
+}
+
+func (r workflowRunStickyStateFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunStickyStateFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunStickyStateFindMany) with()                           {}
+func (r workflowRunStickyStateFindMany) workflowRunStickyStateModel()    {}
+func (r workflowRunStickyStateFindMany) workflowRunStickyStateRelation() {}
+
+func (r workflowRunStickyStateActions) FindMany(
+	params ...WorkflowRunStickyStateWhereParam,
+) workflowRunStickyStateFindMany {
+	var v workflowRunStickyStateFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "WorkflowRunStickyState"
+	v.query.Outputs = workflowRunStickyStateOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r workflowRunStickyStateFindMany) With(params ...WorkflowRunStickyStateRelationWith) workflowRunStickyStateFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workflowRunStickyStateFindMany) Select(params ...workflowRunStickyStatePrismaFields) workflowRunStickyStateFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunStickyStateFindMany) Omit(params ...workflowRunStickyStatePrismaFields) workflowRunStickyStateFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workflowRunStickyStateOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunStickyStateFindMany) OrderBy(params ...WorkflowRunStickyStateOrderByParam) workflowRunStickyStateFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workflowRunStickyStateFindMany) Skip(count int) workflowRunStickyStateFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowRunStickyStateFindMany) Take(count int) workflowRunStickyStateFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowRunStickyStateFindMany) Cursor(cursor WorkflowRunStickyStateCursorParam) workflowRunStickyStateFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workflowRunStickyStateFindMany) Exec(ctx context.Context) (
+	[]WorkflowRunStickyStateModel,
+	error,
+) {
+	var v []WorkflowRunStickyStateModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workflowRunStickyStateFindMany) ExecInner(ctx context.Context) (
+	[]InnerWorkflowRunStickyState,
+	error,
+) {
+	var v []InnerWorkflowRunStickyState
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workflowRunStickyStateFindMany) Update(params ...WorkflowRunStickyStateSetParam) workflowRunStickyStateUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "WorkflowRunStickyState"
+
+	r.query.Outputs = countOutput
+
+	var v workflowRunStickyStateUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workflowRunStickyStateUpdateMany struct {
+	query builder.Query
+}
+
+func (r workflowRunStickyStateUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunStickyStateUpdateMany) workflowRunStickyStateModel() {}
+
+func (r workflowRunStickyStateUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunStickyStateUpdateMany) Tx() WorkflowRunStickyStateManyTxResult {
+	v := newWorkflowRunStickyStateManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workflowRunStickyStateFindMany) Delete() workflowRunStickyStateDeleteMany {
+	var v workflowRunStickyStateDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "WorkflowRunStickyState"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type workflowRunStickyStateDeleteMany struct {
+	query builder.Query
+}
+
+func (r workflowRunStickyStateDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workflowRunStickyStateDeleteMany) workflowRunStickyStateModel() {}
+
+func (r workflowRunStickyStateDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunStickyStateDeleteMany) Tx() WorkflowRunStickyStateManyTxResult {
+	v := newWorkflowRunStickyStateManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 type workflowRunToTenantFindUnique struct {
 	query builder.Query
 }
@@ -314355,6 +329919,560 @@ func (r workflowRunToTriggeredByDeleteMany) Exec(ctx context.Context) (*BatchRes
 }
 
 func (r workflowRunToTriggeredByDeleteMany) Tx() WorkflowRunManyTxResult {
+	v := newWorkflowRunManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workflowRunToStickyFindUnique struct {
+	query builder.Query
+}
+
+func (r workflowRunToStickyFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunToStickyFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunToStickyFindUnique) with()                {}
+func (r workflowRunToStickyFindUnique) workflowRunModel()    {}
+func (r workflowRunToStickyFindUnique) workflowRunRelation() {}
+
+func (r workflowRunToStickyFindUnique) With(params ...WorkflowRunStickyStateRelationWith) workflowRunToStickyFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workflowRunToStickyFindUnique) Select(params ...workflowRunPrismaFields) workflowRunToStickyFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunToStickyFindUnique) Omit(params ...workflowRunPrismaFields) workflowRunToStickyFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workflowRunOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunToStickyFindUnique) Exec(ctx context.Context) (
+	*WorkflowRunModel,
+	error,
+) {
+	var v *WorkflowRunModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workflowRunToStickyFindUnique) ExecInner(ctx context.Context) (
+	*InnerWorkflowRun,
+	error,
+) {
+	var v *InnerWorkflowRun
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workflowRunToStickyFindUnique) Update(params ...WorkflowRunSetParam) workflowRunToStickyUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "WorkflowRun"
+
+	var v workflowRunToStickyUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workflowRunToStickyUpdateUnique struct {
+	query builder.Query
+}
+
+func (r workflowRunToStickyUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunToStickyUpdateUnique) workflowRunModel() {}
+
+func (r workflowRunToStickyUpdateUnique) Exec(ctx context.Context) (*WorkflowRunModel, error) {
+	var v WorkflowRunModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunToStickyUpdateUnique) Tx() WorkflowRunUniqueTxResult {
+	v := newWorkflowRunUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workflowRunToStickyFindUnique) Delete() workflowRunToStickyDeleteUnique {
+	var v workflowRunToStickyDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "WorkflowRun"
+
+	return v
+}
+
+type workflowRunToStickyDeleteUnique struct {
+	query builder.Query
+}
+
+func (r workflowRunToStickyDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workflowRunToStickyDeleteUnique) workflowRunModel() {}
+
+func (r workflowRunToStickyDeleteUnique) Exec(ctx context.Context) (*WorkflowRunModel, error) {
+	var v WorkflowRunModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunToStickyDeleteUnique) Tx() WorkflowRunUniqueTxResult {
+	v := newWorkflowRunUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workflowRunToStickyFindFirst struct {
+	query builder.Query
+}
+
+func (r workflowRunToStickyFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunToStickyFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunToStickyFindFirst) with()                {}
+func (r workflowRunToStickyFindFirst) workflowRunModel()    {}
+func (r workflowRunToStickyFindFirst) workflowRunRelation() {}
+
+func (r workflowRunToStickyFindFirst) With(params ...WorkflowRunStickyStateRelationWith) workflowRunToStickyFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workflowRunToStickyFindFirst) Select(params ...workflowRunPrismaFields) workflowRunToStickyFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunToStickyFindFirst) Omit(params ...workflowRunPrismaFields) workflowRunToStickyFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workflowRunOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunToStickyFindFirst) OrderBy(params ...WorkflowRunStickyStateOrderByParam) workflowRunToStickyFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workflowRunToStickyFindFirst) Skip(count int) workflowRunToStickyFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowRunToStickyFindFirst) Take(count int) workflowRunToStickyFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowRunToStickyFindFirst) Cursor(cursor WorkflowRunCursorParam) workflowRunToStickyFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workflowRunToStickyFindFirst) Exec(ctx context.Context) (
+	*WorkflowRunModel,
+	error,
+) {
+	var v *WorkflowRunModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workflowRunToStickyFindFirst) ExecInner(ctx context.Context) (
+	*InnerWorkflowRun,
+	error,
+) {
+	var v *InnerWorkflowRun
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type workflowRunToStickyFindMany struct {
+	query builder.Query
+}
+
+func (r workflowRunToStickyFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunToStickyFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunToStickyFindMany) with()                {}
+func (r workflowRunToStickyFindMany) workflowRunModel()    {}
+func (r workflowRunToStickyFindMany) workflowRunRelation() {}
+
+func (r workflowRunToStickyFindMany) With(params ...WorkflowRunStickyStateRelationWith) workflowRunToStickyFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workflowRunToStickyFindMany) Select(params ...workflowRunPrismaFields) workflowRunToStickyFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunToStickyFindMany) Omit(params ...workflowRunPrismaFields) workflowRunToStickyFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workflowRunOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunToStickyFindMany) OrderBy(params ...WorkflowRunStickyStateOrderByParam) workflowRunToStickyFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workflowRunToStickyFindMany) Skip(count int) workflowRunToStickyFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowRunToStickyFindMany) Take(count int) workflowRunToStickyFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowRunToStickyFindMany) Cursor(cursor WorkflowRunCursorParam) workflowRunToStickyFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workflowRunToStickyFindMany) Exec(ctx context.Context) (
+	[]WorkflowRunModel,
+	error,
+) {
+	var v []WorkflowRunModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workflowRunToStickyFindMany) ExecInner(ctx context.Context) (
+	[]InnerWorkflowRun,
+	error,
+) {
+	var v []InnerWorkflowRun
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workflowRunToStickyFindMany) Update(params ...WorkflowRunSetParam) workflowRunToStickyUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "WorkflowRun"
+
+	r.query.Outputs = countOutput
+
+	var v workflowRunToStickyUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workflowRunToStickyUpdateMany struct {
+	query builder.Query
+}
+
+func (r workflowRunToStickyUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunToStickyUpdateMany) workflowRunModel() {}
+
+func (r workflowRunToStickyUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunToStickyUpdateMany) Tx() WorkflowRunManyTxResult {
+	v := newWorkflowRunManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workflowRunToStickyFindMany) Delete() workflowRunToStickyDeleteMany {
+	var v workflowRunToStickyDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "WorkflowRun"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type workflowRunToStickyDeleteMany struct {
+	query builder.Query
+}
+
+func (r workflowRunToStickyDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workflowRunToStickyDeleteMany) workflowRunModel() {}
+
+func (r workflowRunToStickyDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunToStickyDeleteMany) Tx() WorkflowRunManyTxResult {
 	v := newWorkflowRunManyTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
@@ -345237,6 +361355,1764 @@ func (r tickerDeleteMany) Tx() TickerManyTxResult {
 	return v
 }
 
+type workerLabelToWorkerFindUnique struct {
+	query builder.Query
+}
+
+func (r workerLabelToWorkerFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerLabelToWorkerFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerLabelToWorkerFindUnique) with()                {}
+func (r workerLabelToWorkerFindUnique) workerLabelModel()    {}
+func (r workerLabelToWorkerFindUnique) workerLabelRelation() {}
+
+func (r workerLabelToWorkerFindUnique) With(params ...WorkerRelationWith) workerLabelToWorkerFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerLabelToWorkerFindUnique) Select(params ...workerLabelPrismaFields) workerLabelToWorkerFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerLabelToWorkerFindUnique) Omit(params ...workerLabelPrismaFields) workerLabelToWorkerFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerLabelOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerLabelToWorkerFindUnique) Exec(ctx context.Context) (
+	*WorkerLabelModel,
+	error,
+) {
+	var v *WorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerLabelToWorkerFindUnique) ExecInner(ctx context.Context) (
+	*InnerWorkerLabel,
+	error,
+) {
+	var v *InnerWorkerLabel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerLabelToWorkerFindUnique) Update(params ...WorkerLabelSetParam) workerLabelToWorkerUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "WorkerLabel"
+
+	var v workerLabelToWorkerUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workerLabelToWorkerUpdateUnique struct {
+	query builder.Query
+}
+
+func (r workerLabelToWorkerUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerLabelToWorkerUpdateUnique) workerLabelModel() {}
+
+func (r workerLabelToWorkerUpdateUnique) Exec(ctx context.Context) (*WorkerLabelModel, error) {
+	var v WorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerLabelToWorkerUpdateUnique) Tx() WorkerLabelUniqueTxResult {
+	v := newWorkerLabelUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workerLabelToWorkerFindUnique) Delete() workerLabelToWorkerDeleteUnique {
+	var v workerLabelToWorkerDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "WorkerLabel"
+
+	return v
+}
+
+type workerLabelToWorkerDeleteUnique struct {
+	query builder.Query
+}
+
+func (r workerLabelToWorkerDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workerLabelToWorkerDeleteUnique) workerLabelModel() {}
+
+func (r workerLabelToWorkerDeleteUnique) Exec(ctx context.Context) (*WorkerLabelModel, error) {
+	var v WorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerLabelToWorkerDeleteUnique) Tx() WorkerLabelUniqueTxResult {
+	v := newWorkerLabelUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workerLabelToWorkerFindFirst struct {
+	query builder.Query
+}
+
+func (r workerLabelToWorkerFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerLabelToWorkerFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerLabelToWorkerFindFirst) with()                {}
+func (r workerLabelToWorkerFindFirst) workerLabelModel()    {}
+func (r workerLabelToWorkerFindFirst) workerLabelRelation() {}
+
+func (r workerLabelToWorkerFindFirst) With(params ...WorkerRelationWith) workerLabelToWorkerFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerLabelToWorkerFindFirst) Select(params ...workerLabelPrismaFields) workerLabelToWorkerFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerLabelToWorkerFindFirst) Omit(params ...workerLabelPrismaFields) workerLabelToWorkerFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerLabelOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerLabelToWorkerFindFirst) OrderBy(params ...WorkerOrderByParam) workerLabelToWorkerFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workerLabelToWorkerFindFirst) Skip(count int) workerLabelToWorkerFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerLabelToWorkerFindFirst) Take(count int) workerLabelToWorkerFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerLabelToWorkerFindFirst) Cursor(cursor WorkerLabelCursorParam) workerLabelToWorkerFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workerLabelToWorkerFindFirst) Exec(ctx context.Context) (
+	*WorkerLabelModel,
+	error,
+) {
+	var v *WorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerLabelToWorkerFindFirst) ExecInner(ctx context.Context) (
+	*InnerWorkerLabel,
+	error,
+) {
+	var v *InnerWorkerLabel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type workerLabelToWorkerFindMany struct {
+	query builder.Query
+}
+
+func (r workerLabelToWorkerFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerLabelToWorkerFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerLabelToWorkerFindMany) with()                {}
+func (r workerLabelToWorkerFindMany) workerLabelModel()    {}
+func (r workerLabelToWorkerFindMany) workerLabelRelation() {}
+
+func (r workerLabelToWorkerFindMany) With(params ...WorkerRelationWith) workerLabelToWorkerFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerLabelToWorkerFindMany) Select(params ...workerLabelPrismaFields) workerLabelToWorkerFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerLabelToWorkerFindMany) Omit(params ...workerLabelPrismaFields) workerLabelToWorkerFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerLabelOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerLabelToWorkerFindMany) OrderBy(params ...WorkerOrderByParam) workerLabelToWorkerFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workerLabelToWorkerFindMany) Skip(count int) workerLabelToWorkerFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerLabelToWorkerFindMany) Take(count int) workerLabelToWorkerFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerLabelToWorkerFindMany) Cursor(cursor WorkerLabelCursorParam) workerLabelToWorkerFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workerLabelToWorkerFindMany) Exec(ctx context.Context) (
+	[]WorkerLabelModel,
+	error,
+) {
+	var v []WorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workerLabelToWorkerFindMany) ExecInner(ctx context.Context) (
+	[]InnerWorkerLabel,
+	error,
+) {
+	var v []InnerWorkerLabel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workerLabelToWorkerFindMany) Update(params ...WorkerLabelSetParam) workerLabelToWorkerUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "WorkerLabel"
+
+	r.query.Outputs = countOutput
+
+	var v workerLabelToWorkerUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workerLabelToWorkerUpdateMany struct {
+	query builder.Query
+}
+
+func (r workerLabelToWorkerUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerLabelToWorkerUpdateMany) workerLabelModel() {}
+
+func (r workerLabelToWorkerUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerLabelToWorkerUpdateMany) Tx() WorkerLabelManyTxResult {
+	v := newWorkerLabelManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workerLabelToWorkerFindMany) Delete() workerLabelToWorkerDeleteMany {
+	var v workerLabelToWorkerDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "WorkerLabel"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type workerLabelToWorkerDeleteMany struct {
+	query builder.Query
+}
+
+func (r workerLabelToWorkerDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workerLabelToWorkerDeleteMany) workerLabelModel() {}
+
+func (r workerLabelToWorkerDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerLabelToWorkerDeleteMany) Tx() WorkerLabelManyTxResult {
+	v := newWorkerLabelManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workerLabelFindUnique struct {
+	query builder.Query
+}
+
+func (r workerLabelFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerLabelFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerLabelFindUnique) with()                {}
+func (r workerLabelFindUnique) workerLabelModel()    {}
+func (r workerLabelFindUnique) workerLabelRelation() {}
+
+func (r workerLabelActions) FindUnique(
+	params WorkerLabelEqualsUniqueWhereParam,
+) workerLabelFindUnique {
+	var v workerLabelFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "WorkerLabel"
+	v.query.Outputs = workerLabelOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r workerLabelFindUnique) With(params ...WorkerLabelRelationWith) workerLabelFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerLabelFindUnique) Select(params ...workerLabelPrismaFields) workerLabelFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerLabelFindUnique) Omit(params ...workerLabelPrismaFields) workerLabelFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerLabelOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerLabelFindUnique) Exec(ctx context.Context) (
+	*WorkerLabelModel,
+	error,
+) {
+	var v *WorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerLabelFindUnique) ExecInner(ctx context.Context) (
+	*InnerWorkerLabel,
+	error,
+) {
+	var v *InnerWorkerLabel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerLabelFindUnique) Update(params ...WorkerLabelSetParam) workerLabelUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "WorkerLabel"
+
+	var v workerLabelUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workerLabelUpdateUnique struct {
+	query builder.Query
+}
+
+func (r workerLabelUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerLabelUpdateUnique) workerLabelModel() {}
+
+func (r workerLabelUpdateUnique) Exec(ctx context.Context) (*WorkerLabelModel, error) {
+	var v WorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerLabelUpdateUnique) Tx() WorkerLabelUniqueTxResult {
+	v := newWorkerLabelUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workerLabelFindUnique) Delete() workerLabelDeleteUnique {
+	var v workerLabelDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "WorkerLabel"
+
+	return v
+}
+
+type workerLabelDeleteUnique struct {
+	query builder.Query
+}
+
+func (r workerLabelDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workerLabelDeleteUnique) workerLabelModel() {}
+
+func (r workerLabelDeleteUnique) Exec(ctx context.Context) (*WorkerLabelModel, error) {
+	var v WorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerLabelDeleteUnique) Tx() WorkerLabelUniqueTxResult {
+	v := newWorkerLabelUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workerLabelFindFirst struct {
+	query builder.Query
+}
+
+func (r workerLabelFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerLabelFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerLabelFindFirst) with()                {}
+func (r workerLabelFindFirst) workerLabelModel()    {}
+func (r workerLabelFindFirst) workerLabelRelation() {}
+
+func (r workerLabelActions) FindFirst(
+	params ...WorkerLabelWhereParam,
+) workerLabelFindFirst {
+	var v workerLabelFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "WorkerLabel"
+	v.query.Outputs = workerLabelOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r workerLabelFindFirst) With(params ...WorkerLabelRelationWith) workerLabelFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerLabelFindFirst) Select(params ...workerLabelPrismaFields) workerLabelFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerLabelFindFirst) Omit(params ...workerLabelPrismaFields) workerLabelFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerLabelOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerLabelFindFirst) OrderBy(params ...WorkerLabelOrderByParam) workerLabelFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workerLabelFindFirst) Skip(count int) workerLabelFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerLabelFindFirst) Take(count int) workerLabelFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerLabelFindFirst) Cursor(cursor WorkerLabelCursorParam) workerLabelFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workerLabelFindFirst) Exec(ctx context.Context) (
+	*WorkerLabelModel,
+	error,
+) {
+	var v *WorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerLabelFindFirst) ExecInner(ctx context.Context) (
+	*InnerWorkerLabel,
+	error,
+) {
+	var v *InnerWorkerLabel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type workerLabelFindMany struct {
+	query builder.Query
+}
+
+func (r workerLabelFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerLabelFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerLabelFindMany) with()                {}
+func (r workerLabelFindMany) workerLabelModel()    {}
+func (r workerLabelFindMany) workerLabelRelation() {}
+
+func (r workerLabelActions) FindMany(
+	params ...WorkerLabelWhereParam,
+) workerLabelFindMany {
+	var v workerLabelFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "WorkerLabel"
+	v.query.Outputs = workerLabelOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r workerLabelFindMany) With(params ...WorkerLabelRelationWith) workerLabelFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerLabelFindMany) Select(params ...workerLabelPrismaFields) workerLabelFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerLabelFindMany) Omit(params ...workerLabelPrismaFields) workerLabelFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerLabelOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerLabelFindMany) OrderBy(params ...WorkerLabelOrderByParam) workerLabelFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workerLabelFindMany) Skip(count int) workerLabelFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerLabelFindMany) Take(count int) workerLabelFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerLabelFindMany) Cursor(cursor WorkerLabelCursorParam) workerLabelFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workerLabelFindMany) Exec(ctx context.Context) (
+	[]WorkerLabelModel,
+	error,
+) {
+	var v []WorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workerLabelFindMany) ExecInner(ctx context.Context) (
+	[]InnerWorkerLabel,
+	error,
+) {
+	var v []InnerWorkerLabel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workerLabelFindMany) Update(params ...WorkerLabelSetParam) workerLabelUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "WorkerLabel"
+
+	r.query.Outputs = countOutput
+
+	var v workerLabelUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workerLabelUpdateMany struct {
+	query builder.Query
+}
+
+func (r workerLabelUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerLabelUpdateMany) workerLabelModel() {}
+
+func (r workerLabelUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerLabelUpdateMany) Tx() WorkerLabelManyTxResult {
+	v := newWorkerLabelManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workerLabelFindMany) Delete() workerLabelDeleteMany {
+	var v workerLabelDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "WorkerLabel"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type workerLabelDeleteMany struct {
+	query builder.Query
+}
+
+func (r workerLabelDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workerLabelDeleteMany) workerLabelModel() {}
+
+func (r workerLabelDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerLabelDeleteMany) Tx() WorkerLabelManyTxResult {
+	v := newWorkerLabelManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workerToLabelsFindUnique struct {
+	query builder.Query
+}
+
+func (r workerToLabelsFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToLabelsFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToLabelsFindUnique) with()           {}
+func (r workerToLabelsFindUnique) workerModel()    {}
+func (r workerToLabelsFindUnique) workerRelation() {}
+
+func (r workerToLabelsFindUnique) With(params ...WorkerLabelRelationWith) workerToLabelsFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerToLabelsFindUnique) Select(params ...workerPrismaFields) workerToLabelsFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerToLabelsFindUnique) Omit(params ...workerPrismaFields) workerToLabelsFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerToLabelsFindUnique) Exec(ctx context.Context) (
+	*WorkerModel,
+	error,
+) {
+	var v *WorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerToLabelsFindUnique) ExecInner(ctx context.Context) (
+	*InnerWorker,
+	error,
+) {
+	var v *InnerWorker
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerToLabelsFindUnique) Update(params ...WorkerSetParam) workerToLabelsUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Worker"
+
+	var v workerToLabelsUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workerToLabelsUpdateUnique struct {
+	query builder.Query
+}
+
+func (r workerToLabelsUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToLabelsUpdateUnique) workerModel() {}
+
+func (r workerToLabelsUpdateUnique) Exec(ctx context.Context) (*WorkerModel, error) {
+	var v WorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerToLabelsUpdateUnique) Tx() WorkerUniqueTxResult {
+	v := newWorkerUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workerToLabelsFindUnique) Delete() workerToLabelsDeleteUnique {
+	var v workerToLabelsDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Worker"
+
+	return v
+}
+
+type workerToLabelsDeleteUnique struct {
+	query builder.Query
+}
+
+func (r workerToLabelsDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workerToLabelsDeleteUnique) workerModel() {}
+
+func (r workerToLabelsDeleteUnique) Exec(ctx context.Context) (*WorkerModel, error) {
+	var v WorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerToLabelsDeleteUnique) Tx() WorkerUniqueTxResult {
+	v := newWorkerUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workerToLabelsFindFirst struct {
+	query builder.Query
+}
+
+func (r workerToLabelsFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToLabelsFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToLabelsFindFirst) with()           {}
+func (r workerToLabelsFindFirst) workerModel()    {}
+func (r workerToLabelsFindFirst) workerRelation() {}
+
+func (r workerToLabelsFindFirst) With(params ...WorkerLabelRelationWith) workerToLabelsFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerToLabelsFindFirst) Select(params ...workerPrismaFields) workerToLabelsFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerToLabelsFindFirst) Omit(params ...workerPrismaFields) workerToLabelsFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerToLabelsFindFirst) OrderBy(params ...WorkerLabelOrderByParam) workerToLabelsFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workerToLabelsFindFirst) Skip(count int) workerToLabelsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerToLabelsFindFirst) Take(count int) workerToLabelsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerToLabelsFindFirst) Cursor(cursor WorkerCursorParam) workerToLabelsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workerToLabelsFindFirst) Exec(ctx context.Context) (
+	*WorkerModel,
+	error,
+) {
+	var v *WorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerToLabelsFindFirst) ExecInner(ctx context.Context) (
+	*InnerWorker,
+	error,
+) {
+	var v *InnerWorker
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type workerToLabelsFindMany struct {
+	query builder.Query
+}
+
+func (r workerToLabelsFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToLabelsFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToLabelsFindMany) with()           {}
+func (r workerToLabelsFindMany) workerModel()    {}
+func (r workerToLabelsFindMany) workerRelation() {}
+
+func (r workerToLabelsFindMany) With(params ...WorkerLabelRelationWith) workerToLabelsFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerToLabelsFindMany) Select(params ...workerPrismaFields) workerToLabelsFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerToLabelsFindMany) Omit(params ...workerPrismaFields) workerToLabelsFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerToLabelsFindMany) OrderBy(params ...WorkerLabelOrderByParam) workerToLabelsFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workerToLabelsFindMany) Skip(count int) workerToLabelsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerToLabelsFindMany) Take(count int) workerToLabelsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerToLabelsFindMany) Cursor(cursor WorkerCursorParam) workerToLabelsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workerToLabelsFindMany) Exec(ctx context.Context) (
+	[]WorkerModel,
+	error,
+) {
+	var v []WorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workerToLabelsFindMany) ExecInner(ctx context.Context) (
+	[]InnerWorker,
+	error,
+) {
+	var v []InnerWorker
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workerToLabelsFindMany) Update(params ...WorkerSetParam) workerToLabelsUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Worker"
+
+	r.query.Outputs = countOutput
+
+	var v workerToLabelsUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workerToLabelsUpdateMany struct {
+	query builder.Query
+}
+
+func (r workerToLabelsUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToLabelsUpdateMany) workerModel() {}
+
+func (r workerToLabelsUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerToLabelsUpdateMany) Tx() WorkerManyTxResult {
+	v := newWorkerManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workerToLabelsFindMany) Delete() workerToLabelsDeleteMany {
+	var v workerToLabelsDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Worker"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type workerToLabelsDeleteMany struct {
+	query builder.Query
+}
+
+func (r workerToLabelsDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workerToLabelsDeleteMany) workerModel() {}
+
+func (r workerToLabelsDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerToLabelsDeleteMany) Tx() WorkerManyTxResult {
+	v := newWorkerManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 type workerToTenantFindUnique struct {
 	query builder.Query
 }
@@ -365271,6 +383147,54 @@ func (r ActionManyTxResult) Result() (v *BatchResult) {
 	return v
 }
 
+func newStepDesiredWorkerLabelUniqueTxResult() StepDesiredWorkerLabelUniqueTxResult {
+	return StepDesiredWorkerLabelUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type StepDesiredWorkerLabelUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p StepDesiredWorkerLabelUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p StepDesiredWorkerLabelUniqueTxResult) IsTx() {}
+
+func (r StepDesiredWorkerLabelUniqueTxResult) Result() (v *StepDesiredWorkerLabelModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newStepDesiredWorkerLabelManyTxResult() StepDesiredWorkerLabelManyTxResult {
+	return StepDesiredWorkerLabelManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type StepDesiredWorkerLabelManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p StepDesiredWorkerLabelManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p StepDesiredWorkerLabelManyTxResult) IsTx() {}
+
+func (r StepDesiredWorkerLabelManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
 func newStepUniqueTxResult() StepUniqueTxResult {
 	return StepUniqueTxResult{
 		result: &transaction.Result{},
@@ -365409,6 +383333,54 @@ func (p RateLimitManyTxResult) ExtractQuery() builder.Query {
 func (p RateLimitManyTxResult) IsTx() {}
 
 func (r RateLimitManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newWorkflowRunStickyStateUniqueTxResult() WorkflowRunStickyStateUniqueTxResult {
+	return WorkflowRunStickyStateUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type WorkflowRunStickyStateUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p WorkflowRunStickyStateUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p WorkflowRunStickyStateUniqueTxResult) IsTx() {}
+
+func (r WorkflowRunStickyStateUniqueTxResult) Result() (v *WorkflowRunStickyStateModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newWorkflowRunStickyStateManyTxResult() WorkflowRunStickyStateManyTxResult {
+	return WorkflowRunStickyStateManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type WorkflowRunStickyStateManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p WorkflowRunStickyStateManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p WorkflowRunStickyStateManyTxResult) IsTx() {}
+
+func (r WorkflowRunStickyStateManyTxResult) Result() (v *BatchResult) {
 	if err := r.result.Get(r.query.TxResult, &v); err != nil {
 		panic(err)
 	}
@@ -365889,6 +383861,54 @@ func (p TickerManyTxResult) ExtractQuery() builder.Query {
 func (p TickerManyTxResult) IsTx() {}
 
 func (r TickerManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newWorkerLabelUniqueTxResult() WorkerLabelUniqueTxResult {
+	return WorkerLabelUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type WorkerLabelUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p WorkerLabelUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p WorkerLabelUniqueTxResult) IsTx() {}
+
+func (r WorkerLabelUniqueTxResult) Result() (v *WorkerLabelModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newWorkerLabelManyTxResult() WorkerLabelManyTxResult {
+	return WorkerLabelManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type WorkerLabelManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p WorkerLabelManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p WorkerLabelManyTxResult) IsTx() {}
+
+func (r WorkerLabelManyTxResult) Result() (v *BatchResult) {
 	if err := r.result.Get(r.query.TxResult, &v); err != nil {
 		panic(err)
 	}
@@ -369346,6 +387366,124 @@ func (r actionUpsertOne) Tx() ActionUniqueTxResult {
 	return v
 }
 
+type stepDesiredWorkerLabelUpsertOne struct {
+	query builder.Query
+}
+
+func (r stepDesiredWorkerLabelUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r stepDesiredWorkerLabelUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepDesiredWorkerLabelUpsertOne) with()                           {}
+func (r stepDesiredWorkerLabelUpsertOne) stepDesiredWorkerLabelModel()    {}
+func (r stepDesiredWorkerLabelUpsertOne) stepDesiredWorkerLabelRelation() {}
+
+func (r stepDesiredWorkerLabelActions) UpsertOne(
+	params StepDesiredWorkerLabelEqualsUniqueWhereParam,
+) stepDesiredWorkerLabelUpsertOne {
+	var v stepDesiredWorkerLabelUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "StepDesiredWorkerLabel"
+	v.query.Outputs = stepDesiredWorkerLabelOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r stepDesiredWorkerLabelUpsertOne) Create(
+
+	_step StepDesiredWorkerLabelWithPrismaStepSetParam,
+	_key StepDesiredWorkerLabelWithPrismaKeySetParam,
+	_required StepDesiredWorkerLabelWithPrismaRequiredSetParam,
+	_comparator StepDesiredWorkerLabelWithPrismaComparatorSetParam,
+	_weight StepDesiredWorkerLabelWithPrismaWeightSetParam,
+
+	optional ...StepDesiredWorkerLabelSetParam,
+) stepDesiredWorkerLabelUpsertOne {
+	var v stepDesiredWorkerLabelUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _step.field())
+	fields = append(fields, _key.field())
+	fields = append(fields, _required.field())
+	fields = append(fields, _comparator.field())
+	fields = append(fields, _weight.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r stepDesiredWorkerLabelUpsertOne) Update(
+	params ...StepDesiredWorkerLabelSetParam,
+) stepDesiredWorkerLabelUpsertOne {
+	var v stepDesiredWorkerLabelUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r stepDesiredWorkerLabelUpsertOne) Exec(ctx context.Context) (*StepDesiredWorkerLabelModel, error) {
+	var v StepDesiredWorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepDesiredWorkerLabelUpsertOne) Tx() StepDesiredWorkerLabelUniqueTxResult {
+	v := newStepDesiredWorkerLabelUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 type stepUpsertOne struct {
 	query builder.Query
 }
@@ -369689,6 +387827,120 @@ func (r rateLimitUpsertOne) Exec(ctx context.Context) (*RateLimitModel, error) {
 
 func (r rateLimitUpsertOne) Tx() RateLimitUniqueTxResult {
 	v := newRateLimitUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workflowRunStickyStateUpsertOne struct {
+	query builder.Query
+}
+
+func (r workflowRunStickyStateUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunStickyStateUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunStickyStateUpsertOne) with()                           {}
+func (r workflowRunStickyStateUpsertOne) workflowRunStickyStateModel()    {}
+func (r workflowRunStickyStateUpsertOne) workflowRunStickyStateRelation() {}
+
+func (r workflowRunStickyStateActions) UpsertOne(
+	params WorkflowRunStickyStateEqualsUniqueWhereParam,
+) workflowRunStickyStateUpsertOne {
+	var v workflowRunStickyStateUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "WorkflowRunStickyState"
+	v.query.Outputs = workflowRunStickyStateOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r workflowRunStickyStateUpsertOne) Create(
+
+	_tenantID WorkflowRunStickyStateWithPrismaTenantIDSetParam,
+	_workflowRun WorkflowRunStickyStateWithPrismaWorkflowRunSetParam,
+	_strategy WorkflowRunStickyStateWithPrismaStrategySetParam,
+
+	optional ...WorkflowRunStickyStateSetParam,
+) workflowRunStickyStateUpsertOne {
+	var v workflowRunStickyStateUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _tenantID.field())
+	fields = append(fields, _workflowRun.field())
+	fields = append(fields, _strategy.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r workflowRunStickyStateUpsertOne) Update(
+	params ...WorkflowRunStickyStateSetParam,
+) workflowRunStickyStateUpsertOne {
+	var v workflowRunStickyStateUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r workflowRunStickyStateUpsertOne) Exec(ctx context.Context) (*WorkflowRunStickyStateModel, error) {
+	var v WorkflowRunStickyStateModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunStickyStateUpsertOne) Tx() WorkflowRunStickyStateUniqueTxResult {
+	v := newWorkflowRunStickyStateUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -370807,6 +389059,118 @@ func (r tickerUpsertOne) Exec(ctx context.Context) (*TickerModel, error) {
 
 func (r tickerUpsertOne) Tx() TickerUniqueTxResult {
 	v := newTickerUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workerLabelUpsertOne struct {
+	query builder.Query
+}
+
+func (r workerLabelUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerLabelUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerLabelUpsertOne) with()                {}
+func (r workerLabelUpsertOne) workerLabelModel()    {}
+func (r workerLabelUpsertOne) workerLabelRelation() {}
+
+func (r workerLabelActions) UpsertOne(
+	params WorkerLabelEqualsUniqueWhereParam,
+) workerLabelUpsertOne {
+	var v workerLabelUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "WorkerLabel"
+	v.query.Outputs = workerLabelOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r workerLabelUpsertOne) Create(
+
+	_worker WorkerLabelWithPrismaWorkerSetParam,
+	_key WorkerLabelWithPrismaKeySetParam,
+
+	optional ...WorkerLabelSetParam,
+) workerLabelUpsertOne {
+	var v workerLabelUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _worker.field())
+	fields = append(fields, _key.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r workerLabelUpsertOne) Update(
+	params ...WorkerLabelSetParam,
+) workerLabelUpsertOne {
+	var v workerLabelUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r workerLabelUpsertOne) Exec(ctx context.Context) (*WorkerLabelModel, error) {
+	var v WorkerLabelModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerLabelUpsertOne) Tx() WorkerLabelUniqueTxResult {
+	v := newWorkerLabelUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
