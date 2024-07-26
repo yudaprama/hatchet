@@ -280,6 +280,7 @@ model Tenant {
   limits              TenantResourceLimit[]
   limitAlerts         TenantResourceLimitAlert[]
   webhookWorkers      WebhookWorker[]
+  dedupes             WorkflowRunDedupe[]
 
   @@index([controllerPartitionId])
   @@index([workerPartitionId])
@@ -1000,6 +1001,29 @@ model WorkflowRun {
   @@index([finishedAt])
   @@index([status])
   @@index([deletedAt])
+}
+
+model WorkflowRunDedupe {
+  id        BigInt   @unique @default(autoincrement()) @db.BigInt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  // the parent tenant
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  tenantId String @db.Uuid
+
+  // the parent workflow
+  workflowId String @db.Uuid
+
+  // the workflow run id which used this dedupe value
+  workflowRunId String @db.Uuid
+
+  // the dedupe value
+  value String
+
+  // DO NOT REMOVE - this uniqueness constraint is cased on in code
+  @@unique([tenantId, workflowId, value])
+  @@index([tenantId, value])
 }
 
 model GetGroupKeyRun {
@@ -1793,6 +1817,7 @@ func newClient() *PrismaClient {
 	c.RateLimit = rateLimitActions{client: c}
 	c.WorkflowRunStickyState = workflowRunStickyStateActions{client: c}
 	c.WorkflowRun = workflowRunActions{client: c}
+	c.WorkflowRunDedupe = workflowRunDedupeActions{client: c}
 	c.GetGroupKeyRun = getGroupKeyRunActions{client: c}
 	c.WorkflowRunTriggeredBy = workflowRunTriggeredByActions{client: c}
 	c.JobRun = jobRunActions{client: c}
@@ -1902,6 +1927,8 @@ type PrismaClient struct {
 	WorkflowRunStickyState workflowRunStickyStateActions
 	// WorkflowRun provides access to CRUD methods.
 	WorkflowRun workflowRunActions
+	// WorkflowRunDedupe provides access to CRUD methods.
+	WorkflowRunDedupe workflowRunDedupeActions
 	// GetGroupKeyRun provides access to CRUD methods.
 	GetGroupKeyRun getGroupKeyRunActions
 	// WorkflowRunTriggeredBy provides access to CRUD methods.
@@ -2518,6 +2545,18 @@ const (
 	WorkflowRunScalarFieldEnumAdditionalMetadata WorkflowRunScalarFieldEnum = "additionalMetadata"
 )
 
+type WorkflowRunDedupeScalarFieldEnum string
+
+const (
+	WorkflowRunDedupeScalarFieldEnumID            WorkflowRunDedupeScalarFieldEnum = "id"
+	WorkflowRunDedupeScalarFieldEnumCreatedAt     WorkflowRunDedupeScalarFieldEnum = "createdAt"
+	WorkflowRunDedupeScalarFieldEnumUpdatedAt     WorkflowRunDedupeScalarFieldEnum = "updatedAt"
+	WorkflowRunDedupeScalarFieldEnumTenantID      WorkflowRunDedupeScalarFieldEnum = "tenantId"
+	WorkflowRunDedupeScalarFieldEnumWorkflowID    WorkflowRunDedupeScalarFieldEnum = "workflowId"
+	WorkflowRunDedupeScalarFieldEnumWorkflowRunID WorkflowRunDedupeScalarFieldEnum = "workflowRunId"
+	WorkflowRunDedupeScalarFieldEnumValue         WorkflowRunDedupeScalarFieldEnum = "value"
+)
+
 type GetGroupKeyRunScalarFieldEnum string
 
 const (
@@ -3101,6 +3140,8 @@ const tenantFieldLimitAlerts tenantPrismaFields = "limitAlerts"
 
 const tenantFieldWebhookWorkers tenantPrismaFields = "webhookWorkers"
 
+const tenantFieldDedupes tenantPrismaFields = "dedupes"
+
 type tenantResourceLimitPrismaFields = prismaFields
 
 const tenantResourceLimitFieldID tenantResourceLimitPrismaFields = "id"
@@ -3676,6 +3717,24 @@ const workflowRunFieldChildIndex workflowRunPrismaFields = "childIndex"
 const workflowRunFieldChildKey workflowRunPrismaFields = "childKey"
 
 const workflowRunFieldAdditionalMetadata workflowRunPrismaFields = "additionalMetadata"
+
+type workflowRunDedupePrismaFields = prismaFields
+
+const workflowRunDedupeFieldID workflowRunDedupePrismaFields = "id"
+
+const workflowRunDedupeFieldCreatedAt workflowRunDedupePrismaFields = "createdAt"
+
+const workflowRunDedupeFieldUpdatedAt workflowRunDedupePrismaFields = "updatedAt"
+
+const workflowRunDedupeFieldTenant workflowRunDedupePrismaFields = "tenant"
+
+const workflowRunDedupeFieldTenantID workflowRunDedupePrismaFields = "tenantId"
+
+const workflowRunDedupeFieldWorkflowID workflowRunDedupePrismaFields = "workflowId"
+
+const workflowRunDedupeFieldWorkflowRunID workflowRunDedupePrismaFields = "workflowRunId"
+
+const workflowRunDedupeFieldValue workflowRunDedupePrismaFields = "value"
 
 type getGroupKeyRunPrismaFields = prismaFields
 
@@ -4361,6 +4420,10 @@ func NewMock() (*PrismaClient, *Mock, func(t *testing.T)) {
 		mock: m,
 	}
 
+	m.WorkflowRunDedupe = workflowRunDedupeMock{
+		mock: m,
+	}
+
 	m.GetGroupKeyRun = getGroupKeyRunMock{
 		mock: m,
 	}
@@ -4514,6 +4577,8 @@ type Mock struct {
 	WorkflowRunStickyState workflowRunStickyStateMock
 
 	WorkflowRun workflowRunMock
+
+	WorkflowRunDedupe workflowRunDedupeMock
 
 	GetGroupKeyRun getGroupKeyRunMock
 
@@ -5902,6 +5967,48 @@ func (m *workflowRunMockExec) Errors(err error) {
 	})
 }
 
+type workflowRunDedupeMock struct {
+	mock *Mock
+}
+
+type WorkflowRunDedupeMockExpectParam interface {
+	ExtractQuery() builder.Query
+	workflowRunDedupeModel()
+}
+
+func (m *workflowRunDedupeMock) Expect(query WorkflowRunDedupeMockExpectParam) *workflowRunDedupeMockExec {
+	return &workflowRunDedupeMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type workflowRunDedupeMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *workflowRunDedupeMockExec) Returns(v WorkflowRunDedupeModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *workflowRunDedupeMockExec) ReturnsMany(v []WorkflowRunDedupeModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *workflowRunDedupeMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
 type getGroupKeyRunMock struct {
 	mock *Mock
 }
@@ -7272,6 +7379,7 @@ type RelationsTenant struct {
 	Limits              []TenantResourceLimitModel      `json:"limits,omitempty"`
 	LimitAlerts         []TenantResourceLimitAlertModel `json:"limitAlerts,omitempty"`
 	WebhookWorkers      []WebhookWorkerModel            `json:"webhookWorkers,omitempty"`
+	Dedupes             []WorkflowRunDedupeModel        `json:"dedupes,omitempty"`
 }
 
 func (r TenantModel) DeletedAt() (value DateTime, ok bool) {
@@ -7517,6 +7625,13 @@ func (r TenantModel) WebhookWorkers() (value []WebhookWorkerModel) {
 		panic("attempted to access webhookWorkers but did not fetch it using the .With() syntax")
 	}
 	return r.RelationsTenant.WebhookWorkers
+}
+
+func (r TenantModel) Dedupes() (value []WorkflowRunDedupeModel) {
+	if r.RelationsTenant.Dedupes == nil {
+		panic("attempted to access dedupes but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsTenant.Dedupes
 }
 
 // TenantResourceLimitModel represents the TenantResourceLimit model and is a wrapper for accessing fields and methods
@@ -9287,6 +9402,46 @@ func (r WorkflowRunModel) AdditionalMetadata() (value JSON, ok bool) {
 		return value, false
 	}
 	return *r.InnerWorkflowRun.AdditionalMetadata, true
+}
+
+// WorkflowRunDedupeModel represents the WorkflowRunDedupe model and is a wrapper for accessing fields and methods
+type WorkflowRunDedupeModel struct {
+	InnerWorkflowRunDedupe
+	RelationsWorkflowRunDedupe
+}
+
+// InnerWorkflowRunDedupe holds the actual data
+type InnerWorkflowRunDedupe struct {
+	ID            BigInt   `json:"id"`
+	CreatedAt     DateTime `json:"createdAt"`
+	UpdatedAt     DateTime `json:"updatedAt"`
+	TenantID      string   `json:"tenantId"`
+	WorkflowID    string   `json:"workflowId"`
+	WorkflowRunID string   `json:"workflowRunId"`
+	Value         string   `json:"value"`
+}
+
+// RawWorkflowRunDedupeModel is a struct for WorkflowRunDedupe when used in raw queries
+type RawWorkflowRunDedupeModel struct {
+	ID            RawBigInt   `json:"id"`
+	CreatedAt     RawDateTime `json:"createdAt"`
+	UpdatedAt     RawDateTime `json:"updatedAt"`
+	TenantID      RawString   `json:"tenantId"`
+	WorkflowID    RawString   `json:"workflowId"`
+	WorkflowRunID RawString   `json:"workflowRunId"`
+	Value         RawString   `json:"value"`
+}
+
+// RelationsWorkflowRunDedupe holds the relation data separately
+type RelationsWorkflowRunDedupe struct {
+	Tenant *TenantModel `json:"tenant,omitempty"`
+}
+
+func (r WorkflowRunDedupeModel) Tenant() (value *TenantModel) {
+	if r.RelationsWorkflowRunDedupe.Tenant == nil {
+		panic("attempted to access tenant but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsWorkflowRunDedupe.Tenant
 }
 
 // GetGroupKeyRunModel represents the GetGroupKeyRun model and is a wrapper for accessing fields and methods
@@ -28158,6 +28313,8 @@ type tenantQuery struct {
 	LimitAlerts tenantQueryLimitAlertsRelations
 
 	WebhookWorkers tenantQueryWebhookWorkersRelations
+
+	Dedupes tenantQueryDedupesRelations
 }
 
 func (tenantQuery) Not(params ...TenantWhereParam) tenantDefaultParam {
@@ -36747,6 +36904,178 @@ func (r tenantQueryWebhookWorkersRelations) Unlink(
 
 func (r tenantQueryWebhookWorkersWebhookWorker) Field() tenantPrismaFields {
 	return tenantFieldWebhookWorkers
+}
+
+// base struct
+type tenantQueryDedupesWorkflowRunDedupe struct{}
+
+type tenantQueryDedupesRelations struct{}
+
+// Tenant -> Dedupes
+//
+// @relation
+// @required
+func (tenantQueryDedupesRelations) Some(
+	params ...WorkflowRunDedupeWhereParam,
+) tenantDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "dedupes",
+			Fields: []builder.Field{
+				{
+					Name:   "some",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Tenant -> Dedupes
+//
+// @relation
+// @required
+func (tenantQueryDedupesRelations) Every(
+	params ...WorkflowRunDedupeWhereParam,
+) tenantDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "dedupes",
+			Fields: []builder.Field{
+				{
+					Name:   "every",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Tenant -> Dedupes
+//
+// @relation
+// @required
+func (tenantQueryDedupesRelations) None(
+	params ...WorkflowRunDedupeWhereParam,
+) tenantDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "dedupes",
+			Fields: []builder.Field{
+				{
+					Name:   "none",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (tenantQueryDedupesRelations) Fetch(
+
+	params ...WorkflowRunDedupeWhereParam,
+
+) tenantToDedupesFindMany {
+	var v tenantToDedupesFindMany
+
+	v.query.Operation = "query"
+	v.query.Method = "dedupes"
+	v.query.Outputs = workflowRunDedupeOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r tenantQueryDedupesRelations) Link(
+	params ...WorkflowRunDedupeWhereParam,
+) tenantSetParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tenantSetParam{
+		data: builder.Field{
+			Name: "dedupes",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+
+					List:     true,
+					WrapList: true,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQueryDedupesRelations) Unlink(
+	params ...WorkflowRunDedupeWhereParam,
+) tenantSetParam {
+	var v tenantSetParam
+
+	var fields []builder.Field
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+	v = tenantSetParam{
+		data: builder.Field{
+			Name: "dedupes",
+			Fields: []builder.Field{
+				{
+					Name:     "disconnect",
+					List:     true,
+					WrapList: true,
+					Fields:   builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r tenantQueryDedupesWorkflowRunDedupe) Field() tenantPrismaFields {
+	return tenantFieldDedupes
 }
 
 // TenantResourceLimit acts as a namespaces to access query methods for the TenantResourceLimit model
@@ -109965,6 +110294,2524 @@ func (r workflowRunQueryAdditionalMetadataJson) NotIfPresent(value *JSONNullValu
 
 func (r workflowRunQueryAdditionalMetadataJson) Field() workflowRunPrismaFields {
 	return workflowRunFieldAdditionalMetadata
+}
+
+// WorkflowRunDedupe acts as a namespaces to access query methods for the WorkflowRunDedupe model
+var WorkflowRunDedupe = workflowRunDedupeQuery{}
+
+// workflowRunDedupeQuery exposes query functions for the workflowRunDedupe model
+type workflowRunDedupeQuery struct {
+
+	// ID
+	//
+	// @required
+	// @unique
+	ID workflowRunDedupeQueryIDBigInt
+
+	// CreatedAt
+	//
+	// @required
+	CreatedAt workflowRunDedupeQueryCreatedAtDateTime
+
+	// UpdatedAt
+	//
+	// @required
+	UpdatedAt workflowRunDedupeQueryUpdatedAtDateTime
+
+	Tenant workflowRunDedupeQueryTenantRelations
+
+	// TenantID
+	//
+	// @required
+	TenantID workflowRunDedupeQueryTenantIDString
+
+	// WorkflowID
+	//
+	// @required
+	WorkflowID workflowRunDedupeQueryWorkflowIDString
+
+	// WorkflowRunID
+	//
+	// @required
+	WorkflowRunID workflowRunDedupeQueryWorkflowRunIDString
+
+	// Value
+	//
+	// @required
+	Value workflowRunDedupeQueryValueString
+}
+
+func (workflowRunDedupeQuery) Not(params ...WorkflowRunDedupeWhereParam) workflowRunDedupeDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (workflowRunDedupeQuery) Or(params ...WorkflowRunDedupeWhereParam) workflowRunDedupeDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (workflowRunDedupeQuery) And(params ...WorkflowRunDedupeWhereParam) workflowRunDedupeDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (workflowRunDedupeQuery) TenantIDWorkflowIDValue(
+	_tenantID WorkflowRunDedupeWithPrismaTenantIDWhereParam,
+
+	_workflowID WorkflowRunDedupeWithPrismaWorkflowIDWhereParam,
+
+	_value WorkflowRunDedupeWithPrismaValueWhereParam,
+) WorkflowRunDedupeEqualsUniqueWhereParam {
+	var fields []builder.Field
+
+	fields = append(fields, _tenantID.field())
+	fields = append(fields, _workflowID.field())
+	fields = append(fields, _value.field())
+
+	return workflowRunDedupeEqualsUniqueParam{
+		data: builder.Field{
+			Name:   "tenantId_workflowId_value",
+			Fields: builder.TransformEquals(fields),
+		},
+	}
+}
+
+// base struct
+type workflowRunDedupeQueryIDBigInt struct{}
+
+// Set the required value of ID
+func (r workflowRunDedupeQueryIDBigInt) Set(value BigInt) workflowRunDedupeSetParam {
+
+	return workflowRunDedupeSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r workflowRunDedupeQueryIDBigInt) SetIfPresent(value *BigInt) workflowRunDedupeSetParam {
+	if value == nil {
+		return workflowRunDedupeSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the required value of ID
+func (r workflowRunDedupeQueryIDBigInt) Increment(value BigInt) workflowRunDedupeSetParam {
+	return workflowRunDedupeSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryIDBigInt) IncrementIfPresent(value *BigInt) workflowRunDedupeSetParam {
+	if value == nil {
+		return workflowRunDedupeSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the required value of ID
+func (r workflowRunDedupeQueryIDBigInt) Decrement(value BigInt) workflowRunDedupeSetParam {
+	return workflowRunDedupeSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryIDBigInt) DecrementIfPresent(value *BigInt) workflowRunDedupeSetParam {
+	if value == nil {
+		return workflowRunDedupeSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the required value of ID
+func (r workflowRunDedupeQueryIDBigInt) Multiply(value BigInt) workflowRunDedupeSetParam {
+	return workflowRunDedupeSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryIDBigInt) MultiplyIfPresent(value *BigInt) workflowRunDedupeSetParam {
+	if value == nil {
+		return workflowRunDedupeSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the required value of ID
+func (r workflowRunDedupeQueryIDBigInt) Divide(value BigInt) workflowRunDedupeSetParam {
+	return workflowRunDedupeSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryIDBigInt) DivideIfPresent(value *BigInt) workflowRunDedupeSetParam {
+	if value == nil {
+		return workflowRunDedupeSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r workflowRunDedupeQueryIDBigInt) Equals(value BigInt) workflowRunDedupeWithPrismaIDEqualsUniqueParam {
+
+	return workflowRunDedupeWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryIDBigInt) EqualsIfPresent(value *BigInt) workflowRunDedupeWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return workflowRunDedupeWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowRunDedupeQueryIDBigInt) Order(direction SortOrder) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryIDBigInt) Cursor(cursor BigInt) workflowRunDedupeCursorParam {
+	return workflowRunDedupeCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryIDBigInt) In(value []BigInt) workflowRunDedupeParamUnique {
+	return workflowRunDedupeParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryIDBigInt) InIfPresent(value []BigInt) workflowRunDedupeParamUnique {
+	if value == nil {
+		return workflowRunDedupeParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r workflowRunDedupeQueryIDBigInt) NotIn(value []BigInt) workflowRunDedupeParamUnique {
+	return workflowRunDedupeParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryIDBigInt) NotInIfPresent(value []BigInt) workflowRunDedupeParamUnique {
+	if value == nil {
+		return workflowRunDedupeParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowRunDedupeQueryIDBigInt) Lt(value BigInt) workflowRunDedupeParamUnique {
+	return workflowRunDedupeParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryIDBigInt) LtIfPresent(value *BigInt) workflowRunDedupeParamUnique {
+	if value == nil {
+		return workflowRunDedupeParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowRunDedupeQueryIDBigInt) Lte(value BigInt) workflowRunDedupeParamUnique {
+	return workflowRunDedupeParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryIDBigInt) LteIfPresent(value *BigInt) workflowRunDedupeParamUnique {
+	if value == nil {
+		return workflowRunDedupeParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowRunDedupeQueryIDBigInt) Gt(value BigInt) workflowRunDedupeParamUnique {
+	return workflowRunDedupeParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryIDBigInt) GtIfPresent(value *BigInt) workflowRunDedupeParamUnique {
+	if value == nil {
+		return workflowRunDedupeParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowRunDedupeQueryIDBigInt) Gte(value BigInt) workflowRunDedupeParamUnique {
+	return workflowRunDedupeParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryIDBigInt) GteIfPresent(value *BigInt) workflowRunDedupeParamUnique {
+	if value == nil {
+		return workflowRunDedupeParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowRunDedupeQueryIDBigInt) Not(value BigInt) workflowRunDedupeParamUnique {
+	return workflowRunDedupeParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryIDBigInt) NotIfPresent(value *BigInt) workflowRunDedupeParamUnique {
+	if value == nil {
+		return workflowRunDedupeParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+func (r workflowRunDedupeQueryIDBigInt) Field() workflowRunDedupePrismaFields {
+	return workflowRunDedupeFieldID
+}
+
+// base struct
+type workflowRunDedupeQueryCreatedAtDateTime struct{}
+
+// Set the required value of CreatedAt
+func (r workflowRunDedupeQueryCreatedAtDateTime) Set(value DateTime) workflowRunDedupeSetParam {
+
+	return workflowRunDedupeSetParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of CreatedAt dynamically
+func (r workflowRunDedupeQueryCreatedAtDateTime) SetIfPresent(value *DateTime) workflowRunDedupeSetParam {
+	if value == nil {
+		return workflowRunDedupeSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowRunDedupeQueryCreatedAtDateTime) Equals(value DateTime) workflowRunDedupeWithPrismaCreatedAtEqualsParam {
+
+	return workflowRunDedupeWithPrismaCreatedAtEqualsParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryCreatedAtDateTime) EqualsIfPresent(value *DateTime) workflowRunDedupeWithPrismaCreatedAtEqualsParam {
+	if value == nil {
+		return workflowRunDedupeWithPrismaCreatedAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowRunDedupeQueryCreatedAtDateTime) Order(direction SortOrder) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryCreatedAtDateTime) Cursor(cursor DateTime) workflowRunDedupeCursorParam {
+	return workflowRunDedupeCursorParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryCreatedAtDateTime) In(value []DateTime) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryCreatedAtDateTime) InIfPresent(value []DateTime) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowRunDedupeQueryCreatedAtDateTime) NotIn(value []DateTime) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryCreatedAtDateTime) NotInIfPresent(value []DateTime) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowRunDedupeQueryCreatedAtDateTime) Lt(value DateTime) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryCreatedAtDateTime) LtIfPresent(value *DateTime) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowRunDedupeQueryCreatedAtDateTime) Lte(value DateTime) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryCreatedAtDateTime) LteIfPresent(value *DateTime) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowRunDedupeQueryCreatedAtDateTime) Gt(value DateTime) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryCreatedAtDateTime) GtIfPresent(value *DateTime) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowRunDedupeQueryCreatedAtDateTime) Gte(value DateTime) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryCreatedAtDateTime) GteIfPresent(value *DateTime) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowRunDedupeQueryCreatedAtDateTime) Not(value DateTime) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryCreatedAtDateTime) NotIfPresent(value *DateTime) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r workflowRunDedupeQueryCreatedAtDateTime) Before(value DateTime) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r workflowRunDedupeQueryCreatedAtDateTime) BeforeIfPresent(value *DateTime) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r workflowRunDedupeQueryCreatedAtDateTime) After(value DateTime) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r workflowRunDedupeQueryCreatedAtDateTime) AfterIfPresent(value *DateTime) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r workflowRunDedupeQueryCreatedAtDateTime) BeforeEquals(value DateTime) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r workflowRunDedupeQueryCreatedAtDateTime) BeforeEqualsIfPresent(value *DateTime) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r workflowRunDedupeQueryCreatedAtDateTime) AfterEquals(value DateTime) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r workflowRunDedupeQueryCreatedAtDateTime) AfterEqualsIfPresent(value *DateTime) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r workflowRunDedupeQueryCreatedAtDateTime) Field() workflowRunDedupePrismaFields {
+	return workflowRunDedupeFieldCreatedAt
+}
+
+// base struct
+type workflowRunDedupeQueryUpdatedAtDateTime struct{}
+
+// Set the required value of UpdatedAt
+func (r workflowRunDedupeQueryUpdatedAtDateTime) Set(value DateTime) workflowRunDedupeSetParam {
+
+	return workflowRunDedupeSetParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of UpdatedAt dynamically
+func (r workflowRunDedupeQueryUpdatedAtDateTime) SetIfPresent(value *DateTime) workflowRunDedupeSetParam {
+	if value == nil {
+		return workflowRunDedupeSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowRunDedupeQueryUpdatedAtDateTime) Equals(value DateTime) workflowRunDedupeWithPrismaUpdatedAtEqualsParam {
+
+	return workflowRunDedupeWithPrismaUpdatedAtEqualsParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryUpdatedAtDateTime) EqualsIfPresent(value *DateTime) workflowRunDedupeWithPrismaUpdatedAtEqualsParam {
+	if value == nil {
+		return workflowRunDedupeWithPrismaUpdatedAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowRunDedupeQueryUpdatedAtDateTime) Order(direction SortOrder) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryUpdatedAtDateTime) Cursor(cursor DateTime) workflowRunDedupeCursorParam {
+	return workflowRunDedupeCursorParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryUpdatedAtDateTime) In(value []DateTime) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryUpdatedAtDateTime) InIfPresent(value []DateTime) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowRunDedupeQueryUpdatedAtDateTime) NotIn(value []DateTime) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryUpdatedAtDateTime) NotInIfPresent(value []DateTime) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowRunDedupeQueryUpdatedAtDateTime) Lt(value DateTime) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryUpdatedAtDateTime) LtIfPresent(value *DateTime) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowRunDedupeQueryUpdatedAtDateTime) Lte(value DateTime) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryUpdatedAtDateTime) LteIfPresent(value *DateTime) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowRunDedupeQueryUpdatedAtDateTime) Gt(value DateTime) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryUpdatedAtDateTime) GtIfPresent(value *DateTime) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowRunDedupeQueryUpdatedAtDateTime) Gte(value DateTime) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryUpdatedAtDateTime) GteIfPresent(value *DateTime) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowRunDedupeQueryUpdatedAtDateTime) Not(value DateTime) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryUpdatedAtDateTime) NotIfPresent(value *DateTime) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r workflowRunDedupeQueryUpdatedAtDateTime) Before(value DateTime) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r workflowRunDedupeQueryUpdatedAtDateTime) BeforeIfPresent(value *DateTime) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r workflowRunDedupeQueryUpdatedAtDateTime) After(value DateTime) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r workflowRunDedupeQueryUpdatedAtDateTime) AfterIfPresent(value *DateTime) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r workflowRunDedupeQueryUpdatedAtDateTime) BeforeEquals(value DateTime) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r workflowRunDedupeQueryUpdatedAtDateTime) BeforeEqualsIfPresent(value *DateTime) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r workflowRunDedupeQueryUpdatedAtDateTime) AfterEquals(value DateTime) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r workflowRunDedupeQueryUpdatedAtDateTime) AfterEqualsIfPresent(value *DateTime) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r workflowRunDedupeQueryUpdatedAtDateTime) Field() workflowRunDedupePrismaFields {
+	return workflowRunDedupeFieldUpdatedAt
+}
+
+// base struct
+type workflowRunDedupeQueryTenantTenant struct{}
+
+type workflowRunDedupeQueryTenantRelations struct{}
+
+// WorkflowRunDedupe -> Tenant
+//
+// @relation
+// @required
+func (workflowRunDedupeQueryTenantRelations) Where(
+	params ...TenantWhereParam,
+) workflowRunDedupeDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "tenant",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (workflowRunDedupeQueryTenantRelations) Fetch() workflowRunDedupeToTenantFindUnique {
+	var v workflowRunDedupeToTenantFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "tenant"
+	v.query.Outputs = tenantOutput
+
+	return v
+}
+
+func (r workflowRunDedupeQueryTenantRelations) Link(
+	params TenantWhereParam,
+) workflowRunDedupeWithPrismaTenantSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return workflowRunDedupeWithPrismaTenantSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return workflowRunDedupeWithPrismaTenantSetParam{
+		data: builder.Field{
+			Name: "tenant",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryTenantRelations) Unlink() workflowRunDedupeWithPrismaTenantSetParam {
+	var v workflowRunDedupeWithPrismaTenantSetParam
+
+	v = workflowRunDedupeWithPrismaTenantSetParam{
+		data: builder.Field{
+			Name: "tenant",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r workflowRunDedupeQueryTenantTenant) Field() workflowRunDedupePrismaFields {
+	return workflowRunDedupeFieldTenant
+}
+
+// base struct
+type workflowRunDedupeQueryTenantIDString struct{}
+
+// Set the required value of TenantID
+func (r workflowRunDedupeQueryTenantIDString) Set(value string) workflowRunDedupeSetParam {
+
+	return workflowRunDedupeSetParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of TenantID dynamically
+func (r workflowRunDedupeQueryTenantIDString) SetIfPresent(value *String) workflowRunDedupeSetParam {
+	if value == nil {
+		return workflowRunDedupeSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowRunDedupeQueryTenantIDString) Equals(value string) workflowRunDedupeWithPrismaTenantIDEqualsParam {
+
+	return workflowRunDedupeWithPrismaTenantIDEqualsParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryTenantIDString) EqualsIfPresent(value *string) workflowRunDedupeWithPrismaTenantIDEqualsParam {
+	if value == nil {
+		return workflowRunDedupeWithPrismaTenantIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowRunDedupeQueryTenantIDString) Order(direction SortOrder) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryTenantIDString) Cursor(cursor string) workflowRunDedupeCursorParam {
+	return workflowRunDedupeCursorParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryTenantIDString) In(value []string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryTenantIDString) InIfPresent(value []string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowRunDedupeQueryTenantIDString) NotIn(value []string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryTenantIDString) NotInIfPresent(value []string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowRunDedupeQueryTenantIDString) Lt(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryTenantIDString) LtIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowRunDedupeQueryTenantIDString) Lte(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryTenantIDString) LteIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowRunDedupeQueryTenantIDString) Gt(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryTenantIDString) GtIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowRunDedupeQueryTenantIDString) Gte(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryTenantIDString) GteIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowRunDedupeQueryTenantIDString) Contains(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryTenantIDString) ContainsIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r workflowRunDedupeQueryTenantIDString) StartsWith(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryTenantIDString) StartsWithIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r workflowRunDedupeQueryTenantIDString) EndsWith(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryTenantIDString) EndsWithIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r workflowRunDedupeQueryTenantIDString) Mode(value QueryMode) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryTenantIDString) ModeIfPresent(value *QueryMode) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r workflowRunDedupeQueryTenantIDString) Not(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryTenantIDString) NotIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r workflowRunDedupeQueryTenantIDString) HasPrefix(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r workflowRunDedupeQueryTenantIDString) HasPrefixIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r workflowRunDedupeQueryTenantIDString) HasSuffix(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r workflowRunDedupeQueryTenantIDString) HasSuffixIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r workflowRunDedupeQueryTenantIDString) Field() workflowRunDedupePrismaFields {
+	return workflowRunDedupeFieldTenantID
+}
+
+// base struct
+type workflowRunDedupeQueryWorkflowIDString struct{}
+
+// Set the required value of WorkflowID
+func (r workflowRunDedupeQueryWorkflowIDString) Set(value string) workflowRunDedupeWithPrismaWorkflowIDSetParam {
+
+	return workflowRunDedupeWithPrismaWorkflowIDSetParam{
+		data: builder.Field{
+			Name:  "workflowId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of WorkflowID dynamically
+func (r workflowRunDedupeQueryWorkflowIDString) SetIfPresent(value *String) workflowRunDedupeWithPrismaWorkflowIDSetParam {
+	if value == nil {
+		return workflowRunDedupeWithPrismaWorkflowIDSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) Equals(value string) workflowRunDedupeWithPrismaWorkflowIDEqualsParam {
+
+	return workflowRunDedupeWithPrismaWorkflowIDEqualsParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) EqualsIfPresent(value *string) workflowRunDedupeWithPrismaWorkflowIDEqualsParam {
+	if value == nil {
+		return workflowRunDedupeWithPrismaWorkflowIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) Order(direction SortOrder) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name:  "workflowId",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) Cursor(cursor string) workflowRunDedupeCursorParam {
+	return workflowRunDedupeCursorParam{
+		data: builder.Field{
+			Name:  "workflowId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) In(value []string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) InIfPresent(value []string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) NotIn(value []string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) NotInIfPresent(value []string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) Lt(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) LtIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) Lte(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) LteIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) Gt(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) GtIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) Gte(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) GteIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) Contains(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) ContainsIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) StartsWith(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) StartsWithIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) EndsWith(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) EndsWithIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) Mode(value QueryMode) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) ModeIfPresent(value *QueryMode) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) Not(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) NotIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r workflowRunDedupeQueryWorkflowIDString) HasPrefix(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r workflowRunDedupeQueryWorkflowIDString) HasPrefixIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r workflowRunDedupeQueryWorkflowIDString) HasSuffix(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r workflowRunDedupeQueryWorkflowIDString) HasSuffixIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r workflowRunDedupeQueryWorkflowIDString) Field() workflowRunDedupePrismaFields {
+	return workflowRunDedupeFieldWorkflowID
+}
+
+// base struct
+type workflowRunDedupeQueryWorkflowRunIDString struct{}
+
+// Set the required value of WorkflowRunID
+func (r workflowRunDedupeQueryWorkflowRunIDString) Set(value string) workflowRunDedupeWithPrismaWorkflowRunIDSetParam {
+
+	return workflowRunDedupeWithPrismaWorkflowRunIDSetParam{
+		data: builder.Field{
+			Name:  "workflowRunId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of WorkflowRunID dynamically
+func (r workflowRunDedupeQueryWorkflowRunIDString) SetIfPresent(value *String) workflowRunDedupeWithPrismaWorkflowRunIDSetParam {
+	if value == nil {
+		return workflowRunDedupeWithPrismaWorkflowRunIDSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) Equals(value string) workflowRunDedupeWithPrismaWorkflowRunIDEqualsParam {
+
+	return workflowRunDedupeWithPrismaWorkflowRunIDEqualsParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) EqualsIfPresent(value *string) workflowRunDedupeWithPrismaWorkflowRunIDEqualsParam {
+	if value == nil {
+		return workflowRunDedupeWithPrismaWorkflowRunIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) Order(direction SortOrder) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name:  "workflowRunId",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) Cursor(cursor string) workflowRunDedupeCursorParam {
+	return workflowRunDedupeCursorParam{
+		data: builder.Field{
+			Name:  "workflowRunId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) In(value []string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) InIfPresent(value []string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) NotIn(value []string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) NotInIfPresent(value []string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) Lt(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) LtIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) Lte(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) LteIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) Gt(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) GtIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) Gte(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) GteIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) Contains(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) ContainsIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) StartsWith(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) StartsWithIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) EndsWith(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) EndsWithIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) Mode(value QueryMode) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) ModeIfPresent(value *QueryMode) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) Not(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) NotIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) HasPrefix(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r workflowRunDedupeQueryWorkflowRunIDString) HasPrefixIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) HasSuffix(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r workflowRunDedupeQueryWorkflowRunIDString) HasSuffixIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r workflowRunDedupeQueryWorkflowRunIDString) Field() workflowRunDedupePrismaFields {
+	return workflowRunDedupeFieldWorkflowRunID
+}
+
+// base struct
+type workflowRunDedupeQueryValueString struct{}
+
+// Set the required value of Value
+func (r workflowRunDedupeQueryValueString) Set(value string) workflowRunDedupeWithPrismaValueSetParam {
+
+	return workflowRunDedupeWithPrismaValueSetParam{
+		data: builder.Field{
+			Name:  "value",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Value dynamically
+func (r workflowRunDedupeQueryValueString) SetIfPresent(value *String) workflowRunDedupeWithPrismaValueSetParam {
+	if value == nil {
+		return workflowRunDedupeWithPrismaValueSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowRunDedupeQueryValueString) Equals(value string) workflowRunDedupeWithPrismaValueEqualsParam {
+
+	return workflowRunDedupeWithPrismaValueEqualsParam{
+		data: builder.Field{
+			Name: "value",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryValueString) EqualsIfPresent(value *string) workflowRunDedupeWithPrismaValueEqualsParam {
+	if value == nil {
+		return workflowRunDedupeWithPrismaValueEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowRunDedupeQueryValueString) Order(direction SortOrder) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name:  "value",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryValueString) Cursor(cursor string) workflowRunDedupeCursorParam {
+	return workflowRunDedupeCursorParam{
+		data: builder.Field{
+			Name:  "value",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryValueString) In(value []string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "value",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryValueString) InIfPresent(value []string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowRunDedupeQueryValueString) NotIn(value []string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "value",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryValueString) NotInIfPresent(value []string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowRunDedupeQueryValueString) Lt(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "value",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryValueString) LtIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowRunDedupeQueryValueString) Lte(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "value",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryValueString) LteIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowRunDedupeQueryValueString) Gt(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "value",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryValueString) GtIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowRunDedupeQueryValueString) Gte(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "value",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryValueString) GteIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowRunDedupeQueryValueString) Contains(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "value",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryValueString) ContainsIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r workflowRunDedupeQueryValueString) StartsWith(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "value",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryValueString) StartsWithIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r workflowRunDedupeQueryValueString) EndsWith(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "value",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryValueString) EndsWithIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r workflowRunDedupeQueryValueString) Mode(value QueryMode) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "value",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryValueString) ModeIfPresent(value *QueryMode) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r workflowRunDedupeQueryValueString) Not(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "value",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunDedupeQueryValueString) NotIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r workflowRunDedupeQueryValueString) HasPrefix(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "value",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r workflowRunDedupeQueryValueString) HasPrefixIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r workflowRunDedupeQueryValueString) HasSuffix(value string) workflowRunDedupeDefaultParam {
+	return workflowRunDedupeDefaultParam{
+		data: builder.Field{
+			Name: "value",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r workflowRunDedupeQueryValueString) HasSuffixIfPresent(value *string) workflowRunDedupeDefaultParam {
+	if value == nil {
+		return workflowRunDedupeDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r workflowRunDedupeQueryValueString) Field() workflowRunDedupePrismaFields {
+	return workflowRunDedupeFieldValue
 }
 
 // GetGroupKeyRun acts as a namespaces to access query methods for the GetGroupKeyRun model
@@ -192313,6 +195160,84 @@ func (p tenantWithPrismaWebhookWorkersEqualsUniqueParam) webhookWorkersField() {
 func (tenantWithPrismaWebhookWorkersEqualsUniqueParam) unique() {}
 func (tenantWithPrismaWebhookWorkersEqualsUniqueParam) equals() {}
 
+type TenantWithPrismaDedupesEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tenantModel()
+	dedupesField()
+}
+
+type TenantWithPrismaDedupesSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantModel()
+	dedupesField()
+}
+
+type tenantWithPrismaDedupesSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaDedupesSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaDedupesSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaDedupesSetParam) tenantModel() {}
+
+func (p tenantWithPrismaDedupesSetParam) dedupesField() {}
+
+type TenantWithPrismaDedupesWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantModel()
+	dedupesField()
+}
+
+type tenantWithPrismaDedupesEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaDedupesEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaDedupesEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaDedupesEqualsParam) tenantModel() {}
+
+func (p tenantWithPrismaDedupesEqualsParam) dedupesField() {}
+
+func (tenantWithPrismaDedupesSetParam) settable()  {}
+func (tenantWithPrismaDedupesEqualsParam) equals() {}
+
+type tenantWithPrismaDedupesEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaDedupesEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaDedupesEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaDedupesEqualsUniqueParam) tenantModel()  {}
+func (p tenantWithPrismaDedupesEqualsUniqueParam) dedupesField() {}
+
+func (tenantWithPrismaDedupesEqualsUniqueParam) unique() {}
+func (tenantWithPrismaDedupesEqualsUniqueParam) equals() {}
+
 type tenantResourceLimitActions struct {
 	// client holds the prisma client
 	client *PrismaClient
@@ -217193,6 +220118,809 @@ func (p workflowRunWithPrismaAdditionalMetadataEqualsUniqueParam) additionalMeta
 
 func (workflowRunWithPrismaAdditionalMetadataEqualsUniqueParam) unique() {}
 func (workflowRunWithPrismaAdditionalMetadataEqualsUniqueParam) equals() {}
+
+type workflowRunDedupeActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var workflowRunDedupeOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "createdAt"},
+	{Name: "updatedAt"},
+	{Name: "tenantId"},
+	{Name: "workflowId"},
+	{Name: "workflowRunId"},
+	{Name: "value"},
+}
+
+type WorkflowRunDedupeRelationWith interface {
+	getQuery() builder.Query
+	with()
+	workflowRunDedupeRelation()
+}
+
+type WorkflowRunDedupeWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunDedupeModel()
+}
+
+type workflowRunDedupeDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeDefaultParam) workflowRunDedupeModel() {}
+
+type WorkflowRunDedupeOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunDedupeModel()
+}
+
+type workflowRunDedupeOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeOrderByParam) workflowRunDedupeModel() {}
+
+type WorkflowRunDedupeCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunDedupeModel()
+	isCursor()
+}
+
+type workflowRunDedupeCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeCursorParam) isCursor() {}
+
+func (p workflowRunDedupeCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeCursorParam) workflowRunDedupeModel() {}
+
+type WorkflowRunDedupeParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	workflowRunDedupeModel()
+}
+
+type workflowRunDedupeParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeParamUnique) workflowRunDedupeModel() {}
+
+func (workflowRunDedupeParamUnique) unique() {}
+
+func (p workflowRunDedupeParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type WorkflowRunDedupeEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowRunDedupeModel()
+}
+
+type workflowRunDedupeEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeEqualsParam) workflowRunDedupeModel() {}
+
+func (workflowRunDedupeEqualsParam) equals() {}
+
+func (p workflowRunDedupeEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type WorkflowRunDedupeEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	workflowRunDedupeModel()
+}
+
+type workflowRunDedupeEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeEqualsUniqueParam) workflowRunDedupeModel() {}
+
+func (workflowRunDedupeEqualsUniqueParam) unique() {}
+func (workflowRunDedupeEqualsUniqueParam) equals() {}
+
+func (p workflowRunDedupeEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type WorkflowRunDedupeSetParam interface {
+	field() builder.Field
+	settable()
+	workflowRunDedupeModel()
+}
+
+type workflowRunDedupeSetParam struct {
+	data builder.Field
+}
+
+func (workflowRunDedupeSetParam) settable() {}
+
+func (p workflowRunDedupeSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeSetParam) workflowRunDedupeModel() {}
+
+type WorkflowRunDedupeWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowRunDedupeModel()
+	idField()
+}
+
+type WorkflowRunDedupeWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunDedupeModel()
+	idField()
+}
+
+type workflowRunDedupeWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaIDSetParam) workflowRunDedupeModel() {}
+
+func (p workflowRunDedupeWithPrismaIDSetParam) idField() {}
+
+type WorkflowRunDedupeWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunDedupeModel()
+	idField()
+}
+
+type workflowRunDedupeWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaIDEqualsParam) workflowRunDedupeModel() {}
+
+func (p workflowRunDedupeWithPrismaIDEqualsParam) idField() {}
+
+func (workflowRunDedupeWithPrismaIDSetParam) settable()  {}
+func (workflowRunDedupeWithPrismaIDEqualsParam) equals() {}
+
+type workflowRunDedupeWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaIDEqualsUniqueParam) workflowRunDedupeModel() {}
+func (p workflowRunDedupeWithPrismaIDEqualsUniqueParam) idField()                {}
+
+func (workflowRunDedupeWithPrismaIDEqualsUniqueParam) unique() {}
+func (workflowRunDedupeWithPrismaIDEqualsUniqueParam) equals() {}
+
+type WorkflowRunDedupeWithPrismaCreatedAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowRunDedupeModel()
+	createdAtField()
+}
+
+type WorkflowRunDedupeWithPrismaCreatedAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunDedupeModel()
+	createdAtField()
+}
+
+type workflowRunDedupeWithPrismaCreatedAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaCreatedAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaCreatedAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaCreatedAtSetParam) workflowRunDedupeModel() {}
+
+func (p workflowRunDedupeWithPrismaCreatedAtSetParam) createdAtField() {}
+
+type WorkflowRunDedupeWithPrismaCreatedAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunDedupeModel()
+	createdAtField()
+}
+
+type workflowRunDedupeWithPrismaCreatedAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaCreatedAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaCreatedAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaCreatedAtEqualsParam) workflowRunDedupeModel() {}
+
+func (p workflowRunDedupeWithPrismaCreatedAtEqualsParam) createdAtField() {}
+
+func (workflowRunDedupeWithPrismaCreatedAtSetParam) settable()  {}
+func (workflowRunDedupeWithPrismaCreatedAtEqualsParam) equals() {}
+
+type workflowRunDedupeWithPrismaCreatedAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaCreatedAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaCreatedAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaCreatedAtEqualsUniqueParam) workflowRunDedupeModel() {}
+func (p workflowRunDedupeWithPrismaCreatedAtEqualsUniqueParam) createdAtField()         {}
+
+func (workflowRunDedupeWithPrismaCreatedAtEqualsUniqueParam) unique() {}
+func (workflowRunDedupeWithPrismaCreatedAtEqualsUniqueParam) equals() {}
+
+type WorkflowRunDedupeWithPrismaUpdatedAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowRunDedupeModel()
+	updatedAtField()
+}
+
+type WorkflowRunDedupeWithPrismaUpdatedAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunDedupeModel()
+	updatedAtField()
+}
+
+type workflowRunDedupeWithPrismaUpdatedAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaUpdatedAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaUpdatedAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaUpdatedAtSetParam) workflowRunDedupeModel() {}
+
+func (p workflowRunDedupeWithPrismaUpdatedAtSetParam) updatedAtField() {}
+
+type WorkflowRunDedupeWithPrismaUpdatedAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunDedupeModel()
+	updatedAtField()
+}
+
+type workflowRunDedupeWithPrismaUpdatedAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaUpdatedAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaUpdatedAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaUpdatedAtEqualsParam) workflowRunDedupeModel() {}
+
+func (p workflowRunDedupeWithPrismaUpdatedAtEqualsParam) updatedAtField() {}
+
+func (workflowRunDedupeWithPrismaUpdatedAtSetParam) settable()  {}
+func (workflowRunDedupeWithPrismaUpdatedAtEqualsParam) equals() {}
+
+type workflowRunDedupeWithPrismaUpdatedAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaUpdatedAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaUpdatedAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaUpdatedAtEqualsUniqueParam) workflowRunDedupeModel() {}
+func (p workflowRunDedupeWithPrismaUpdatedAtEqualsUniqueParam) updatedAtField()         {}
+
+func (workflowRunDedupeWithPrismaUpdatedAtEqualsUniqueParam) unique() {}
+func (workflowRunDedupeWithPrismaUpdatedAtEqualsUniqueParam) equals() {}
+
+type WorkflowRunDedupeWithPrismaTenantEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowRunDedupeModel()
+	tenantField()
+}
+
+type WorkflowRunDedupeWithPrismaTenantSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunDedupeModel()
+	tenantField()
+}
+
+type workflowRunDedupeWithPrismaTenantSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaTenantSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaTenantSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaTenantSetParam) workflowRunDedupeModel() {}
+
+func (p workflowRunDedupeWithPrismaTenantSetParam) tenantField() {}
+
+type WorkflowRunDedupeWithPrismaTenantWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunDedupeModel()
+	tenantField()
+}
+
+type workflowRunDedupeWithPrismaTenantEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaTenantEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaTenantEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaTenantEqualsParam) workflowRunDedupeModel() {}
+
+func (p workflowRunDedupeWithPrismaTenantEqualsParam) tenantField() {}
+
+func (workflowRunDedupeWithPrismaTenantSetParam) settable()  {}
+func (workflowRunDedupeWithPrismaTenantEqualsParam) equals() {}
+
+type workflowRunDedupeWithPrismaTenantEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaTenantEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaTenantEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaTenantEqualsUniqueParam) workflowRunDedupeModel() {}
+func (p workflowRunDedupeWithPrismaTenantEqualsUniqueParam) tenantField()            {}
+
+func (workflowRunDedupeWithPrismaTenantEqualsUniqueParam) unique() {}
+func (workflowRunDedupeWithPrismaTenantEqualsUniqueParam) equals() {}
+
+type WorkflowRunDedupeWithPrismaTenantIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowRunDedupeModel()
+	tenantIDField()
+}
+
+type WorkflowRunDedupeWithPrismaTenantIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunDedupeModel()
+	tenantIDField()
+}
+
+type workflowRunDedupeWithPrismaTenantIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaTenantIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaTenantIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaTenantIDSetParam) workflowRunDedupeModel() {}
+
+func (p workflowRunDedupeWithPrismaTenantIDSetParam) tenantIDField() {}
+
+type WorkflowRunDedupeWithPrismaTenantIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunDedupeModel()
+	tenantIDField()
+}
+
+type workflowRunDedupeWithPrismaTenantIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaTenantIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaTenantIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaTenantIDEqualsParam) workflowRunDedupeModel() {}
+
+func (p workflowRunDedupeWithPrismaTenantIDEqualsParam) tenantIDField() {}
+
+func (workflowRunDedupeWithPrismaTenantIDSetParam) settable()  {}
+func (workflowRunDedupeWithPrismaTenantIDEqualsParam) equals() {}
+
+type workflowRunDedupeWithPrismaTenantIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaTenantIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaTenantIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaTenantIDEqualsUniqueParam) workflowRunDedupeModel() {}
+func (p workflowRunDedupeWithPrismaTenantIDEqualsUniqueParam) tenantIDField()          {}
+
+func (workflowRunDedupeWithPrismaTenantIDEqualsUniqueParam) unique() {}
+func (workflowRunDedupeWithPrismaTenantIDEqualsUniqueParam) equals() {}
+
+type WorkflowRunDedupeWithPrismaWorkflowIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowRunDedupeModel()
+	workflowIDField()
+}
+
+type WorkflowRunDedupeWithPrismaWorkflowIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunDedupeModel()
+	workflowIDField()
+}
+
+type workflowRunDedupeWithPrismaWorkflowIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaWorkflowIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaWorkflowIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaWorkflowIDSetParam) workflowRunDedupeModel() {}
+
+func (p workflowRunDedupeWithPrismaWorkflowIDSetParam) workflowIDField() {}
+
+type WorkflowRunDedupeWithPrismaWorkflowIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunDedupeModel()
+	workflowIDField()
+}
+
+type workflowRunDedupeWithPrismaWorkflowIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaWorkflowIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaWorkflowIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaWorkflowIDEqualsParam) workflowRunDedupeModel() {}
+
+func (p workflowRunDedupeWithPrismaWorkflowIDEqualsParam) workflowIDField() {}
+
+func (workflowRunDedupeWithPrismaWorkflowIDSetParam) settable()  {}
+func (workflowRunDedupeWithPrismaWorkflowIDEqualsParam) equals() {}
+
+type workflowRunDedupeWithPrismaWorkflowIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaWorkflowIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaWorkflowIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaWorkflowIDEqualsUniqueParam) workflowRunDedupeModel() {}
+func (p workflowRunDedupeWithPrismaWorkflowIDEqualsUniqueParam) workflowIDField()        {}
+
+func (workflowRunDedupeWithPrismaWorkflowIDEqualsUniqueParam) unique() {}
+func (workflowRunDedupeWithPrismaWorkflowIDEqualsUniqueParam) equals() {}
+
+type WorkflowRunDedupeWithPrismaWorkflowRunIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowRunDedupeModel()
+	workflowRunIDField()
+}
+
+type WorkflowRunDedupeWithPrismaWorkflowRunIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunDedupeModel()
+	workflowRunIDField()
+}
+
+type workflowRunDedupeWithPrismaWorkflowRunIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaWorkflowRunIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaWorkflowRunIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaWorkflowRunIDSetParam) workflowRunDedupeModel() {}
+
+func (p workflowRunDedupeWithPrismaWorkflowRunIDSetParam) workflowRunIDField() {}
+
+type WorkflowRunDedupeWithPrismaWorkflowRunIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunDedupeModel()
+	workflowRunIDField()
+}
+
+type workflowRunDedupeWithPrismaWorkflowRunIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaWorkflowRunIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaWorkflowRunIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaWorkflowRunIDEqualsParam) workflowRunDedupeModel() {}
+
+func (p workflowRunDedupeWithPrismaWorkflowRunIDEqualsParam) workflowRunIDField() {}
+
+func (workflowRunDedupeWithPrismaWorkflowRunIDSetParam) settable()  {}
+func (workflowRunDedupeWithPrismaWorkflowRunIDEqualsParam) equals() {}
+
+type workflowRunDedupeWithPrismaWorkflowRunIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaWorkflowRunIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaWorkflowRunIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaWorkflowRunIDEqualsUniqueParam) workflowRunDedupeModel() {}
+func (p workflowRunDedupeWithPrismaWorkflowRunIDEqualsUniqueParam) workflowRunIDField()     {}
+
+func (workflowRunDedupeWithPrismaWorkflowRunIDEqualsUniqueParam) unique() {}
+func (workflowRunDedupeWithPrismaWorkflowRunIDEqualsUniqueParam) equals() {}
+
+type WorkflowRunDedupeWithPrismaValueEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowRunDedupeModel()
+	valueField()
+}
+
+type WorkflowRunDedupeWithPrismaValueSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunDedupeModel()
+	valueField()
+}
+
+type workflowRunDedupeWithPrismaValueSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaValueSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaValueSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaValueSetParam) workflowRunDedupeModel() {}
+
+func (p workflowRunDedupeWithPrismaValueSetParam) valueField() {}
+
+type WorkflowRunDedupeWithPrismaValueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunDedupeModel()
+	valueField()
+}
+
+type workflowRunDedupeWithPrismaValueEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaValueEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaValueEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaValueEqualsParam) workflowRunDedupeModel() {}
+
+func (p workflowRunDedupeWithPrismaValueEqualsParam) valueField() {}
+
+func (workflowRunDedupeWithPrismaValueSetParam) settable()  {}
+func (workflowRunDedupeWithPrismaValueEqualsParam) equals() {}
+
+type workflowRunDedupeWithPrismaValueEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunDedupeWithPrismaValueEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunDedupeWithPrismaValueEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeWithPrismaValueEqualsUniqueParam) workflowRunDedupeModel() {}
+func (p workflowRunDedupeWithPrismaValueEqualsUniqueParam) valueField()             {}
+
+func (workflowRunDedupeWithPrismaValueEqualsUniqueParam) unique() {}
+func (workflowRunDedupeWithPrismaValueEqualsUniqueParam) equals() {}
 
 type getGroupKeyRunActions struct {
 	// client holds the prisma client
@@ -242919,6 +246647,80 @@ func (r workflowRunCreateOne) Exec(ctx context.Context) (*WorkflowRunModel, erro
 
 func (r workflowRunCreateOne) Tx() WorkflowRunUniqueTxResult {
 	v := newWorkflowRunUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+// Creates a single workflowRunDedupe.
+func (r workflowRunDedupeActions) CreateOne(
+	_tenant WorkflowRunDedupeWithPrismaTenantSetParam,
+	_workflowID WorkflowRunDedupeWithPrismaWorkflowIDSetParam,
+	_workflowRunID WorkflowRunDedupeWithPrismaWorkflowRunIDSetParam,
+	_value WorkflowRunDedupeWithPrismaValueSetParam,
+
+	optional ...WorkflowRunDedupeSetParam,
+) workflowRunDedupeCreateOne {
+	var v workflowRunDedupeCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "WorkflowRunDedupe"
+	v.query.Outputs = workflowRunDedupeOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _tenant.field())
+	fields = append(fields, _workflowID.field())
+	fields = append(fields, _workflowRunID.field())
+	fields = append(fields, _value.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r workflowRunDedupeCreateOne) With(params ...WorkflowRunDedupeRelationWith) workflowRunDedupeCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type workflowRunDedupeCreateOne struct {
+	query builder.Query
+}
+
+func (p workflowRunDedupeCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunDedupeCreateOne) workflowRunDedupeModel() {}
+
+func (r workflowRunDedupeCreateOne) Exec(ctx context.Context) (*WorkflowRunDedupeModel, error) {
+	var v WorkflowRunDedupeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunDedupeCreateOne) Tx() WorkflowRunDedupeUniqueTxResult {
+	v := newWorkflowRunDedupeUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -275073,6 +278875,560 @@ func (r tenantToWebhookWorkersDeleteMany) Exec(ctx context.Context) (*BatchResul
 }
 
 func (r tenantToWebhookWorkersDeleteMany) Tx() TenantManyTxResult {
+	v := newTenantManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type tenantToDedupesFindUnique struct {
+	query builder.Query
+}
+
+func (r tenantToDedupesFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToDedupesFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToDedupesFindUnique) with()           {}
+func (r tenantToDedupesFindUnique) tenantModel()    {}
+func (r tenantToDedupesFindUnique) tenantRelation() {}
+
+func (r tenantToDedupesFindUnique) With(params ...WorkflowRunDedupeRelationWith) tenantToDedupesFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tenantToDedupesFindUnique) Select(params ...tenantPrismaFields) tenantToDedupesFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToDedupesFindUnique) Omit(params ...tenantPrismaFields) tenantToDedupesFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tenantOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToDedupesFindUnique) Exec(ctx context.Context) (
+	*TenantModel,
+	error,
+) {
+	var v *TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tenantToDedupesFindUnique) ExecInner(ctx context.Context) (
+	*InnerTenant,
+	error,
+) {
+	var v *InnerTenant
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tenantToDedupesFindUnique) Update(params ...TenantSetParam) tenantToDedupesUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Tenant"
+
+	var v tenantToDedupesUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type tenantToDedupesUpdateUnique struct {
+	query builder.Query
+}
+
+func (r tenantToDedupesUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToDedupesUpdateUnique) tenantModel() {}
+
+func (r tenantToDedupesUpdateUnique) Exec(ctx context.Context) (*TenantModel, error) {
+	var v TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantToDedupesUpdateUnique) Tx() TenantUniqueTxResult {
+	v := newTenantUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r tenantToDedupesFindUnique) Delete() tenantToDedupesDeleteUnique {
+	var v tenantToDedupesDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Tenant"
+
+	return v
+}
+
+type tenantToDedupesDeleteUnique struct {
+	query builder.Query
+}
+
+func (r tenantToDedupesDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p tenantToDedupesDeleteUnique) tenantModel() {}
+
+func (r tenantToDedupesDeleteUnique) Exec(ctx context.Context) (*TenantModel, error) {
+	var v TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantToDedupesDeleteUnique) Tx() TenantUniqueTxResult {
+	v := newTenantUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type tenantToDedupesFindFirst struct {
+	query builder.Query
+}
+
+func (r tenantToDedupesFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToDedupesFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToDedupesFindFirst) with()           {}
+func (r tenantToDedupesFindFirst) tenantModel()    {}
+func (r tenantToDedupesFindFirst) tenantRelation() {}
+
+func (r tenantToDedupesFindFirst) With(params ...WorkflowRunDedupeRelationWith) tenantToDedupesFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tenantToDedupesFindFirst) Select(params ...tenantPrismaFields) tenantToDedupesFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToDedupesFindFirst) Omit(params ...tenantPrismaFields) tenantToDedupesFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tenantOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToDedupesFindFirst) OrderBy(params ...WorkflowRunDedupeOrderByParam) tenantToDedupesFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r tenantToDedupesFindFirst) Skip(count int) tenantToDedupesFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantToDedupesFindFirst) Take(count int) tenantToDedupesFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantToDedupesFindFirst) Cursor(cursor TenantCursorParam) tenantToDedupesFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r tenantToDedupesFindFirst) Exec(ctx context.Context) (
+	*TenantModel,
+	error,
+) {
+	var v *TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tenantToDedupesFindFirst) ExecInner(ctx context.Context) (
+	*InnerTenant,
+	error,
+) {
+	var v *InnerTenant
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type tenantToDedupesFindMany struct {
+	query builder.Query
+}
+
+func (r tenantToDedupesFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToDedupesFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToDedupesFindMany) with()           {}
+func (r tenantToDedupesFindMany) tenantModel()    {}
+func (r tenantToDedupesFindMany) tenantRelation() {}
+
+func (r tenantToDedupesFindMany) With(params ...WorkflowRunDedupeRelationWith) tenantToDedupesFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tenantToDedupesFindMany) Select(params ...tenantPrismaFields) tenantToDedupesFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToDedupesFindMany) Omit(params ...tenantPrismaFields) tenantToDedupesFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tenantOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToDedupesFindMany) OrderBy(params ...WorkflowRunDedupeOrderByParam) tenantToDedupesFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r tenantToDedupesFindMany) Skip(count int) tenantToDedupesFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantToDedupesFindMany) Take(count int) tenantToDedupesFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantToDedupesFindMany) Cursor(cursor TenantCursorParam) tenantToDedupesFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r tenantToDedupesFindMany) Exec(ctx context.Context) (
+	[]TenantModel,
+	error,
+) {
+	var v []TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r tenantToDedupesFindMany) ExecInner(ctx context.Context) (
+	[]InnerTenant,
+	error,
+) {
+	var v []InnerTenant
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r tenantToDedupesFindMany) Update(params ...TenantSetParam) tenantToDedupesUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Tenant"
+
+	r.query.Outputs = countOutput
+
+	var v tenantToDedupesUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type tenantToDedupesUpdateMany struct {
+	query builder.Query
+}
+
+func (r tenantToDedupesUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToDedupesUpdateMany) tenantModel() {}
+
+func (r tenantToDedupesUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantToDedupesUpdateMany) Tx() TenantManyTxResult {
+	v := newTenantManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r tenantToDedupesFindMany) Delete() tenantToDedupesDeleteMany {
+	var v tenantToDedupesDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Tenant"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type tenantToDedupesDeleteMany struct {
+	query builder.Query
+}
+
+func (r tenantToDedupesDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p tenantToDedupesDeleteMany) tenantModel() {}
+
+func (r tenantToDedupesDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantToDedupesDeleteMany) Tx() TenantManyTxResult {
 	v := newTenantManyTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
@@ -333345,6 +337701,1210 @@ func (r workflowRunDeleteMany) Tx() WorkflowRunManyTxResult {
 	return v
 }
 
+type workflowRunDedupeToTenantFindUnique struct {
+	query builder.Query
+}
+
+func (r workflowRunDedupeToTenantFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunDedupeToTenantFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunDedupeToTenantFindUnique) with()                      {}
+func (r workflowRunDedupeToTenantFindUnique) workflowRunDedupeModel()    {}
+func (r workflowRunDedupeToTenantFindUnique) workflowRunDedupeRelation() {}
+
+func (r workflowRunDedupeToTenantFindUnique) With(params ...TenantRelationWith) workflowRunDedupeToTenantFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workflowRunDedupeToTenantFindUnique) Select(params ...workflowRunDedupePrismaFields) workflowRunDedupeToTenantFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunDedupeToTenantFindUnique) Omit(params ...workflowRunDedupePrismaFields) workflowRunDedupeToTenantFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workflowRunDedupeOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunDedupeToTenantFindUnique) Exec(ctx context.Context) (
+	*WorkflowRunDedupeModel,
+	error,
+) {
+	var v *WorkflowRunDedupeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workflowRunDedupeToTenantFindUnique) ExecInner(ctx context.Context) (
+	*InnerWorkflowRunDedupe,
+	error,
+) {
+	var v *InnerWorkflowRunDedupe
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workflowRunDedupeToTenantFindUnique) Update(params ...WorkflowRunDedupeSetParam) workflowRunDedupeToTenantUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "WorkflowRunDedupe"
+
+	var v workflowRunDedupeToTenantUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workflowRunDedupeToTenantUpdateUnique struct {
+	query builder.Query
+}
+
+func (r workflowRunDedupeToTenantUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunDedupeToTenantUpdateUnique) workflowRunDedupeModel() {}
+
+func (r workflowRunDedupeToTenantUpdateUnique) Exec(ctx context.Context) (*WorkflowRunDedupeModel, error) {
+	var v WorkflowRunDedupeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunDedupeToTenantUpdateUnique) Tx() WorkflowRunDedupeUniqueTxResult {
+	v := newWorkflowRunDedupeUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workflowRunDedupeToTenantFindUnique) Delete() workflowRunDedupeToTenantDeleteUnique {
+	var v workflowRunDedupeToTenantDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "WorkflowRunDedupe"
+
+	return v
+}
+
+type workflowRunDedupeToTenantDeleteUnique struct {
+	query builder.Query
+}
+
+func (r workflowRunDedupeToTenantDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workflowRunDedupeToTenantDeleteUnique) workflowRunDedupeModel() {}
+
+func (r workflowRunDedupeToTenantDeleteUnique) Exec(ctx context.Context) (*WorkflowRunDedupeModel, error) {
+	var v WorkflowRunDedupeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunDedupeToTenantDeleteUnique) Tx() WorkflowRunDedupeUniqueTxResult {
+	v := newWorkflowRunDedupeUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workflowRunDedupeToTenantFindFirst struct {
+	query builder.Query
+}
+
+func (r workflowRunDedupeToTenantFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunDedupeToTenantFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunDedupeToTenantFindFirst) with()                      {}
+func (r workflowRunDedupeToTenantFindFirst) workflowRunDedupeModel()    {}
+func (r workflowRunDedupeToTenantFindFirst) workflowRunDedupeRelation() {}
+
+func (r workflowRunDedupeToTenantFindFirst) With(params ...TenantRelationWith) workflowRunDedupeToTenantFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workflowRunDedupeToTenantFindFirst) Select(params ...workflowRunDedupePrismaFields) workflowRunDedupeToTenantFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunDedupeToTenantFindFirst) Omit(params ...workflowRunDedupePrismaFields) workflowRunDedupeToTenantFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workflowRunDedupeOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunDedupeToTenantFindFirst) OrderBy(params ...TenantOrderByParam) workflowRunDedupeToTenantFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workflowRunDedupeToTenantFindFirst) Skip(count int) workflowRunDedupeToTenantFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowRunDedupeToTenantFindFirst) Take(count int) workflowRunDedupeToTenantFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowRunDedupeToTenantFindFirst) Cursor(cursor WorkflowRunDedupeCursorParam) workflowRunDedupeToTenantFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workflowRunDedupeToTenantFindFirst) Exec(ctx context.Context) (
+	*WorkflowRunDedupeModel,
+	error,
+) {
+	var v *WorkflowRunDedupeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workflowRunDedupeToTenantFindFirst) ExecInner(ctx context.Context) (
+	*InnerWorkflowRunDedupe,
+	error,
+) {
+	var v *InnerWorkflowRunDedupe
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type workflowRunDedupeToTenantFindMany struct {
+	query builder.Query
+}
+
+func (r workflowRunDedupeToTenantFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunDedupeToTenantFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunDedupeToTenantFindMany) with()                      {}
+func (r workflowRunDedupeToTenantFindMany) workflowRunDedupeModel()    {}
+func (r workflowRunDedupeToTenantFindMany) workflowRunDedupeRelation() {}
+
+func (r workflowRunDedupeToTenantFindMany) With(params ...TenantRelationWith) workflowRunDedupeToTenantFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workflowRunDedupeToTenantFindMany) Select(params ...workflowRunDedupePrismaFields) workflowRunDedupeToTenantFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunDedupeToTenantFindMany) Omit(params ...workflowRunDedupePrismaFields) workflowRunDedupeToTenantFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workflowRunDedupeOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunDedupeToTenantFindMany) OrderBy(params ...TenantOrderByParam) workflowRunDedupeToTenantFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workflowRunDedupeToTenantFindMany) Skip(count int) workflowRunDedupeToTenantFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowRunDedupeToTenantFindMany) Take(count int) workflowRunDedupeToTenantFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowRunDedupeToTenantFindMany) Cursor(cursor WorkflowRunDedupeCursorParam) workflowRunDedupeToTenantFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workflowRunDedupeToTenantFindMany) Exec(ctx context.Context) (
+	[]WorkflowRunDedupeModel,
+	error,
+) {
+	var v []WorkflowRunDedupeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workflowRunDedupeToTenantFindMany) ExecInner(ctx context.Context) (
+	[]InnerWorkflowRunDedupe,
+	error,
+) {
+	var v []InnerWorkflowRunDedupe
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workflowRunDedupeToTenantFindMany) Update(params ...WorkflowRunDedupeSetParam) workflowRunDedupeToTenantUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "WorkflowRunDedupe"
+
+	r.query.Outputs = countOutput
+
+	var v workflowRunDedupeToTenantUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workflowRunDedupeToTenantUpdateMany struct {
+	query builder.Query
+}
+
+func (r workflowRunDedupeToTenantUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunDedupeToTenantUpdateMany) workflowRunDedupeModel() {}
+
+func (r workflowRunDedupeToTenantUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunDedupeToTenantUpdateMany) Tx() WorkflowRunDedupeManyTxResult {
+	v := newWorkflowRunDedupeManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workflowRunDedupeToTenantFindMany) Delete() workflowRunDedupeToTenantDeleteMany {
+	var v workflowRunDedupeToTenantDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "WorkflowRunDedupe"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type workflowRunDedupeToTenantDeleteMany struct {
+	query builder.Query
+}
+
+func (r workflowRunDedupeToTenantDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workflowRunDedupeToTenantDeleteMany) workflowRunDedupeModel() {}
+
+func (r workflowRunDedupeToTenantDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunDedupeToTenantDeleteMany) Tx() WorkflowRunDedupeManyTxResult {
+	v := newWorkflowRunDedupeManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workflowRunDedupeFindUnique struct {
+	query builder.Query
+}
+
+func (r workflowRunDedupeFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunDedupeFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunDedupeFindUnique) with()                      {}
+func (r workflowRunDedupeFindUnique) workflowRunDedupeModel()    {}
+func (r workflowRunDedupeFindUnique) workflowRunDedupeRelation() {}
+
+func (r workflowRunDedupeActions) FindUnique(
+	params WorkflowRunDedupeEqualsUniqueWhereParam,
+) workflowRunDedupeFindUnique {
+	var v workflowRunDedupeFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "WorkflowRunDedupe"
+	v.query.Outputs = workflowRunDedupeOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r workflowRunDedupeFindUnique) With(params ...WorkflowRunDedupeRelationWith) workflowRunDedupeFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workflowRunDedupeFindUnique) Select(params ...workflowRunDedupePrismaFields) workflowRunDedupeFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunDedupeFindUnique) Omit(params ...workflowRunDedupePrismaFields) workflowRunDedupeFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workflowRunDedupeOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunDedupeFindUnique) Exec(ctx context.Context) (
+	*WorkflowRunDedupeModel,
+	error,
+) {
+	var v *WorkflowRunDedupeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workflowRunDedupeFindUnique) ExecInner(ctx context.Context) (
+	*InnerWorkflowRunDedupe,
+	error,
+) {
+	var v *InnerWorkflowRunDedupe
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workflowRunDedupeFindUnique) Update(params ...WorkflowRunDedupeSetParam) workflowRunDedupeUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "WorkflowRunDedupe"
+
+	var v workflowRunDedupeUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workflowRunDedupeUpdateUnique struct {
+	query builder.Query
+}
+
+func (r workflowRunDedupeUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunDedupeUpdateUnique) workflowRunDedupeModel() {}
+
+func (r workflowRunDedupeUpdateUnique) Exec(ctx context.Context) (*WorkflowRunDedupeModel, error) {
+	var v WorkflowRunDedupeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunDedupeUpdateUnique) Tx() WorkflowRunDedupeUniqueTxResult {
+	v := newWorkflowRunDedupeUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workflowRunDedupeFindUnique) Delete() workflowRunDedupeDeleteUnique {
+	var v workflowRunDedupeDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "WorkflowRunDedupe"
+
+	return v
+}
+
+type workflowRunDedupeDeleteUnique struct {
+	query builder.Query
+}
+
+func (r workflowRunDedupeDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workflowRunDedupeDeleteUnique) workflowRunDedupeModel() {}
+
+func (r workflowRunDedupeDeleteUnique) Exec(ctx context.Context) (*WorkflowRunDedupeModel, error) {
+	var v WorkflowRunDedupeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunDedupeDeleteUnique) Tx() WorkflowRunDedupeUniqueTxResult {
+	v := newWorkflowRunDedupeUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workflowRunDedupeFindFirst struct {
+	query builder.Query
+}
+
+func (r workflowRunDedupeFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunDedupeFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunDedupeFindFirst) with()                      {}
+func (r workflowRunDedupeFindFirst) workflowRunDedupeModel()    {}
+func (r workflowRunDedupeFindFirst) workflowRunDedupeRelation() {}
+
+func (r workflowRunDedupeActions) FindFirst(
+	params ...WorkflowRunDedupeWhereParam,
+) workflowRunDedupeFindFirst {
+	var v workflowRunDedupeFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "WorkflowRunDedupe"
+	v.query.Outputs = workflowRunDedupeOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r workflowRunDedupeFindFirst) With(params ...WorkflowRunDedupeRelationWith) workflowRunDedupeFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workflowRunDedupeFindFirst) Select(params ...workflowRunDedupePrismaFields) workflowRunDedupeFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunDedupeFindFirst) Omit(params ...workflowRunDedupePrismaFields) workflowRunDedupeFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workflowRunDedupeOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunDedupeFindFirst) OrderBy(params ...WorkflowRunDedupeOrderByParam) workflowRunDedupeFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workflowRunDedupeFindFirst) Skip(count int) workflowRunDedupeFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowRunDedupeFindFirst) Take(count int) workflowRunDedupeFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowRunDedupeFindFirst) Cursor(cursor WorkflowRunDedupeCursorParam) workflowRunDedupeFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workflowRunDedupeFindFirst) Exec(ctx context.Context) (
+	*WorkflowRunDedupeModel,
+	error,
+) {
+	var v *WorkflowRunDedupeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workflowRunDedupeFindFirst) ExecInner(ctx context.Context) (
+	*InnerWorkflowRunDedupe,
+	error,
+) {
+	var v *InnerWorkflowRunDedupe
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type workflowRunDedupeFindMany struct {
+	query builder.Query
+}
+
+func (r workflowRunDedupeFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunDedupeFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunDedupeFindMany) with()                      {}
+func (r workflowRunDedupeFindMany) workflowRunDedupeModel()    {}
+func (r workflowRunDedupeFindMany) workflowRunDedupeRelation() {}
+
+func (r workflowRunDedupeActions) FindMany(
+	params ...WorkflowRunDedupeWhereParam,
+) workflowRunDedupeFindMany {
+	var v workflowRunDedupeFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "WorkflowRunDedupe"
+	v.query.Outputs = workflowRunDedupeOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r workflowRunDedupeFindMany) With(params ...WorkflowRunDedupeRelationWith) workflowRunDedupeFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workflowRunDedupeFindMany) Select(params ...workflowRunDedupePrismaFields) workflowRunDedupeFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunDedupeFindMany) Omit(params ...workflowRunDedupePrismaFields) workflowRunDedupeFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workflowRunDedupeOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workflowRunDedupeFindMany) OrderBy(params ...WorkflowRunDedupeOrderByParam) workflowRunDedupeFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workflowRunDedupeFindMany) Skip(count int) workflowRunDedupeFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowRunDedupeFindMany) Take(count int) workflowRunDedupeFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workflowRunDedupeFindMany) Cursor(cursor WorkflowRunDedupeCursorParam) workflowRunDedupeFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workflowRunDedupeFindMany) Exec(ctx context.Context) (
+	[]WorkflowRunDedupeModel,
+	error,
+) {
+	var v []WorkflowRunDedupeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workflowRunDedupeFindMany) ExecInner(ctx context.Context) (
+	[]InnerWorkflowRunDedupe,
+	error,
+) {
+	var v []InnerWorkflowRunDedupe
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workflowRunDedupeFindMany) Update(params ...WorkflowRunDedupeSetParam) workflowRunDedupeUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "WorkflowRunDedupe"
+
+	r.query.Outputs = countOutput
+
+	var v workflowRunDedupeUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workflowRunDedupeUpdateMany struct {
+	query builder.Query
+}
+
+func (r workflowRunDedupeUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunDedupeUpdateMany) workflowRunDedupeModel() {}
+
+func (r workflowRunDedupeUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunDedupeUpdateMany) Tx() WorkflowRunDedupeManyTxResult {
+	v := newWorkflowRunDedupeManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workflowRunDedupeFindMany) Delete() workflowRunDedupeDeleteMany {
+	var v workflowRunDedupeDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "WorkflowRunDedupe"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type workflowRunDedupeDeleteMany struct {
+	query builder.Query
+}
+
+func (r workflowRunDedupeDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workflowRunDedupeDeleteMany) workflowRunDedupeModel() {}
+
+func (r workflowRunDedupeDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunDedupeDeleteMany) Tx() WorkflowRunDedupeManyTxResult {
+	v := newWorkflowRunDedupeManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 type getGroupKeyRunToTenantFindUnique struct {
 	query builder.Query
 }
@@ -383435,6 +388995,54 @@ func (r WorkflowRunManyTxResult) Result() (v *BatchResult) {
 	return v
 }
 
+func newWorkflowRunDedupeUniqueTxResult() WorkflowRunDedupeUniqueTxResult {
+	return WorkflowRunDedupeUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type WorkflowRunDedupeUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p WorkflowRunDedupeUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p WorkflowRunDedupeUniqueTxResult) IsTx() {}
+
+func (r WorkflowRunDedupeUniqueTxResult) Result() (v *WorkflowRunDedupeModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newWorkflowRunDedupeManyTxResult() WorkflowRunDedupeManyTxResult {
+	return WorkflowRunDedupeManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type WorkflowRunDedupeManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p WorkflowRunDedupeManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p WorkflowRunDedupeManyTxResult) IsTx() {}
+
+func (r WorkflowRunDedupeManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
 func newGetGroupKeyRunUniqueTxResult() GetGroupKeyRunUniqueTxResult {
 	return GetGroupKeyRunUniqueTxResult{
 		result: &transaction.Result{},
@@ -388053,6 +393661,122 @@ func (r workflowRunUpsertOne) Exec(ctx context.Context) (*WorkflowRunModel, erro
 
 func (r workflowRunUpsertOne) Tx() WorkflowRunUniqueTxResult {
 	v := newWorkflowRunUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workflowRunDedupeUpsertOne struct {
+	query builder.Query
+}
+
+func (r workflowRunDedupeUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunDedupeUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workflowRunDedupeUpsertOne) with()                      {}
+func (r workflowRunDedupeUpsertOne) workflowRunDedupeModel()    {}
+func (r workflowRunDedupeUpsertOne) workflowRunDedupeRelation() {}
+
+func (r workflowRunDedupeActions) UpsertOne(
+	params WorkflowRunDedupeEqualsUniqueWhereParam,
+) workflowRunDedupeUpsertOne {
+	var v workflowRunDedupeUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "WorkflowRunDedupe"
+	v.query.Outputs = workflowRunDedupeOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r workflowRunDedupeUpsertOne) Create(
+
+	_tenant WorkflowRunDedupeWithPrismaTenantSetParam,
+	_workflowID WorkflowRunDedupeWithPrismaWorkflowIDSetParam,
+	_workflowRunID WorkflowRunDedupeWithPrismaWorkflowRunIDSetParam,
+	_value WorkflowRunDedupeWithPrismaValueSetParam,
+
+	optional ...WorkflowRunDedupeSetParam,
+) workflowRunDedupeUpsertOne {
+	var v workflowRunDedupeUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _tenant.field())
+	fields = append(fields, _workflowID.field())
+	fields = append(fields, _workflowRunID.field())
+	fields = append(fields, _value.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r workflowRunDedupeUpsertOne) Update(
+	params ...WorkflowRunDedupeSetParam,
+) workflowRunDedupeUpsertOne {
+	var v workflowRunDedupeUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r workflowRunDedupeUpsertOne) Exec(ctx context.Context) (*WorkflowRunDedupeModel, error) {
+	var v WorkflowRunDedupeModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workflowRunDedupeUpsertOne) Tx() WorkflowRunDedupeUniqueTxResult {
+	v := newWorkflowRunDedupeUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
