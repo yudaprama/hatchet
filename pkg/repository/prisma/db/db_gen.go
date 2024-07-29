@@ -549,6 +549,12 @@ enum StickyStrategy {
   HARD
 }
 
+enum WorkflowKind {
+  FUNCTION
+  DURABLE
+  DAG
+}
+
 model WorkflowVersion {
   // base fields
   id        String    @id @unique @default(uuid()) @db.Uuid
@@ -587,6 +593,9 @@ model WorkflowVersion {
 
   // the scheduled runs for the workflow
   scheduled WorkflowTriggerScheduledRef[]
+
+  // the kind of workflow
+  kind WorkflowKind @default(DAG)
 
   // the default amount of time to wait while scheduling a step run
   scheduleTimeout String @default("5m")
@@ -2020,6 +2029,15 @@ const (
 )
 
 type RawStickyStrategy StickyStrategy
+type WorkflowKind string
+
+const (
+	WorkflowKindFunction WorkflowKind = "FUNCTION"
+	WorkflowKindDurable  WorkflowKind = "DURABLE"
+	WorkflowKindDag      WorkflowKind = "DAG"
+)
+
+type RawWorkflowKind WorkflowKind
 type ConcurrencyLimitStrategy string
 
 const (
@@ -2377,6 +2395,7 @@ const (
 	WorkflowVersionScalarFieldEnumWorkflowID      WorkflowVersionScalarFieldEnum = "workflowId"
 	WorkflowVersionScalarFieldEnumSticky          WorkflowVersionScalarFieldEnum = "sticky"
 	WorkflowVersionScalarFieldEnumOnFailureJobID  WorkflowVersionScalarFieldEnum = "onFailureJobId"
+	WorkflowVersionScalarFieldEnumKind            WorkflowVersionScalarFieldEnum = "kind"
 	WorkflowVersionScalarFieldEnumScheduleTimeout WorkflowVersionScalarFieldEnum = "scheduleTimeout"
 )
 
@@ -3391,6 +3410,8 @@ const workflowVersionFieldOnFailureJobID workflowVersionPrismaFields = "onFailur
 const workflowVersionFieldRuns workflowVersionPrismaFields = "runs"
 
 const workflowVersionFieldScheduled workflowVersionPrismaFields = "scheduled"
+
+const workflowVersionFieldKind workflowVersionPrismaFields = "kind"
 
 const workflowVersionFieldScheduleTimeout workflowVersionPrismaFields = "scheduleTimeout"
 
@@ -8241,6 +8262,7 @@ type InnerWorkflowVersion struct {
 	WorkflowID      string          `json:"workflowId"`
 	Sticky          *StickyStrategy `json:"sticky,omitempty"`
 	OnFailureJobID  *string         `json:"onFailureJobId,omitempty"`
+	Kind            WorkflowKind    `json:"kind"`
 	ScheduleTimeout string          `json:"scheduleTimeout"`
 }
 
@@ -8256,6 +8278,7 @@ type RawWorkflowVersionModel struct {
 	WorkflowID      RawString          `json:"workflowId"`
 	Sticky          *RawStickyStrategy `json:"sticky,omitempty"`
 	OnFailureJobID  *RawString         `json:"onFailureJobId,omitempty"`
+	Kind            RawWorkflowKind    `json:"kind"`
 	ScheduleTimeout RawString          `json:"scheduleTimeout"`
 }
 
@@ -64385,6 +64408,11 @@ type workflowVersionQuery struct {
 
 	Scheduled workflowVersionQueryScheduledRelations
 
+	// Kind
+	//
+	// @required
+	Kind workflowVersionQueryKindWorkflowKind
+
 	// ScheduleTimeout
 	//
 	// @required
@@ -68590,6 +68618,137 @@ func (r workflowVersionQueryScheduledRelations) Unlink(
 
 func (r workflowVersionQueryScheduledWorkflowTriggerScheduledRef) Field() workflowVersionPrismaFields {
 	return workflowVersionFieldScheduled
+}
+
+// base struct
+type workflowVersionQueryKindWorkflowKind struct{}
+
+// Set the required value of Kind
+func (r workflowVersionQueryKindWorkflowKind) Set(value WorkflowKind) workflowVersionSetParam {
+
+	return workflowVersionSetParam{
+		data: builder.Field{
+			Name:  "kind",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Kind dynamically
+func (r workflowVersionQueryKindWorkflowKind) SetIfPresent(value *WorkflowKind) workflowVersionSetParam {
+	if value == nil {
+		return workflowVersionSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowVersionQueryKindWorkflowKind) Equals(value WorkflowKind) workflowVersionWithPrismaKindEqualsParam {
+
+	return workflowVersionWithPrismaKindEqualsParam{
+		data: builder.Field{
+			Name: "kind",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryKindWorkflowKind) EqualsIfPresent(value *WorkflowKind) workflowVersionWithPrismaKindEqualsParam {
+	if value == nil {
+		return workflowVersionWithPrismaKindEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowVersionQueryKindWorkflowKind) Order(direction SortOrder) workflowVersionDefaultParam {
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name:  "kind",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowVersionQueryKindWorkflowKind) Cursor(cursor WorkflowKind) workflowVersionCursorParam {
+	return workflowVersionCursorParam{
+		data: builder.Field{
+			Name:  "kind",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowVersionQueryKindWorkflowKind) In(value []WorkflowKind) workflowVersionDefaultParam {
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name: "kind",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryKindWorkflowKind) InIfPresent(value []WorkflowKind) workflowVersionDefaultParam {
+	if value == nil {
+		return workflowVersionDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowVersionQueryKindWorkflowKind) NotIn(value []WorkflowKind) workflowVersionDefaultParam {
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name: "kind",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryKindWorkflowKind) NotInIfPresent(value []WorkflowKind) workflowVersionDefaultParam {
+	if value == nil {
+		return workflowVersionDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowVersionQueryKindWorkflowKind) Not(value WorkflowKind) workflowVersionDefaultParam {
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name: "kind",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryKindWorkflowKind) NotIfPresent(value *WorkflowKind) workflowVersionDefaultParam {
+	if value == nil {
+		return workflowVersionDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+func (r workflowVersionQueryKindWorkflowKind) Field() workflowVersionPrismaFields {
+	return workflowVersionFieldKind
 }
 
 // base struct
@@ -204551,6 +204710,7 @@ var workflowVersionOutput = []builder.Output{
 	{Name: "workflowId"},
 	{Name: "sticky"},
 	{Name: "onFailureJobId"},
+	{Name: "kind"},
 	{Name: "scheduleTimeout"},
 }
 
@@ -206043,6 +206203,84 @@ func (p workflowVersionWithPrismaScheduledEqualsUniqueParam) scheduledField()   
 
 func (workflowVersionWithPrismaScheduledEqualsUniqueParam) unique() {}
 func (workflowVersionWithPrismaScheduledEqualsUniqueParam) equals() {}
+
+type WorkflowVersionWithPrismaKindEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowVersionModel()
+	kindField()
+}
+
+type WorkflowVersionWithPrismaKindSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowVersionModel()
+	kindField()
+}
+
+type workflowVersionWithPrismaKindSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowVersionWithPrismaKindSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowVersionWithPrismaKindSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowVersionWithPrismaKindSetParam) workflowVersionModel() {}
+
+func (p workflowVersionWithPrismaKindSetParam) kindField() {}
+
+type WorkflowVersionWithPrismaKindWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowVersionModel()
+	kindField()
+}
+
+type workflowVersionWithPrismaKindEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowVersionWithPrismaKindEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowVersionWithPrismaKindEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowVersionWithPrismaKindEqualsParam) workflowVersionModel() {}
+
+func (p workflowVersionWithPrismaKindEqualsParam) kindField() {}
+
+func (workflowVersionWithPrismaKindSetParam) settable()  {}
+func (workflowVersionWithPrismaKindEqualsParam) equals() {}
+
+type workflowVersionWithPrismaKindEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowVersionWithPrismaKindEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowVersionWithPrismaKindEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowVersionWithPrismaKindEqualsUniqueParam) workflowVersionModel() {}
+func (p workflowVersionWithPrismaKindEqualsUniqueParam) kindField()            {}
+
+func (workflowVersionWithPrismaKindEqualsUniqueParam) unique() {}
+func (workflowVersionWithPrismaKindEqualsUniqueParam) equals() {}
 
 type WorkflowVersionWithPrismaScheduleTimeoutEqualsSetParam interface {
 	field() builder.Field
