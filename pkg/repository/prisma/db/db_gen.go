@@ -234,7 +234,7 @@ model Tenant {
   name String
   slug String @unique
 
-  // wheather the user has opted out of analytics
+  // whether the user has opted out of analytics
   analyticsOptOut Boolean @default(false)
 
   // the parent controller partition, if exists
@@ -999,7 +999,7 @@ model WorkflowRun {
   // a user-defined key for this workflow run
   childKey String?
 
-  // (optional) additonal metadata for the workflow run
+  // (optional) additional metadata for the workflow run
   additionalMetadata Json?
 
   @@unique([parentId, parentStepRunId, childKey])
