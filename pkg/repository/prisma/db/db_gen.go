@@ -1224,6 +1224,7 @@ enum StepRunStatus {
 
   // running states
   RUNNING
+  CANCELLING
 
   // final states
   SUCCEEDED
@@ -1257,6 +1258,8 @@ model StepRun {
   parents StepRun[] @relation("StepRunOrder")
 
   order BigInt @default(autoincrement()) @db.BigInt
+
+  queue String @default("default")
 
   // the worker assigned to this job
   worker   Worker? @relation(fields: [workerId], references: [id])
@@ -1340,11 +1343,43 @@ model StepRun {
   @@index([id, tenantId])
   // index for ResolveJobRunStatus, ResolveLaterStepRuns, and LinkStepRunParents
   @@index([jobRunId, tenantId, order])
-  // index for ListStepRunsToRequeue, ListStepRunsToReassign
+  // index for ListStepRunsToReassign
   @@index([jobRunId, status, tenantId])
   // index for PollStepRuns
   @@index([tenantId, status, timeoutAt])
   @@index([deletedAt])
+}
+
+model Queue {
+  id BigInt @id @default(autoincrement()) @db.BigInt
+
+  tenantId String @db.Uuid
+  name     String
+
+  @@unique([tenantId, name])
+}
+
+model QueueItem {
+  id BigInt @id @default(autoincrement()) @db.BigInt
+
+  // optional params which are specific to step runs
+  stepRunId         String?   @db.Uuid
+  stepId            String?   @db.Uuid
+  actionId          String?
+  scheduleTimeoutAt DateTime?
+  stepTimeout       String?
+
+  // ALTER TABLE "QueueItem" ADD CONSTRAINT "QueueItem_priority_check" CHECK ("priority" >= 1 AND "priority" <= 4);
+  priority Int     @default(1) // custom migration to set this between 1 and 4
+  isQueued Boolean
+  tenantId String  @db.Uuid
+  queue    String
+
+  // sticky strategy for the queue item to assign steps to the same worker
+  sticky          StickyStrategy?
+  desiredWorkerId String?         @db.Uuid
+
+  @@index([isQueued, priority, tenantId, queue, id])
 }
 
 enum StepRunEventReason {
@@ -1355,6 +1390,7 @@ enum StepRunEventReason {
   REASSIGNED
 
   ASSIGNED
+  SENT_TO_WORKER
   STARTED
   FINISHED
   FAILED
@@ -1832,6 +1868,8 @@ func newClient() *PrismaClient {
 	c.JobRun = jobRunActions{client: c}
 	c.JobRunLookupData = jobRunLookupDataActions{client: c}
 	c.StepRun = stepRunActions{client: c}
+	c.Queue = queueActions{client: c}
+	c.QueueItem = queueItemActions{client: c}
 	c.StepRunEvent = stepRunEventActions{client: c}
 	c.StepRunResultArchive = stepRunResultArchiveActions{client: c}
 	c.Dispatcher = dispatcherActions{client: c}
@@ -1948,6 +1986,10 @@ type PrismaClient struct {
 	JobRunLookupData jobRunLookupDataActions
 	// StepRun provides access to CRUD methods.
 	StepRun stepRunActions
+	// Queue provides access to CRUD methods.
+	Queue queueActions
+	// QueueItem provides access to CRUD methods.
+	QueueItem queueItemActions
 	// StepRunEvent provides access to CRUD methods.
 	StepRunEvent stepRunEventActions
 	// StepRunResultArchive provides access to CRUD methods.
@@ -2085,6 +2127,7 @@ const (
 	StepRunStatusPendingAssignment StepRunStatus = "PENDING_ASSIGNMENT"
 	StepRunStatusAssigned          StepRunStatus = "ASSIGNED"
 	StepRunStatusRunning           StepRunStatus = "RUNNING"
+	StepRunStatusCancelling        StepRunStatus = "CANCELLING"
 	StepRunStatusSucceeded         StepRunStatus = "SUCCEEDED"
 	StepRunStatusFailed            StepRunStatus = "FAILED"
 	StepRunStatusCancelled         StepRunStatus = "CANCELLED"
@@ -2100,6 +2143,7 @@ const (
 	StepRunEventReasonTimedOut           StepRunEventReason = "TIMED_OUT"
 	StepRunEventReasonReassigned         StepRunEventReason = "REASSIGNED"
 	StepRunEventReasonAssigned           StepRunEventReason = "ASSIGNED"
+	StepRunEventReasonSentToWorker       StepRunEventReason = "SENT_TO_WORKER"
 	StepRunEventReasonStarted            StepRunEventReason = "STARTED"
 	StepRunEventReasonFinished           StepRunEventReason = "FINISHED"
 	StepRunEventReasonFailed             StepRunEventReason = "FAILED"
@@ -2661,6 +2705,7 @@ const (
 	StepRunScalarFieldEnumJobRunID          StepRunScalarFieldEnum = "jobRunId"
 	StepRunScalarFieldEnumStepID            StepRunScalarFieldEnum = "stepId"
 	StepRunScalarFieldEnumOrder             StepRunScalarFieldEnum = "order"
+	StepRunScalarFieldEnumQueue             StepRunScalarFieldEnum = "queue"
 	StepRunScalarFieldEnumWorkerID          StepRunScalarFieldEnum = "workerId"
 	StepRunScalarFieldEnumTickerID          StepRunScalarFieldEnum = "tickerId"
 	StepRunScalarFieldEnumStatus            StepRunScalarFieldEnum = "status"
@@ -2680,6 +2725,31 @@ const (
 	StepRunScalarFieldEnumCallerFiles       StepRunScalarFieldEnum = "callerFiles"
 	StepRunScalarFieldEnumGitRepoBranch     StepRunScalarFieldEnum = "gitRepoBranch"
 	StepRunScalarFieldEnumSemaphoreReleased StepRunScalarFieldEnum = "semaphoreReleased"
+)
+
+type QueueScalarFieldEnum string
+
+const (
+	QueueScalarFieldEnumID       QueueScalarFieldEnum = "id"
+	QueueScalarFieldEnumTenantID QueueScalarFieldEnum = "tenantId"
+	QueueScalarFieldEnumName     QueueScalarFieldEnum = "name"
+)
+
+type QueueItemScalarFieldEnum string
+
+const (
+	QueueItemScalarFieldEnumID                QueueItemScalarFieldEnum = "id"
+	QueueItemScalarFieldEnumStepRunID         QueueItemScalarFieldEnum = "stepRunId"
+	QueueItemScalarFieldEnumStepID            QueueItemScalarFieldEnum = "stepId"
+	QueueItemScalarFieldEnumActionID          QueueItemScalarFieldEnum = "actionId"
+	QueueItemScalarFieldEnumScheduleTimeoutAt QueueItemScalarFieldEnum = "scheduleTimeoutAt"
+	QueueItemScalarFieldEnumStepTimeout       QueueItemScalarFieldEnum = "stepTimeout"
+	QueueItemScalarFieldEnumPriority          QueueItemScalarFieldEnum = "priority"
+	QueueItemScalarFieldEnumIsQueued          QueueItemScalarFieldEnum = "isQueued"
+	QueueItemScalarFieldEnumTenantID          QueueItemScalarFieldEnum = "tenantId"
+	QueueItemScalarFieldEnumQueue             QueueItemScalarFieldEnum = "queue"
+	QueueItemScalarFieldEnumSticky            QueueItemScalarFieldEnum = "sticky"
+	QueueItemScalarFieldEnumDesiredWorkerID   QueueItemScalarFieldEnum = "desiredWorkerId"
 )
 
 type StepRunEventScalarFieldEnum string
@@ -3935,6 +4005,8 @@ const stepRunFieldParents stepRunPrismaFields = "parents"
 
 const stepRunFieldOrder stepRunPrismaFields = "order"
 
+const stepRunFieldQueue stepRunPrismaFields = "queue"
+
 const stepRunFieldWorker stepRunPrismaFields = "worker"
 
 const stepRunFieldWorkerID stepRunPrismaFields = "workerId"
@@ -3990,6 +4062,40 @@ const stepRunFieldChildWorkflowRuns stepRunPrismaFields = "childWorkflowRuns"
 const stepRunFieldChildSchedules stepRunPrismaFields = "childSchedules"
 
 const stepRunFieldEvents stepRunPrismaFields = "events"
+
+type queuePrismaFields = prismaFields
+
+const queueFieldID queuePrismaFields = "id"
+
+const queueFieldTenantID queuePrismaFields = "tenantId"
+
+const queueFieldName queuePrismaFields = "name"
+
+type queueItemPrismaFields = prismaFields
+
+const queueItemFieldID queueItemPrismaFields = "id"
+
+const queueItemFieldStepRunID queueItemPrismaFields = "stepRunId"
+
+const queueItemFieldStepID queueItemPrismaFields = "stepId"
+
+const queueItemFieldActionID queueItemPrismaFields = "actionId"
+
+const queueItemFieldScheduleTimeoutAt queueItemPrismaFields = "scheduleTimeoutAt"
+
+const queueItemFieldStepTimeout queueItemPrismaFields = "stepTimeout"
+
+const queueItemFieldPriority queueItemPrismaFields = "priority"
+
+const queueItemFieldIsQueued queueItemPrismaFields = "isQueued"
+
+const queueItemFieldTenantID queueItemPrismaFields = "tenantId"
+
+const queueItemFieldQueue queueItemPrismaFields = "queue"
+
+const queueItemFieldSticky queueItemPrismaFields = "sticky"
+
+const queueItemFieldDesiredWorkerID queueItemPrismaFields = "desiredWorkerId"
 
 type stepRunEventPrismaFields = prismaFields
 
@@ -4465,6 +4571,14 @@ func NewMock() (*PrismaClient, *Mock, func(t *testing.T)) {
 		mock: m,
 	}
 
+	m.Queue = queueMock{
+		mock: m,
+	}
+
+	m.QueueItem = queueItemMock{
+		mock: m,
+	}
+
 	m.StepRunEvent = stepRunEventMock{
 		mock: m,
 	}
@@ -4610,6 +4724,10 @@ type Mock struct {
 	JobRunLookupData jobRunLookupDataMock
 
 	StepRun stepRunMock
+
+	Queue queueMock
+
+	QueueItem queueItemMock
 
 	StepRunEvent stepRunEventMock
 
@@ -6234,6 +6352,90 @@ func (m *stepRunMockExec) ReturnsMany(v []StepRunModel) {
 }
 
 func (m *stepRunMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
+type queueMock struct {
+	mock *Mock
+}
+
+type QueueMockExpectParam interface {
+	ExtractQuery() builder.Query
+	queueModel()
+}
+
+func (m *queueMock) Expect(query QueueMockExpectParam) *queueMockExec {
+	return &queueMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type queueMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *queueMockExec) Returns(v QueueModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *queueMockExec) ReturnsMany(v []QueueModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *queueMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
+type queueItemMock struct {
+	mock *Mock
+}
+
+type QueueItemMockExpectParam interface {
+	ExtractQuery() builder.Query
+	queueItemModel()
+}
+
+func (m *queueItemMock) Expect(query QueueItemMockExpectParam) *queueItemMockExec {
+	return &queueItemMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type queueItemMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *queueItemMockExec) Returns(v QueueItemModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *queueItemMockExec) ReturnsMany(v []QueueItemModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *queueItemMockExec) Errors(err error) {
 	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
 		Query:   m.query,
 		WantErr: err,
@@ -10016,6 +10218,7 @@ type InnerStepRun struct {
 	JobRunID          string        `json:"jobRunId"`
 	StepID            string        `json:"stepId"`
 	Order             BigInt        `json:"order"`
+	Queue             string        `json:"queue"`
 	WorkerID          *string       `json:"workerId,omitempty"`
 	TickerID          *string       `json:"tickerId,omitempty"`
 	Status            StepRunStatus `json:"status"`
@@ -10047,6 +10250,7 @@ type RawStepRunModel struct {
 	JobRunID          RawString        `json:"jobRunId"`
 	StepID            RawString        `json:"stepId"`
 	Order             RawBigInt        `json:"order"`
+	Queue             RawString        `json:"queue"`
 	WorkerID          *RawString       `json:"workerId,omitempty"`
 	TickerID          *RawString       `json:"tickerId,omitempty"`
 	Status            RawStepRunStatus `json:"status"`
@@ -10301,6 +10505,121 @@ func (r StepRunModel) Events() (value []StepRunEventModel) {
 		panic("attempted to access events but did not fetch it using the .With() syntax")
 	}
 	return r.RelationsStepRun.Events
+}
+
+// QueueModel represents the Queue model and is a wrapper for accessing fields and methods
+type QueueModel struct {
+	InnerQueue
+	RelationsQueue
+}
+
+// InnerQueue holds the actual data
+type InnerQueue struct {
+	ID       BigInt `json:"id"`
+	TenantID string `json:"tenantId"`
+	Name     string `json:"name"`
+}
+
+// RawQueueModel is a struct for Queue when used in raw queries
+type RawQueueModel struct {
+	ID       RawBigInt `json:"id"`
+	TenantID RawString `json:"tenantId"`
+	Name     RawString `json:"name"`
+}
+
+// RelationsQueue holds the relation data separately
+type RelationsQueue struct {
+}
+
+// QueueItemModel represents the QueueItem model and is a wrapper for accessing fields and methods
+type QueueItemModel struct {
+	InnerQueueItem
+	RelationsQueueItem
+}
+
+// InnerQueueItem holds the actual data
+type InnerQueueItem struct {
+	ID                BigInt          `json:"id"`
+	StepRunID         *string         `json:"stepRunId,omitempty"`
+	StepID            *string         `json:"stepId,omitempty"`
+	ActionID          *string         `json:"actionId,omitempty"`
+	ScheduleTimeoutAt *DateTime       `json:"scheduleTimeoutAt,omitempty"`
+	StepTimeout       *string         `json:"stepTimeout,omitempty"`
+	Priority          int             `json:"priority"`
+	IsQueued          bool            `json:"isQueued"`
+	TenantID          string          `json:"tenantId"`
+	Queue             string          `json:"queue"`
+	Sticky            *StickyStrategy `json:"sticky,omitempty"`
+	DesiredWorkerID   *string         `json:"desiredWorkerId,omitempty"`
+}
+
+// RawQueueItemModel is a struct for QueueItem when used in raw queries
+type RawQueueItemModel struct {
+	ID                RawBigInt          `json:"id"`
+	StepRunID         *RawString         `json:"stepRunId,omitempty"`
+	StepID            *RawString         `json:"stepId,omitempty"`
+	ActionID          *RawString         `json:"actionId,omitempty"`
+	ScheduleTimeoutAt *RawDateTime       `json:"scheduleTimeoutAt,omitempty"`
+	StepTimeout       *RawString         `json:"stepTimeout,omitempty"`
+	Priority          RawInt             `json:"priority"`
+	IsQueued          RawBoolean         `json:"isQueued"`
+	TenantID          RawString          `json:"tenantId"`
+	Queue             RawString          `json:"queue"`
+	Sticky            *RawStickyStrategy `json:"sticky,omitempty"`
+	DesiredWorkerID   *RawString         `json:"desiredWorkerId,omitempty"`
+}
+
+// RelationsQueueItem holds the relation data separately
+type RelationsQueueItem struct {
+}
+
+func (r QueueItemModel) StepRunID() (value String, ok bool) {
+	if r.InnerQueueItem.StepRunID == nil {
+		return value, false
+	}
+	return *r.InnerQueueItem.StepRunID, true
+}
+
+func (r QueueItemModel) StepID() (value String, ok bool) {
+	if r.InnerQueueItem.StepID == nil {
+		return value, false
+	}
+	return *r.InnerQueueItem.StepID, true
+}
+
+func (r QueueItemModel) ActionID() (value String, ok bool) {
+	if r.InnerQueueItem.ActionID == nil {
+		return value, false
+	}
+	return *r.InnerQueueItem.ActionID, true
+}
+
+func (r QueueItemModel) ScheduleTimeoutAt() (value DateTime, ok bool) {
+	if r.InnerQueueItem.ScheduleTimeoutAt == nil {
+		return value, false
+	}
+	return *r.InnerQueueItem.ScheduleTimeoutAt, true
+}
+
+func (r QueueItemModel) StepTimeout() (value String, ok bool) {
+	if r.InnerQueueItem.StepTimeout == nil {
+		return value, false
+	}
+	return *r.InnerQueueItem.StepTimeout, true
+}
+
+func (r QueueItemModel) Sticky() (value StickyStrategy, ok bool) {
+	if r.InnerQueueItem.Sticky == nil {
+		return value, false
+	}
+	return *r.InnerQueueItem.Sticky, true
+}
+
+func (r QueueItemModel) DesiredWorkerID() (value String, ok bool) {
+	if r.InnerQueueItem.DesiredWorkerID == nil {
+		return value, false
+	}
+	return *r.InnerQueueItem.DesiredWorkerID, true
 }
 
 // StepRunEventModel represents the StepRunEvent model and is a wrapper for accessing fields and methods
@@ -133968,6 +134287,11 @@ type stepRunQuery struct {
 	// @required
 	Order stepRunQueryOrderBigInt
 
+	// Queue
+	//
+	// @required
+	Queue stepRunQueryQueueString
+
 	Worker stepRunQueryWorkerRelations
 
 	// WorkerID
@@ -137408,6 +137732,353 @@ func (r stepRunQueryOrderBigInt) NotIfPresent(value *BigInt) stepRunDefaultParam
 
 func (r stepRunQueryOrderBigInt) Field() stepRunPrismaFields {
 	return stepRunFieldOrder
+}
+
+// base struct
+type stepRunQueryQueueString struct{}
+
+// Set the required value of Queue
+func (r stepRunQueryQueueString) Set(value string) stepRunSetParam {
+
+	return stepRunSetParam{
+		data: builder.Field{
+			Name:  "queue",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Queue dynamically
+func (r stepRunQueryQueueString) SetIfPresent(value *String) stepRunSetParam {
+	if value == nil {
+		return stepRunSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r stepRunQueryQueueString) Equals(value string) stepRunWithPrismaQueueEqualsParam {
+
+	return stepRunWithPrismaQueueEqualsParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryQueueString) EqualsIfPresent(value *string) stepRunWithPrismaQueueEqualsParam {
+	if value == nil {
+		return stepRunWithPrismaQueueEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepRunQueryQueueString) Order(direction SortOrder) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name:  "queue",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepRunQueryQueueString) Cursor(cursor string) stepRunCursorParam {
+	return stepRunCursorParam{
+		data: builder.Field{
+			Name:  "queue",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepRunQueryQueueString) In(value []string) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryQueueString) InIfPresent(value []string) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r stepRunQueryQueueString) NotIn(value []string) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryQueueString) NotInIfPresent(value []string) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepRunQueryQueueString) Lt(value string) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryQueueString) LtIfPresent(value *string) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r stepRunQueryQueueString) Lte(value string) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryQueueString) LteIfPresent(value *string) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r stepRunQueryQueueString) Gt(value string) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryQueueString) GtIfPresent(value *string) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r stepRunQueryQueueString) Gte(value string) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryQueueString) GteIfPresent(value *string) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r stepRunQueryQueueString) Contains(value string) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryQueueString) ContainsIfPresent(value *string) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r stepRunQueryQueueString) StartsWith(value string) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryQueueString) StartsWithIfPresent(value *string) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r stepRunQueryQueueString) EndsWith(value string) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryQueueString) EndsWithIfPresent(value *string) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r stepRunQueryQueueString) Mode(value QueryMode) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryQueueString) ModeIfPresent(value *QueryMode) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r stepRunQueryQueueString) Not(value string) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryQueueString) NotIfPresent(value *string) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r stepRunQueryQueueString) HasPrefix(value string) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r stepRunQueryQueueString) HasPrefixIfPresent(value *string) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r stepRunQueryQueueString) HasSuffix(value string) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r stepRunQueryQueueString) HasSuffixIfPresent(value *string) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r stepRunQueryQueueString) Field() stepRunPrismaFields {
+	return stepRunFieldQueue
 }
 
 // base struct
@@ -145250,6 +145921,5168 @@ func (r stepRunQueryEventsRelations) Unlink(
 
 func (r stepRunQueryEventsStepRunEvent) Field() stepRunPrismaFields {
 	return stepRunFieldEvents
+}
+
+// Queue acts as a namespaces to access query methods for the Queue model
+var Queue = queueQuery{}
+
+// queueQuery exposes query functions for the queue model
+type queueQuery struct {
+
+	// ID
+	//
+	// @required
+	ID queueQueryIDBigInt
+
+	// TenantID
+	//
+	// @required
+	TenantID queueQueryTenantIDString
+
+	// Name
+	//
+	// @required
+	Name queueQueryNameString
+}
+
+func (queueQuery) Not(params ...QueueWhereParam) queueDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return queueDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (queueQuery) Or(params ...QueueWhereParam) queueDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return queueDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (queueQuery) And(params ...QueueWhereParam) queueDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return queueDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (queueQuery) TenantIDName(
+	_tenantID QueueWithPrismaTenantIDWhereParam,
+
+	_name QueueWithPrismaNameWhereParam,
+) QueueEqualsUniqueWhereParam {
+	var fields []builder.Field
+
+	fields = append(fields, _tenantID.field())
+	fields = append(fields, _name.field())
+
+	return queueEqualsUniqueParam{
+		data: builder.Field{
+			Name:   "tenantId_name",
+			Fields: builder.TransformEquals(fields),
+		},
+	}
+}
+
+// base struct
+type queueQueryIDBigInt struct{}
+
+// Set the required value of ID
+func (r queueQueryIDBigInt) Set(value BigInt) queueSetParam {
+
+	return queueSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r queueQueryIDBigInt) SetIfPresent(value *BigInt) queueSetParam {
+	if value == nil {
+		return queueSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the required value of ID
+func (r queueQueryIDBigInt) Increment(value BigInt) queueSetParam {
+	return queueSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryIDBigInt) IncrementIfPresent(value *BigInt) queueSetParam {
+	if value == nil {
+		return queueSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the required value of ID
+func (r queueQueryIDBigInt) Decrement(value BigInt) queueSetParam {
+	return queueSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryIDBigInt) DecrementIfPresent(value *BigInt) queueSetParam {
+	if value == nil {
+		return queueSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the required value of ID
+func (r queueQueryIDBigInt) Multiply(value BigInt) queueSetParam {
+	return queueSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryIDBigInt) MultiplyIfPresent(value *BigInt) queueSetParam {
+	if value == nil {
+		return queueSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the required value of ID
+func (r queueQueryIDBigInt) Divide(value BigInt) queueSetParam {
+	return queueSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryIDBigInt) DivideIfPresent(value *BigInt) queueSetParam {
+	if value == nil {
+		return queueSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r queueQueryIDBigInt) Equals(value BigInt) queueWithPrismaIDEqualsUniqueParam {
+
+	return queueWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryIDBigInt) EqualsIfPresent(value *BigInt) queueWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return queueWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r queueQueryIDBigInt) Order(direction SortOrder) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r queueQueryIDBigInt) Cursor(cursor BigInt) queueCursorParam {
+	return queueCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r queueQueryIDBigInt) In(value []BigInt) queueParamUnique {
+	return queueParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryIDBigInt) InIfPresent(value []BigInt) queueParamUnique {
+	if value == nil {
+		return queueParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r queueQueryIDBigInt) NotIn(value []BigInt) queueParamUnique {
+	return queueParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryIDBigInt) NotInIfPresent(value []BigInt) queueParamUnique {
+	if value == nil {
+		return queueParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r queueQueryIDBigInt) Lt(value BigInt) queueParamUnique {
+	return queueParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryIDBigInt) LtIfPresent(value *BigInt) queueParamUnique {
+	if value == nil {
+		return queueParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r queueQueryIDBigInt) Lte(value BigInt) queueParamUnique {
+	return queueParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryIDBigInt) LteIfPresent(value *BigInt) queueParamUnique {
+	if value == nil {
+		return queueParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r queueQueryIDBigInt) Gt(value BigInt) queueParamUnique {
+	return queueParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryIDBigInt) GtIfPresent(value *BigInt) queueParamUnique {
+	if value == nil {
+		return queueParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r queueQueryIDBigInt) Gte(value BigInt) queueParamUnique {
+	return queueParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryIDBigInt) GteIfPresent(value *BigInt) queueParamUnique {
+	if value == nil {
+		return queueParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r queueQueryIDBigInt) Not(value BigInt) queueParamUnique {
+	return queueParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryIDBigInt) NotIfPresent(value *BigInt) queueParamUnique {
+	if value == nil {
+		return queueParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+func (r queueQueryIDBigInt) Field() queuePrismaFields {
+	return queueFieldID
+}
+
+// base struct
+type queueQueryTenantIDString struct{}
+
+// Set the required value of TenantID
+func (r queueQueryTenantIDString) Set(value string) queueWithPrismaTenantIDSetParam {
+
+	return queueWithPrismaTenantIDSetParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of TenantID dynamically
+func (r queueQueryTenantIDString) SetIfPresent(value *String) queueWithPrismaTenantIDSetParam {
+	if value == nil {
+		return queueWithPrismaTenantIDSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r queueQueryTenantIDString) Equals(value string) queueWithPrismaTenantIDEqualsParam {
+
+	return queueWithPrismaTenantIDEqualsParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryTenantIDString) EqualsIfPresent(value *string) queueWithPrismaTenantIDEqualsParam {
+	if value == nil {
+		return queueWithPrismaTenantIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r queueQueryTenantIDString) Order(direction SortOrder) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: direction,
+		},
+	}
+}
+
+func (r queueQueryTenantIDString) Cursor(cursor string) queueCursorParam {
+	return queueCursorParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r queueQueryTenantIDString) In(value []string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryTenantIDString) InIfPresent(value []string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r queueQueryTenantIDString) NotIn(value []string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryTenantIDString) NotInIfPresent(value []string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r queueQueryTenantIDString) Lt(value string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryTenantIDString) LtIfPresent(value *string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r queueQueryTenantIDString) Lte(value string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryTenantIDString) LteIfPresent(value *string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r queueQueryTenantIDString) Gt(value string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryTenantIDString) GtIfPresent(value *string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r queueQueryTenantIDString) Gte(value string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryTenantIDString) GteIfPresent(value *string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r queueQueryTenantIDString) Contains(value string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryTenantIDString) ContainsIfPresent(value *string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r queueQueryTenantIDString) StartsWith(value string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryTenantIDString) StartsWithIfPresent(value *string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r queueQueryTenantIDString) EndsWith(value string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryTenantIDString) EndsWithIfPresent(value *string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r queueQueryTenantIDString) Mode(value QueryMode) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryTenantIDString) ModeIfPresent(value *QueryMode) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r queueQueryTenantIDString) Not(value string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryTenantIDString) NotIfPresent(value *string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r queueQueryTenantIDString) HasPrefix(value string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r queueQueryTenantIDString) HasPrefixIfPresent(value *string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r queueQueryTenantIDString) HasSuffix(value string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r queueQueryTenantIDString) HasSuffixIfPresent(value *string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r queueQueryTenantIDString) Field() queuePrismaFields {
+	return queueFieldTenantID
+}
+
+// base struct
+type queueQueryNameString struct{}
+
+// Set the required value of Name
+func (r queueQueryNameString) Set(value string) queueWithPrismaNameSetParam {
+
+	return queueWithPrismaNameSetParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Name dynamically
+func (r queueQueryNameString) SetIfPresent(value *String) queueWithPrismaNameSetParam {
+	if value == nil {
+		return queueWithPrismaNameSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r queueQueryNameString) Equals(value string) queueWithPrismaNameEqualsParam {
+
+	return queueWithPrismaNameEqualsParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryNameString) EqualsIfPresent(value *string) queueWithPrismaNameEqualsParam {
+	if value == nil {
+		return queueWithPrismaNameEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r queueQueryNameString) Order(direction SortOrder) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: direction,
+		},
+	}
+}
+
+func (r queueQueryNameString) Cursor(cursor string) queueCursorParam {
+	return queueCursorParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: cursor,
+		},
+	}
+}
+
+func (r queueQueryNameString) In(value []string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryNameString) InIfPresent(value []string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r queueQueryNameString) NotIn(value []string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryNameString) NotInIfPresent(value []string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r queueQueryNameString) Lt(value string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryNameString) LtIfPresent(value *string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r queueQueryNameString) Lte(value string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryNameString) LteIfPresent(value *string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r queueQueryNameString) Gt(value string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryNameString) GtIfPresent(value *string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r queueQueryNameString) Gte(value string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryNameString) GteIfPresent(value *string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r queueQueryNameString) Contains(value string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryNameString) ContainsIfPresent(value *string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r queueQueryNameString) StartsWith(value string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryNameString) StartsWithIfPresent(value *string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r queueQueryNameString) EndsWith(value string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryNameString) EndsWithIfPresent(value *string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r queueQueryNameString) Mode(value QueryMode) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryNameString) ModeIfPresent(value *QueryMode) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r queueQueryNameString) Not(value string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryNameString) NotIfPresent(value *string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r queueQueryNameString) HasPrefix(value string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r queueQueryNameString) HasPrefixIfPresent(value *string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r queueQueryNameString) HasSuffix(value string) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r queueQueryNameString) HasSuffixIfPresent(value *string) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r queueQueryNameString) Field() queuePrismaFields {
+	return queueFieldName
+}
+
+// QueueItem acts as a namespaces to access query methods for the QueueItem model
+var QueueItem = queueItemQuery{}
+
+// queueItemQuery exposes query functions for the queueItem model
+type queueItemQuery struct {
+
+	// ID
+	//
+	// @required
+	ID queueItemQueryIDBigInt
+
+	// StepRunID
+	//
+	// @optional
+	StepRunID queueItemQueryStepRunIDString
+
+	// StepID
+	//
+	// @optional
+	StepID queueItemQueryStepIDString
+
+	// ActionID
+	//
+	// @optional
+	ActionID queueItemQueryActionIDString
+
+	// ScheduleTimeoutAt
+	//
+	// @optional
+	ScheduleTimeoutAt queueItemQueryScheduleTimeoutAtDateTime
+
+	// StepTimeout
+	//
+	// @optional
+	StepTimeout queueItemQueryStepTimeoutString
+
+	// Priority
+	//
+	// @required
+	Priority queueItemQueryPriorityInt
+
+	// IsQueued
+	//
+	// @required
+	IsQueued queueItemQueryIsQueuedBoolean
+
+	// TenantID
+	//
+	// @required
+	TenantID queueItemQueryTenantIDString
+
+	// Queue
+	//
+	// @required
+	Queue queueItemQueryQueueString
+
+	// Sticky
+	//
+	// @optional
+	Sticky queueItemQueryStickyStickyStrategy
+
+	// DesiredWorkerID
+	//
+	// @optional
+	DesiredWorkerID queueItemQueryDesiredWorkerIDString
+}
+
+func (queueItemQuery) Not(params ...QueueItemWhereParam) queueItemDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (queueItemQuery) Or(params ...QueueItemWhereParam) queueItemDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (queueItemQuery) And(params ...QueueItemWhereParam) queueItemDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+// base struct
+type queueItemQueryIDBigInt struct{}
+
+// Set the required value of ID
+func (r queueItemQueryIDBigInt) Set(value BigInt) queueItemSetParam {
+
+	return queueItemSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r queueItemQueryIDBigInt) SetIfPresent(value *BigInt) queueItemSetParam {
+	if value == nil {
+		return queueItemSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the required value of ID
+func (r queueItemQueryIDBigInt) Increment(value BigInt) queueItemSetParam {
+	return queueItemSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryIDBigInt) IncrementIfPresent(value *BigInt) queueItemSetParam {
+	if value == nil {
+		return queueItemSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the required value of ID
+func (r queueItemQueryIDBigInt) Decrement(value BigInt) queueItemSetParam {
+	return queueItemSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryIDBigInt) DecrementIfPresent(value *BigInt) queueItemSetParam {
+	if value == nil {
+		return queueItemSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the required value of ID
+func (r queueItemQueryIDBigInt) Multiply(value BigInt) queueItemSetParam {
+	return queueItemSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryIDBigInt) MultiplyIfPresent(value *BigInt) queueItemSetParam {
+	if value == nil {
+		return queueItemSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the required value of ID
+func (r queueItemQueryIDBigInt) Divide(value BigInt) queueItemSetParam {
+	return queueItemSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryIDBigInt) DivideIfPresent(value *BigInt) queueItemSetParam {
+	if value == nil {
+		return queueItemSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r queueItemQueryIDBigInt) Equals(value BigInt) queueItemWithPrismaIDEqualsUniqueParam {
+
+	return queueItemWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryIDBigInt) EqualsIfPresent(value *BigInt) queueItemWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return queueItemWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r queueItemQueryIDBigInt) Order(direction SortOrder) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r queueItemQueryIDBigInt) Cursor(cursor BigInt) queueItemCursorParam {
+	return queueItemCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r queueItemQueryIDBigInt) In(value []BigInt) queueItemParamUnique {
+	return queueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryIDBigInt) InIfPresent(value []BigInt) queueItemParamUnique {
+	if value == nil {
+		return queueItemParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r queueItemQueryIDBigInt) NotIn(value []BigInt) queueItemParamUnique {
+	return queueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryIDBigInt) NotInIfPresent(value []BigInt) queueItemParamUnique {
+	if value == nil {
+		return queueItemParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r queueItemQueryIDBigInt) Lt(value BigInt) queueItemParamUnique {
+	return queueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryIDBigInt) LtIfPresent(value *BigInt) queueItemParamUnique {
+	if value == nil {
+		return queueItemParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r queueItemQueryIDBigInt) Lte(value BigInt) queueItemParamUnique {
+	return queueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryIDBigInt) LteIfPresent(value *BigInt) queueItemParamUnique {
+	if value == nil {
+		return queueItemParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r queueItemQueryIDBigInt) Gt(value BigInt) queueItemParamUnique {
+	return queueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryIDBigInt) GtIfPresent(value *BigInt) queueItemParamUnique {
+	if value == nil {
+		return queueItemParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r queueItemQueryIDBigInt) Gte(value BigInt) queueItemParamUnique {
+	return queueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryIDBigInt) GteIfPresent(value *BigInt) queueItemParamUnique {
+	if value == nil {
+		return queueItemParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r queueItemQueryIDBigInt) Not(value BigInt) queueItemParamUnique {
+	return queueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryIDBigInt) NotIfPresent(value *BigInt) queueItemParamUnique {
+	if value == nil {
+		return queueItemParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+func (r queueItemQueryIDBigInt) Field() queueItemPrismaFields {
+	return queueItemFieldID
+}
+
+// base struct
+type queueItemQueryStepRunIDString struct{}
+
+// Set the optional value of StepRunID
+func (r queueItemQueryStepRunIDString) Set(value string) queueItemSetParam {
+
+	return queueItemSetParam{
+		data: builder.Field{
+			Name:  "stepRunId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of StepRunID dynamically
+func (r queueItemQueryStepRunIDString) SetIfPresent(value *String) queueItemSetParam {
+	if value == nil {
+		return queueItemSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of StepRunID dynamically
+func (r queueItemQueryStepRunIDString) SetOptional(value *String) queueItemSetParam {
+	if value == nil {
+
+		var v *string
+		return queueItemSetParam{
+			data: builder.Field{
+				Name:  "stepRunId",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r queueItemQueryStepRunIDString) Equals(value string) queueItemWithPrismaStepRunIDEqualsParam {
+
+	return queueItemWithPrismaStepRunIDEqualsParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepRunIDString) EqualsIfPresent(value *string) queueItemWithPrismaStepRunIDEqualsParam {
+	if value == nil {
+		return queueItemWithPrismaStepRunIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r queueItemQueryStepRunIDString) EqualsOptional(value *String) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepRunIDString) IsNull() queueItemDefaultParam {
+	var str *string = nil
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepRunIDString) Order(direction SortOrder) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name:  "stepRunId",
+			Value: direction,
+		},
+	}
+}
+
+func (r queueItemQueryStepRunIDString) Cursor(cursor string) queueItemCursorParam {
+	return queueItemCursorParam{
+		data: builder.Field{
+			Name:  "stepRunId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r queueItemQueryStepRunIDString) In(value []string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepRunIDString) InIfPresent(value []string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r queueItemQueryStepRunIDString) NotIn(value []string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepRunIDString) NotInIfPresent(value []string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r queueItemQueryStepRunIDString) Lt(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepRunIDString) LtIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r queueItemQueryStepRunIDString) Lte(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepRunIDString) LteIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r queueItemQueryStepRunIDString) Gt(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepRunIDString) GtIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r queueItemQueryStepRunIDString) Gte(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepRunIDString) GteIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r queueItemQueryStepRunIDString) Contains(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepRunIDString) ContainsIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r queueItemQueryStepRunIDString) StartsWith(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepRunIDString) StartsWithIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r queueItemQueryStepRunIDString) EndsWith(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepRunIDString) EndsWithIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r queueItemQueryStepRunIDString) Mode(value QueryMode) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepRunIDString) ModeIfPresent(value *QueryMode) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r queueItemQueryStepRunIDString) Not(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepRunIDString) NotIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r queueItemQueryStepRunIDString) HasPrefix(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r queueItemQueryStepRunIDString) HasPrefixIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r queueItemQueryStepRunIDString) HasSuffix(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r queueItemQueryStepRunIDString) HasSuffixIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r queueItemQueryStepRunIDString) Field() queueItemPrismaFields {
+	return queueItemFieldStepRunID
+}
+
+// base struct
+type queueItemQueryStepIDString struct{}
+
+// Set the optional value of StepID
+func (r queueItemQueryStepIDString) Set(value string) queueItemSetParam {
+
+	return queueItemSetParam{
+		data: builder.Field{
+			Name:  "stepId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of StepID dynamically
+func (r queueItemQueryStepIDString) SetIfPresent(value *String) queueItemSetParam {
+	if value == nil {
+		return queueItemSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of StepID dynamically
+func (r queueItemQueryStepIDString) SetOptional(value *String) queueItemSetParam {
+	if value == nil {
+
+		var v *string
+		return queueItemSetParam{
+			data: builder.Field{
+				Name:  "stepId",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r queueItemQueryStepIDString) Equals(value string) queueItemWithPrismaStepIDEqualsParam {
+
+	return queueItemWithPrismaStepIDEqualsParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepIDString) EqualsIfPresent(value *string) queueItemWithPrismaStepIDEqualsParam {
+	if value == nil {
+		return queueItemWithPrismaStepIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r queueItemQueryStepIDString) EqualsOptional(value *String) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepIDString) IsNull() queueItemDefaultParam {
+	var str *string = nil
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepIDString) Order(direction SortOrder) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name:  "stepId",
+			Value: direction,
+		},
+	}
+}
+
+func (r queueItemQueryStepIDString) Cursor(cursor string) queueItemCursorParam {
+	return queueItemCursorParam{
+		data: builder.Field{
+			Name:  "stepId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r queueItemQueryStepIDString) In(value []string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepIDString) InIfPresent(value []string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r queueItemQueryStepIDString) NotIn(value []string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepIDString) NotInIfPresent(value []string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r queueItemQueryStepIDString) Lt(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepIDString) LtIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r queueItemQueryStepIDString) Lte(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepIDString) LteIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r queueItemQueryStepIDString) Gt(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepIDString) GtIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r queueItemQueryStepIDString) Gte(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepIDString) GteIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r queueItemQueryStepIDString) Contains(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepIDString) ContainsIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r queueItemQueryStepIDString) StartsWith(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepIDString) StartsWithIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r queueItemQueryStepIDString) EndsWith(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepIDString) EndsWithIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r queueItemQueryStepIDString) Mode(value QueryMode) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepIDString) ModeIfPresent(value *QueryMode) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r queueItemQueryStepIDString) Not(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepIDString) NotIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r queueItemQueryStepIDString) HasPrefix(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r queueItemQueryStepIDString) HasPrefixIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r queueItemQueryStepIDString) HasSuffix(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r queueItemQueryStepIDString) HasSuffixIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r queueItemQueryStepIDString) Field() queueItemPrismaFields {
+	return queueItemFieldStepID
+}
+
+// base struct
+type queueItemQueryActionIDString struct{}
+
+// Set the optional value of ActionID
+func (r queueItemQueryActionIDString) Set(value string) queueItemSetParam {
+
+	return queueItemSetParam{
+		data: builder.Field{
+			Name:  "actionId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ActionID dynamically
+func (r queueItemQueryActionIDString) SetIfPresent(value *String) queueItemSetParam {
+	if value == nil {
+		return queueItemSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of ActionID dynamically
+func (r queueItemQueryActionIDString) SetOptional(value *String) queueItemSetParam {
+	if value == nil {
+
+		var v *string
+		return queueItemSetParam{
+			data: builder.Field{
+				Name:  "actionId",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r queueItemQueryActionIDString) Equals(value string) queueItemWithPrismaActionIDEqualsParam {
+
+	return queueItemWithPrismaActionIDEqualsParam{
+		data: builder.Field{
+			Name: "actionId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryActionIDString) EqualsIfPresent(value *string) queueItemWithPrismaActionIDEqualsParam {
+	if value == nil {
+		return queueItemWithPrismaActionIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r queueItemQueryActionIDString) EqualsOptional(value *String) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "actionId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryActionIDString) IsNull() queueItemDefaultParam {
+	var str *string = nil
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "actionId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryActionIDString) Order(direction SortOrder) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name:  "actionId",
+			Value: direction,
+		},
+	}
+}
+
+func (r queueItemQueryActionIDString) Cursor(cursor string) queueItemCursorParam {
+	return queueItemCursorParam{
+		data: builder.Field{
+			Name:  "actionId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r queueItemQueryActionIDString) In(value []string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "actionId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryActionIDString) InIfPresent(value []string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r queueItemQueryActionIDString) NotIn(value []string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "actionId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryActionIDString) NotInIfPresent(value []string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r queueItemQueryActionIDString) Lt(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "actionId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryActionIDString) LtIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r queueItemQueryActionIDString) Lte(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "actionId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryActionIDString) LteIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r queueItemQueryActionIDString) Gt(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "actionId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryActionIDString) GtIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r queueItemQueryActionIDString) Gte(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "actionId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryActionIDString) GteIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r queueItemQueryActionIDString) Contains(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "actionId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryActionIDString) ContainsIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r queueItemQueryActionIDString) StartsWith(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "actionId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryActionIDString) StartsWithIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r queueItemQueryActionIDString) EndsWith(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "actionId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryActionIDString) EndsWithIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r queueItemQueryActionIDString) Mode(value QueryMode) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "actionId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryActionIDString) ModeIfPresent(value *QueryMode) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r queueItemQueryActionIDString) Not(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "actionId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryActionIDString) NotIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r queueItemQueryActionIDString) HasPrefix(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "actionId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r queueItemQueryActionIDString) HasPrefixIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r queueItemQueryActionIDString) HasSuffix(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "actionId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r queueItemQueryActionIDString) HasSuffixIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r queueItemQueryActionIDString) Field() queueItemPrismaFields {
+	return queueItemFieldActionID
+}
+
+// base struct
+type queueItemQueryScheduleTimeoutAtDateTime struct{}
+
+// Set the optional value of ScheduleTimeoutAt
+func (r queueItemQueryScheduleTimeoutAtDateTime) Set(value DateTime) queueItemSetParam {
+
+	return queueItemSetParam{
+		data: builder.Field{
+			Name:  "scheduleTimeoutAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ScheduleTimeoutAt dynamically
+func (r queueItemQueryScheduleTimeoutAtDateTime) SetIfPresent(value *DateTime) queueItemSetParam {
+	if value == nil {
+		return queueItemSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of ScheduleTimeoutAt dynamically
+func (r queueItemQueryScheduleTimeoutAtDateTime) SetOptional(value *DateTime) queueItemSetParam {
+	if value == nil {
+
+		var v *DateTime
+		return queueItemSetParam{
+			data: builder.Field{
+				Name:  "scheduleTimeoutAt",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) Equals(value DateTime) queueItemWithPrismaScheduleTimeoutAtEqualsParam {
+
+	return queueItemWithPrismaScheduleTimeoutAtEqualsParam{
+		data: builder.Field{
+			Name: "scheduleTimeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) EqualsIfPresent(value *DateTime) queueItemWithPrismaScheduleTimeoutAtEqualsParam {
+	if value == nil {
+		return queueItemWithPrismaScheduleTimeoutAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) EqualsOptional(value *DateTime) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "scheduleTimeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) IsNull() queueItemDefaultParam {
+	var str *string = nil
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "scheduleTimeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) Order(direction SortOrder) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name:  "scheduleTimeoutAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) Cursor(cursor DateTime) queueItemCursorParam {
+	return queueItemCursorParam{
+		data: builder.Field{
+			Name:  "scheduleTimeoutAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) In(value []DateTime) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "scheduleTimeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) InIfPresent(value []DateTime) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) NotIn(value []DateTime) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "scheduleTimeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) NotInIfPresent(value []DateTime) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) Lt(value DateTime) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "scheduleTimeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) LtIfPresent(value *DateTime) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) Lte(value DateTime) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "scheduleTimeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) LteIfPresent(value *DateTime) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) Gt(value DateTime) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "scheduleTimeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) GtIfPresent(value *DateTime) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) Gte(value DateTime) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "scheduleTimeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) GteIfPresent(value *DateTime) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) Not(value DateTime) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "scheduleTimeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) NotIfPresent(value *DateTime) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) Before(value DateTime) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "scheduleTimeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r queueItemQueryScheduleTimeoutAtDateTime) BeforeIfPresent(value *DateTime) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) After(value DateTime) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "scheduleTimeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r queueItemQueryScheduleTimeoutAtDateTime) AfterIfPresent(value *DateTime) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) BeforeEquals(value DateTime) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "scheduleTimeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r queueItemQueryScheduleTimeoutAtDateTime) BeforeEqualsIfPresent(value *DateTime) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) AfterEquals(value DateTime) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "scheduleTimeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r queueItemQueryScheduleTimeoutAtDateTime) AfterEqualsIfPresent(value *DateTime) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r queueItemQueryScheduleTimeoutAtDateTime) Field() queueItemPrismaFields {
+	return queueItemFieldScheduleTimeoutAt
+}
+
+// base struct
+type queueItemQueryStepTimeoutString struct{}
+
+// Set the optional value of StepTimeout
+func (r queueItemQueryStepTimeoutString) Set(value string) queueItemSetParam {
+
+	return queueItemSetParam{
+		data: builder.Field{
+			Name:  "stepTimeout",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of StepTimeout dynamically
+func (r queueItemQueryStepTimeoutString) SetIfPresent(value *String) queueItemSetParam {
+	if value == nil {
+		return queueItemSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of StepTimeout dynamically
+func (r queueItemQueryStepTimeoutString) SetOptional(value *String) queueItemSetParam {
+	if value == nil {
+
+		var v *string
+		return queueItemSetParam{
+			data: builder.Field{
+				Name:  "stepTimeout",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r queueItemQueryStepTimeoutString) Equals(value string) queueItemWithPrismaStepTimeoutEqualsParam {
+
+	return queueItemWithPrismaStepTimeoutEqualsParam{
+		data: builder.Field{
+			Name: "stepTimeout",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepTimeoutString) EqualsIfPresent(value *string) queueItemWithPrismaStepTimeoutEqualsParam {
+	if value == nil {
+		return queueItemWithPrismaStepTimeoutEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r queueItemQueryStepTimeoutString) EqualsOptional(value *String) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepTimeout",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepTimeoutString) IsNull() queueItemDefaultParam {
+	var str *string = nil
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepTimeout",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepTimeoutString) Order(direction SortOrder) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name:  "stepTimeout",
+			Value: direction,
+		},
+	}
+}
+
+func (r queueItemQueryStepTimeoutString) Cursor(cursor string) queueItemCursorParam {
+	return queueItemCursorParam{
+		data: builder.Field{
+			Name:  "stepTimeout",
+			Value: cursor,
+		},
+	}
+}
+
+func (r queueItemQueryStepTimeoutString) In(value []string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepTimeout",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepTimeoutString) InIfPresent(value []string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r queueItemQueryStepTimeoutString) NotIn(value []string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepTimeout",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepTimeoutString) NotInIfPresent(value []string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r queueItemQueryStepTimeoutString) Lt(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepTimeout",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepTimeoutString) LtIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r queueItemQueryStepTimeoutString) Lte(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepTimeout",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepTimeoutString) LteIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r queueItemQueryStepTimeoutString) Gt(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepTimeout",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepTimeoutString) GtIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r queueItemQueryStepTimeoutString) Gte(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepTimeout",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepTimeoutString) GteIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r queueItemQueryStepTimeoutString) Contains(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepTimeout",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepTimeoutString) ContainsIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r queueItemQueryStepTimeoutString) StartsWith(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepTimeout",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepTimeoutString) StartsWithIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r queueItemQueryStepTimeoutString) EndsWith(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepTimeout",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepTimeoutString) EndsWithIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r queueItemQueryStepTimeoutString) Mode(value QueryMode) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepTimeout",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepTimeoutString) ModeIfPresent(value *QueryMode) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r queueItemQueryStepTimeoutString) Not(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepTimeout",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStepTimeoutString) NotIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r queueItemQueryStepTimeoutString) HasPrefix(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepTimeout",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r queueItemQueryStepTimeoutString) HasPrefixIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r queueItemQueryStepTimeoutString) HasSuffix(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepTimeout",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r queueItemQueryStepTimeoutString) HasSuffixIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r queueItemQueryStepTimeoutString) Field() queueItemPrismaFields {
+	return queueItemFieldStepTimeout
+}
+
+// base struct
+type queueItemQueryPriorityInt struct{}
+
+// Set the required value of Priority
+func (r queueItemQueryPriorityInt) Set(value int) queueItemSetParam {
+
+	return queueItemSetParam{
+		data: builder.Field{
+			Name:  "priority",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Priority dynamically
+func (r queueItemQueryPriorityInt) SetIfPresent(value *Int) queueItemSetParam {
+	if value == nil {
+		return queueItemSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the required value of Priority
+func (r queueItemQueryPriorityInt) Increment(value int) queueItemSetParam {
+	return queueItemSetParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryPriorityInt) IncrementIfPresent(value *int) queueItemSetParam {
+	if value == nil {
+		return queueItemSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the required value of Priority
+func (r queueItemQueryPriorityInt) Decrement(value int) queueItemSetParam {
+	return queueItemSetParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryPriorityInt) DecrementIfPresent(value *int) queueItemSetParam {
+	if value == nil {
+		return queueItemSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the required value of Priority
+func (r queueItemQueryPriorityInt) Multiply(value int) queueItemSetParam {
+	return queueItemSetParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryPriorityInt) MultiplyIfPresent(value *int) queueItemSetParam {
+	if value == nil {
+		return queueItemSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the required value of Priority
+func (r queueItemQueryPriorityInt) Divide(value int) queueItemSetParam {
+	return queueItemSetParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryPriorityInt) DivideIfPresent(value *int) queueItemSetParam {
+	if value == nil {
+		return queueItemSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r queueItemQueryPriorityInt) Equals(value int) queueItemWithPrismaPriorityEqualsParam {
+
+	return queueItemWithPrismaPriorityEqualsParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryPriorityInt) EqualsIfPresent(value *int) queueItemWithPrismaPriorityEqualsParam {
+	if value == nil {
+		return queueItemWithPrismaPriorityEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r queueItemQueryPriorityInt) Order(direction SortOrder) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name:  "priority",
+			Value: direction,
+		},
+	}
+}
+
+func (r queueItemQueryPriorityInt) Cursor(cursor int) queueItemCursorParam {
+	return queueItemCursorParam{
+		data: builder.Field{
+			Name:  "priority",
+			Value: cursor,
+		},
+	}
+}
+
+func (r queueItemQueryPriorityInt) In(value []int) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryPriorityInt) InIfPresent(value []int) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r queueItemQueryPriorityInt) NotIn(value []int) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryPriorityInt) NotInIfPresent(value []int) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r queueItemQueryPriorityInt) Lt(value int) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryPriorityInt) LtIfPresent(value *int) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r queueItemQueryPriorityInt) Lte(value int) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryPriorityInt) LteIfPresent(value *int) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r queueItemQueryPriorityInt) Gt(value int) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryPriorityInt) GtIfPresent(value *int) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r queueItemQueryPriorityInt) Gte(value int) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryPriorityInt) GteIfPresent(value *int) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r queueItemQueryPriorityInt) Not(value int) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryPriorityInt) NotIfPresent(value *int) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r queueItemQueryPriorityInt) LT(value int) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r queueItemQueryPriorityInt) LTIfPresent(value *int) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.LT(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r queueItemQueryPriorityInt) LTE(value int) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r queueItemQueryPriorityInt) LTEIfPresent(value *int) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.LTE(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r queueItemQueryPriorityInt) GT(value int) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r queueItemQueryPriorityInt) GTIfPresent(value *int) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.GT(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r queueItemQueryPriorityInt) GTE(value int) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r queueItemQueryPriorityInt) GTEIfPresent(value *int) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.GTE(*value)
+}
+
+func (r queueItemQueryPriorityInt) Field() queueItemPrismaFields {
+	return queueItemFieldPriority
+}
+
+// base struct
+type queueItemQueryIsQueuedBoolean struct{}
+
+// Set the required value of IsQueued
+func (r queueItemQueryIsQueuedBoolean) Set(value bool) queueItemWithPrismaIsQueuedSetParam {
+
+	return queueItemWithPrismaIsQueuedSetParam{
+		data: builder.Field{
+			Name:  "isQueued",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of IsQueued dynamically
+func (r queueItemQueryIsQueuedBoolean) SetIfPresent(value *Boolean) queueItemWithPrismaIsQueuedSetParam {
+	if value == nil {
+		return queueItemWithPrismaIsQueuedSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r queueItemQueryIsQueuedBoolean) Equals(value bool) queueItemWithPrismaIsQueuedEqualsParam {
+
+	return queueItemWithPrismaIsQueuedEqualsParam{
+		data: builder.Field{
+			Name: "isQueued",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryIsQueuedBoolean) EqualsIfPresent(value *bool) queueItemWithPrismaIsQueuedEqualsParam {
+	if value == nil {
+		return queueItemWithPrismaIsQueuedEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r queueItemQueryIsQueuedBoolean) Order(direction SortOrder) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name:  "isQueued",
+			Value: direction,
+		},
+	}
+}
+
+func (r queueItemQueryIsQueuedBoolean) Cursor(cursor bool) queueItemCursorParam {
+	return queueItemCursorParam{
+		data: builder.Field{
+			Name:  "isQueued",
+			Value: cursor,
+		},
+	}
+}
+
+func (r queueItemQueryIsQueuedBoolean) Field() queueItemPrismaFields {
+	return queueItemFieldIsQueued
+}
+
+// base struct
+type queueItemQueryTenantIDString struct{}
+
+// Set the required value of TenantID
+func (r queueItemQueryTenantIDString) Set(value string) queueItemWithPrismaTenantIDSetParam {
+
+	return queueItemWithPrismaTenantIDSetParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of TenantID dynamically
+func (r queueItemQueryTenantIDString) SetIfPresent(value *String) queueItemWithPrismaTenantIDSetParam {
+	if value == nil {
+		return queueItemWithPrismaTenantIDSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r queueItemQueryTenantIDString) Equals(value string) queueItemWithPrismaTenantIDEqualsParam {
+
+	return queueItemWithPrismaTenantIDEqualsParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryTenantIDString) EqualsIfPresent(value *string) queueItemWithPrismaTenantIDEqualsParam {
+	if value == nil {
+		return queueItemWithPrismaTenantIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r queueItemQueryTenantIDString) Order(direction SortOrder) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: direction,
+		},
+	}
+}
+
+func (r queueItemQueryTenantIDString) Cursor(cursor string) queueItemCursorParam {
+	return queueItemCursorParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r queueItemQueryTenantIDString) In(value []string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryTenantIDString) InIfPresent(value []string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r queueItemQueryTenantIDString) NotIn(value []string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryTenantIDString) NotInIfPresent(value []string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r queueItemQueryTenantIDString) Lt(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryTenantIDString) LtIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r queueItemQueryTenantIDString) Lte(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryTenantIDString) LteIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r queueItemQueryTenantIDString) Gt(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryTenantIDString) GtIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r queueItemQueryTenantIDString) Gte(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryTenantIDString) GteIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r queueItemQueryTenantIDString) Contains(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryTenantIDString) ContainsIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r queueItemQueryTenantIDString) StartsWith(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryTenantIDString) StartsWithIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r queueItemQueryTenantIDString) EndsWith(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryTenantIDString) EndsWithIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r queueItemQueryTenantIDString) Mode(value QueryMode) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryTenantIDString) ModeIfPresent(value *QueryMode) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r queueItemQueryTenantIDString) Not(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryTenantIDString) NotIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r queueItemQueryTenantIDString) HasPrefix(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r queueItemQueryTenantIDString) HasPrefixIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r queueItemQueryTenantIDString) HasSuffix(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r queueItemQueryTenantIDString) HasSuffixIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r queueItemQueryTenantIDString) Field() queueItemPrismaFields {
+	return queueItemFieldTenantID
+}
+
+// base struct
+type queueItemQueryQueueString struct{}
+
+// Set the required value of Queue
+func (r queueItemQueryQueueString) Set(value string) queueItemWithPrismaQueueSetParam {
+
+	return queueItemWithPrismaQueueSetParam{
+		data: builder.Field{
+			Name:  "queue",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Queue dynamically
+func (r queueItemQueryQueueString) SetIfPresent(value *String) queueItemWithPrismaQueueSetParam {
+	if value == nil {
+		return queueItemWithPrismaQueueSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r queueItemQueryQueueString) Equals(value string) queueItemWithPrismaQueueEqualsParam {
+
+	return queueItemWithPrismaQueueEqualsParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryQueueString) EqualsIfPresent(value *string) queueItemWithPrismaQueueEqualsParam {
+	if value == nil {
+		return queueItemWithPrismaQueueEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r queueItemQueryQueueString) Order(direction SortOrder) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name:  "queue",
+			Value: direction,
+		},
+	}
+}
+
+func (r queueItemQueryQueueString) Cursor(cursor string) queueItemCursorParam {
+	return queueItemCursorParam{
+		data: builder.Field{
+			Name:  "queue",
+			Value: cursor,
+		},
+	}
+}
+
+func (r queueItemQueryQueueString) In(value []string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryQueueString) InIfPresent(value []string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r queueItemQueryQueueString) NotIn(value []string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryQueueString) NotInIfPresent(value []string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r queueItemQueryQueueString) Lt(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryQueueString) LtIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r queueItemQueryQueueString) Lte(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryQueueString) LteIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r queueItemQueryQueueString) Gt(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryQueueString) GtIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r queueItemQueryQueueString) Gte(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryQueueString) GteIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r queueItemQueryQueueString) Contains(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryQueueString) ContainsIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r queueItemQueryQueueString) StartsWith(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryQueueString) StartsWithIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r queueItemQueryQueueString) EndsWith(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryQueueString) EndsWithIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r queueItemQueryQueueString) Mode(value QueryMode) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryQueueString) ModeIfPresent(value *QueryMode) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r queueItemQueryQueueString) Not(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryQueueString) NotIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r queueItemQueryQueueString) HasPrefix(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r queueItemQueryQueueString) HasPrefixIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r queueItemQueryQueueString) HasSuffix(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r queueItemQueryQueueString) HasSuffixIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r queueItemQueryQueueString) Field() queueItemPrismaFields {
+	return queueItemFieldQueue
+}
+
+// base struct
+type queueItemQueryStickyStickyStrategy struct{}
+
+// Set the optional value of Sticky
+func (r queueItemQueryStickyStickyStrategy) Set(value StickyStrategy) queueItemSetParam {
+
+	return queueItemSetParam{
+		data: builder.Field{
+			Name:  "sticky",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Sticky dynamically
+func (r queueItemQueryStickyStickyStrategy) SetIfPresent(value *StickyStrategy) queueItemSetParam {
+	if value == nil {
+		return queueItemSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of Sticky dynamically
+func (r queueItemQueryStickyStickyStrategy) SetOptional(value *StickyStrategy) queueItemSetParam {
+	if value == nil {
+
+		var v *StickyStrategy
+		return queueItemSetParam{
+			data: builder.Field{
+				Name:  "sticky",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r queueItemQueryStickyStickyStrategy) Equals(value StickyStrategy) queueItemWithPrismaStickyEqualsParam {
+
+	return queueItemWithPrismaStickyEqualsParam{
+		data: builder.Field{
+			Name: "sticky",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStickyStickyStrategy) EqualsIfPresent(value *StickyStrategy) queueItemWithPrismaStickyEqualsParam {
+	if value == nil {
+		return queueItemWithPrismaStickyEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r queueItemQueryStickyStickyStrategy) EqualsOptional(value *StickyStrategy) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "sticky",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStickyStickyStrategy) IsNull() queueItemDefaultParam {
+	var str *string = nil
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "sticky",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStickyStickyStrategy) Order(direction SortOrder) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name:  "sticky",
+			Value: direction,
+		},
+	}
+}
+
+func (r queueItemQueryStickyStickyStrategy) Cursor(cursor StickyStrategy) queueItemCursorParam {
+	return queueItemCursorParam{
+		data: builder.Field{
+			Name:  "sticky",
+			Value: cursor,
+		},
+	}
+}
+
+func (r queueItemQueryStickyStickyStrategy) In(value []StickyStrategy) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "sticky",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStickyStickyStrategy) InIfPresent(value []StickyStrategy) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r queueItemQueryStickyStickyStrategy) NotIn(value []StickyStrategy) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "sticky",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStickyStickyStrategy) NotInIfPresent(value []StickyStrategy) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r queueItemQueryStickyStickyStrategy) Not(value StickyStrategy) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "sticky",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryStickyStickyStrategy) NotIfPresent(value *StickyStrategy) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+func (r queueItemQueryStickyStickyStrategy) Field() queueItemPrismaFields {
+	return queueItemFieldSticky
+}
+
+// base struct
+type queueItemQueryDesiredWorkerIDString struct{}
+
+// Set the optional value of DesiredWorkerID
+func (r queueItemQueryDesiredWorkerIDString) Set(value string) queueItemSetParam {
+
+	return queueItemSetParam{
+		data: builder.Field{
+			Name:  "desiredWorkerId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of DesiredWorkerID dynamically
+func (r queueItemQueryDesiredWorkerIDString) SetIfPresent(value *String) queueItemSetParam {
+	if value == nil {
+		return queueItemSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of DesiredWorkerID dynamically
+func (r queueItemQueryDesiredWorkerIDString) SetOptional(value *String) queueItemSetParam {
+	if value == nil {
+
+		var v *string
+		return queueItemSetParam{
+			data: builder.Field{
+				Name:  "desiredWorkerId",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r queueItemQueryDesiredWorkerIDString) Equals(value string) queueItemWithPrismaDesiredWorkerIDEqualsParam {
+
+	return queueItemWithPrismaDesiredWorkerIDEqualsParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryDesiredWorkerIDString) EqualsIfPresent(value *string) queueItemWithPrismaDesiredWorkerIDEqualsParam {
+	if value == nil {
+		return queueItemWithPrismaDesiredWorkerIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r queueItemQueryDesiredWorkerIDString) EqualsOptional(value *String) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryDesiredWorkerIDString) IsNull() queueItemDefaultParam {
+	var str *string = nil
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryDesiredWorkerIDString) Order(direction SortOrder) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name:  "desiredWorkerId",
+			Value: direction,
+		},
+	}
+}
+
+func (r queueItemQueryDesiredWorkerIDString) Cursor(cursor string) queueItemCursorParam {
+	return queueItemCursorParam{
+		data: builder.Field{
+			Name:  "desiredWorkerId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r queueItemQueryDesiredWorkerIDString) In(value []string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryDesiredWorkerIDString) InIfPresent(value []string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r queueItemQueryDesiredWorkerIDString) NotIn(value []string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryDesiredWorkerIDString) NotInIfPresent(value []string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r queueItemQueryDesiredWorkerIDString) Lt(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryDesiredWorkerIDString) LtIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r queueItemQueryDesiredWorkerIDString) Lte(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryDesiredWorkerIDString) LteIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r queueItemQueryDesiredWorkerIDString) Gt(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryDesiredWorkerIDString) GtIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r queueItemQueryDesiredWorkerIDString) Gte(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryDesiredWorkerIDString) GteIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r queueItemQueryDesiredWorkerIDString) Contains(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryDesiredWorkerIDString) ContainsIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r queueItemQueryDesiredWorkerIDString) StartsWith(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryDesiredWorkerIDString) StartsWithIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r queueItemQueryDesiredWorkerIDString) EndsWith(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryDesiredWorkerIDString) EndsWithIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r queueItemQueryDesiredWorkerIDString) Mode(value QueryMode) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryDesiredWorkerIDString) ModeIfPresent(value *QueryMode) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r queueItemQueryDesiredWorkerIDString) Not(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueItemQueryDesiredWorkerIDString) NotIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r queueItemQueryDesiredWorkerIDString) HasPrefix(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r queueItemQueryDesiredWorkerIDString) HasPrefixIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r queueItemQueryDesiredWorkerIDString) HasSuffix(value string) queueItemDefaultParam {
+	return queueItemDefaultParam{
+		data: builder.Field{
+			Name: "desiredWorkerId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r queueItemQueryDesiredWorkerIDString) HasSuffixIfPresent(value *string) queueItemDefaultParam {
+	if value == nil {
+		return queueItemDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r queueItemQueryDesiredWorkerIDString) Field() queueItemPrismaFields {
+	return queueItemFieldDesiredWorkerID
 }
 
 // StepRunEvent acts as a namespaces to access query methods for the StepRunEvent model
@@ -227456,6 +233289,7 @@ var stepRunOutput = []builder.Output{
 	{Name: "jobRunId"},
 	{Name: "stepId"},
 	{Name: "order"},
+	{Name: "queue"},
 	{Name: "workerId"},
 	{Name: "tickerId"},
 	{Name: "status"},
@@ -228654,6 +234488,84 @@ func (p stepRunWithPrismaOrderEqualsUniqueParam) orderField()   {}
 
 func (stepRunWithPrismaOrderEqualsUniqueParam) unique() {}
 func (stepRunWithPrismaOrderEqualsUniqueParam) equals() {}
+
+type StepRunWithPrismaQueueEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepRunModel()
+	queueField()
+}
+
+type StepRunWithPrismaQueueSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRunModel()
+	queueField()
+}
+
+type stepRunWithPrismaQueueSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunWithPrismaQueueSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunWithPrismaQueueSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunWithPrismaQueueSetParam) stepRunModel() {}
+
+func (p stepRunWithPrismaQueueSetParam) queueField() {}
+
+type StepRunWithPrismaQueueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRunModel()
+	queueField()
+}
+
+type stepRunWithPrismaQueueEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunWithPrismaQueueEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunWithPrismaQueueEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunWithPrismaQueueEqualsParam) stepRunModel() {}
+
+func (p stepRunWithPrismaQueueEqualsParam) queueField() {}
+
+func (stepRunWithPrismaQueueSetParam) settable()  {}
+func (stepRunWithPrismaQueueEqualsParam) equals() {}
+
+type stepRunWithPrismaQueueEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunWithPrismaQueueEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunWithPrismaQueueEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunWithPrismaQueueEqualsUniqueParam) stepRunModel() {}
+func (p stepRunWithPrismaQueueEqualsUniqueParam) queueField()   {}
+
+func (stepRunWithPrismaQueueEqualsUniqueParam) unique() {}
+func (stepRunWithPrismaQueueEqualsUniqueParam) equals() {}
 
 type StepRunWithPrismaWorkerEqualsSetParam interface {
 	field() builder.Field
@@ -230838,6 +236750,1535 @@ func (p stepRunWithPrismaEventsEqualsUniqueParam) eventsField()  {}
 
 func (stepRunWithPrismaEventsEqualsUniqueParam) unique() {}
 func (stepRunWithPrismaEventsEqualsUniqueParam) equals() {}
+
+type queueActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var queueOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "tenantId"},
+	{Name: "name"},
+}
+
+type QueueRelationWith interface {
+	getQuery() builder.Query
+	with()
+	queueRelation()
+}
+
+type QueueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueModel()
+}
+
+type queueDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueDefaultParam) queueModel() {}
+
+type QueueOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueModel()
+}
+
+type queueOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueOrderByParam) queueModel() {}
+
+type QueueCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueModel()
+	isCursor()
+}
+
+type queueCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueCursorParam) isCursor() {}
+
+func (p queueCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueCursorParam) queueModel() {}
+
+type QueueParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	queueModel()
+}
+
+type queueParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueParamUnique) queueModel() {}
+
+func (queueParamUnique) unique() {}
+
+func (p queueParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p queueParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type QueueEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	queueModel()
+}
+
+type queueEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueEqualsParam) queueModel() {}
+
+func (queueEqualsParam) equals() {}
+
+func (p queueEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type QueueEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	queueModel()
+}
+
+type queueEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueEqualsUniqueParam) queueModel() {}
+
+func (queueEqualsUniqueParam) unique() {}
+func (queueEqualsUniqueParam) equals() {}
+
+func (p queueEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type QueueSetParam interface {
+	field() builder.Field
+	settable()
+	queueModel()
+}
+
+type queueSetParam struct {
+	data builder.Field
+}
+
+func (queueSetParam) settable() {}
+
+func (p queueSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueSetParam) queueModel() {}
+
+type QueueWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	queueModel()
+	idField()
+}
+
+type QueueWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueModel()
+	idField()
+}
+
+type queueWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueWithPrismaIDSetParam) queueModel() {}
+
+func (p queueWithPrismaIDSetParam) idField() {}
+
+type QueueWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueModel()
+	idField()
+}
+
+type queueWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueWithPrismaIDEqualsParam) queueModel() {}
+
+func (p queueWithPrismaIDEqualsParam) idField() {}
+
+func (queueWithPrismaIDSetParam) settable()  {}
+func (queueWithPrismaIDEqualsParam) equals() {}
+
+type queueWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueWithPrismaIDEqualsUniqueParam) queueModel() {}
+func (p queueWithPrismaIDEqualsUniqueParam) idField()    {}
+
+func (queueWithPrismaIDEqualsUniqueParam) unique() {}
+func (queueWithPrismaIDEqualsUniqueParam) equals() {}
+
+type QueueWithPrismaTenantIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	queueModel()
+	tenantIDField()
+}
+
+type QueueWithPrismaTenantIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueModel()
+	tenantIDField()
+}
+
+type queueWithPrismaTenantIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueWithPrismaTenantIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueWithPrismaTenantIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueWithPrismaTenantIDSetParam) queueModel() {}
+
+func (p queueWithPrismaTenantIDSetParam) tenantIDField() {}
+
+type QueueWithPrismaTenantIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueModel()
+	tenantIDField()
+}
+
+type queueWithPrismaTenantIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueWithPrismaTenantIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueWithPrismaTenantIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueWithPrismaTenantIDEqualsParam) queueModel() {}
+
+func (p queueWithPrismaTenantIDEqualsParam) tenantIDField() {}
+
+func (queueWithPrismaTenantIDSetParam) settable()  {}
+func (queueWithPrismaTenantIDEqualsParam) equals() {}
+
+type queueWithPrismaTenantIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueWithPrismaTenantIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueWithPrismaTenantIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueWithPrismaTenantIDEqualsUniqueParam) queueModel()    {}
+func (p queueWithPrismaTenantIDEqualsUniqueParam) tenantIDField() {}
+
+func (queueWithPrismaTenantIDEqualsUniqueParam) unique() {}
+func (queueWithPrismaTenantIDEqualsUniqueParam) equals() {}
+
+type QueueWithPrismaNameEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	queueModel()
+	nameField()
+}
+
+type QueueWithPrismaNameSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueModel()
+	nameField()
+}
+
+type queueWithPrismaNameSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueWithPrismaNameSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueWithPrismaNameSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueWithPrismaNameSetParam) queueModel() {}
+
+func (p queueWithPrismaNameSetParam) nameField() {}
+
+type QueueWithPrismaNameWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueModel()
+	nameField()
+}
+
+type queueWithPrismaNameEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueWithPrismaNameEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueWithPrismaNameEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueWithPrismaNameEqualsParam) queueModel() {}
+
+func (p queueWithPrismaNameEqualsParam) nameField() {}
+
+func (queueWithPrismaNameSetParam) settable()  {}
+func (queueWithPrismaNameEqualsParam) equals() {}
+
+type queueWithPrismaNameEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueWithPrismaNameEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueWithPrismaNameEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueWithPrismaNameEqualsUniqueParam) queueModel() {}
+func (p queueWithPrismaNameEqualsUniqueParam) nameField()  {}
+
+func (queueWithPrismaNameEqualsUniqueParam) unique() {}
+func (queueWithPrismaNameEqualsUniqueParam) equals() {}
+
+type queueItemActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var queueItemOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "stepRunId"},
+	{Name: "stepId"},
+	{Name: "actionId"},
+	{Name: "scheduleTimeoutAt"},
+	{Name: "stepTimeout"},
+	{Name: "priority"},
+	{Name: "isQueued"},
+	{Name: "tenantId"},
+	{Name: "queue"},
+	{Name: "sticky"},
+	{Name: "desiredWorkerId"},
+}
+
+type QueueItemRelationWith interface {
+	getQuery() builder.Query
+	with()
+	queueItemRelation()
+}
+
+type QueueItemWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+}
+
+type queueItemDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemDefaultParam) queueItemModel() {}
+
+type QueueItemOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+}
+
+type queueItemOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemOrderByParam) queueItemModel() {}
+
+type QueueItemCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	isCursor()
+}
+
+type queueItemCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemCursorParam) isCursor() {}
+
+func (p queueItemCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemCursorParam) queueItemModel() {}
+
+type QueueItemParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	queueItemModel()
+}
+
+type queueItemParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemParamUnique) queueItemModel() {}
+
+func (queueItemParamUnique) unique() {}
+
+func (p queueItemParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type QueueItemEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	queueItemModel()
+}
+
+type queueItemEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemEqualsParam) queueItemModel() {}
+
+func (queueItemEqualsParam) equals() {}
+
+func (p queueItemEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type QueueItemEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	queueItemModel()
+}
+
+type queueItemEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemEqualsUniqueParam) queueItemModel() {}
+
+func (queueItemEqualsUniqueParam) unique() {}
+func (queueItemEqualsUniqueParam) equals() {}
+
+func (p queueItemEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type QueueItemSetParam interface {
+	field() builder.Field
+	settable()
+	queueItemModel()
+}
+
+type queueItemSetParam struct {
+	data builder.Field
+}
+
+func (queueItemSetParam) settable() {}
+
+func (p queueItemSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemSetParam) queueItemModel() {}
+
+type QueueItemWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	queueItemModel()
+	idField()
+}
+
+type QueueItemWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	idField()
+}
+
+type queueItemWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaIDSetParam) queueItemModel() {}
+
+func (p queueItemWithPrismaIDSetParam) idField() {}
+
+type QueueItemWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	idField()
+}
+
+type queueItemWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaIDEqualsParam) queueItemModel() {}
+
+func (p queueItemWithPrismaIDEqualsParam) idField() {}
+
+func (queueItemWithPrismaIDSetParam) settable()  {}
+func (queueItemWithPrismaIDEqualsParam) equals() {}
+
+type queueItemWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaIDEqualsUniqueParam) queueItemModel() {}
+func (p queueItemWithPrismaIDEqualsUniqueParam) idField()        {}
+
+func (queueItemWithPrismaIDEqualsUniqueParam) unique() {}
+func (queueItemWithPrismaIDEqualsUniqueParam) equals() {}
+
+type QueueItemWithPrismaStepRunIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	queueItemModel()
+	stepRunIDField()
+}
+
+type QueueItemWithPrismaStepRunIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	stepRunIDField()
+}
+
+type queueItemWithPrismaStepRunIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaStepRunIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaStepRunIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaStepRunIDSetParam) queueItemModel() {}
+
+func (p queueItemWithPrismaStepRunIDSetParam) stepRunIDField() {}
+
+type QueueItemWithPrismaStepRunIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	stepRunIDField()
+}
+
+type queueItemWithPrismaStepRunIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaStepRunIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaStepRunIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaStepRunIDEqualsParam) queueItemModel() {}
+
+func (p queueItemWithPrismaStepRunIDEqualsParam) stepRunIDField() {}
+
+func (queueItemWithPrismaStepRunIDSetParam) settable()  {}
+func (queueItemWithPrismaStepRunIDEqualsParam) equals() {}
+
+type queueItemWithPrismaStepRunIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaStepRunIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaStepRunIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaStepRunIDEqualsUniqueParam) queueItemModel() {}
+func (p queueItemWithPrismaStepRunIDEqualsUniqueParam) stepRunIDField() {}
+
+func (queueItemWithPrismaStepRunIDEqualsUniqueParam) unique() {}
+func (queueItemWithPrismaStepRunIDEqualsUniqueParam) equals() {}
+
+type QueueItemWithPrismaStepIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	queueItemModel()
+	stepIDField()
+}
+
+type QueueItemWithPrismaStepIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	stepIDField()
+}
+
+type queueItemWithPrismaStepIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaStepIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaStepIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaStepIDSetParam) queueItemModel() {}
+
+func (p queueItemWithPrismaStepIDSetParam) stepIDField() {}
+
+type QueueItemWithPrismaStepIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	stepIDField()
+}
+
+type queueItemWithPrismaStepIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaStepIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaStepIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaStepIDEqualsParam) queueItemModel() {}
+
+func (p queueItemWithPrismaStepIDEqualsParam) stepIDField() {}
+
+func (queueItemWithPrismaStepIDSetParam) settable()  {}
+func (queueItemWithPrismaStepIDEqualsParam) equals() {}
+
+type queueItemWithPrismaStepIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaStepIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaStepIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaStepIDEqualsUniqueParam) queueItemModel() {}
+func (p queueItemWithPrismaStepIDEqualsUniqueParam) stepIDField()    {}
+
+func (queueItemWithPrismaStepIDEqualsUniqueParam) unique() {}
+func (queueItemWithPrismaStepIDEqualsUniqueParam) equals() {}
+
+type QueueItemWithPrismaActionIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	queueItemModel()
+	actionIDField()
+}
+
+type QueueItemWithPrismaActionIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	actionIDField()
+}
+
+type queueItemWithPrismaActionIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaActionIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaActionIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaActionIDSetParam) queueItemModel() {}
+
+func (p queueItemWithPrismaActionIDSetParam) actionIDField() {}
+
+type QueueItemWithPrismaActionIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	actionIDField()
+}
+
+type queueItemWithPrismaActionIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaActionIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaActionIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaActionIDEqualsParam) queueItemModel() {}
+
+func (p queueItemWithPrismaActionIDEqualsParam) actionIDField() {}
+
+func (queueItemWithPrismaActionIDSetParam) settable()  {}
+func (queueItemWithPrismaActionIDEqualsParam) equals() {}
+
+type queueItemWithPrismaActionIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaActionIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaActionIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaActionIDEqualsUniqueParam) queueItemModel() {}
+func (p queueItemWithPrismaActionIDEqualsUniqueParam) actionIDField()  {}
+
+func (queueItemWithPrismaActionIDEqualsUniqueParam) unique() {}
+func (queueItemWithPrismaActionIDEqualsUniqueParam) equals() {}
+
+type QueueItemWithPrismaScheduleTimeoutAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	queueItemModel()
+	scheduleTimeoutAtField()
+}
+
+type QueueItemWithPrismaScheduleTimeoutAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	scheduleTimeoutAtField()
+}
+
+type queueItemWithPrismaScheduleTimeoutAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaScheduleTimeoutAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaScheduleTimeoutAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaScheduleTimeoutAtSetParam) queueItemModel() {}
+
+func (p queueItemWithPrismaScheduleTimeoutAtSetParam) scheduleTimeoutAtField() {}
+
+type QueueItemWithPrismaScheduleTimeoutAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	scheduleTimeoutAtField()
+}
+
+type queueItemWithPrismaScheduleTimeoutAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaScheduleTimeoutAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaScheduleTimeoutAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaScheduleTimeoutAtEqualsParam) queueItemModel() {}
+
+func (p queueItemWithPrismaScheduleTimeoutAtEqualsParam) scheduleTimeoutAtField() {}
+
+func (queueItemWithPrismaScheduleTimeoutAtSetParam) settable()  {}
+func (queueItemWithPrismaScheduleTimeoutAtEqualsParam) equals() {}
+
+type queueItemWithPrismaScheduleTimeoutAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaScheduleTimeoutAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaScheduleTimeoutAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaScheduleTimeoutAtEqualsUniqueParam) queueItemModel()         {}
+func (p queueItemWithPrismaScheduleTimeoutAtEqualsUniqueParam) scheduleTimeoutAtField() {}
+
+func (queueItemWithPrismaScheduleTimeoutAtEqualsUniqueParam) unique() {}
+func (queueItemWithPrismaScheduleTimeoutAtEqualsUniqueParam) equals() {}
+
+type QueueItemWithPrismaStepTimeoutEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	queueItemModel()
+	stepTimeoutField()
+}
+
+type QueueItemWithPrismaStepTimeoutSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	stepTimeoutField()
+}
+
+type queueItemWithPrismaStepTimeoutSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaStepTimeoutSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaStepTimeoutSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaStepTimeoutSetParam) queueItemModel() {}
+
+func (p queueItemWithPrismaStepTimeoutSetParam) stepTimeoutField() {}
+
+type QueueItemWithPrismaStepTimeoutWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	stepTimeoutField()
+}
+
+type queueItemWithPrismaStepTimeoutEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaStepTimeoutEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaStepTimeoutEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaStepTimeoutEqualsParam) queueItemModel() {}
+
+func (p queueItemWithPrismaStepTimeoutEqualsParam) stepTimeoutField() {}
+
+func (queueItemWithPrismaStepTimeoutSetParam) settable()  {}
+func (queueItemWithPrismaStepTimeoutEqualsParam) equals() {}
+
+type queueItemWithPrismaStepTimeoutEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaStepTimeoutEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaStepTimeoutEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaStepTimeoutEqualsUniqueParam) queueItemModel()   {}
+func (p queueItemWithPrismaStepTimeoutEqualsUniqueParam) stepTimeoutField() {}
+
+func (queueItemWithPrismaStepTimeoutEqualsUniqueParam) unique() {}
+func (queueItemWithPrismaStepTimeoutEqualsUniqueParam) equals() {}
+
+type QueueItemWithPrismaPriorityEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	queueItemModel()
+	priorityField()
+}
+
+type QueueItemWithPrismaPrioritySetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	priorityField()
+}
+
+type queueItemWithPrismaPrioritySetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaPrioritySetParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaPrioritySetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaPrioritySetParam) queueItemModel() {}
+
+func (p queueItemWithPrismaPrioritySetParam) priorityField() {}
+
+type QueueItemWithPrismaPriorityWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	priorityField()
+}
+
+type queueItemWithPrismaPriorityEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaPriorityEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaPriorityEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaPriorityEqualsParam) queueItemModel() {}
+
+func (p queueItemWithPrismaPriorityEqualsParam) priorityField() {}
+
+func (queueItemWithPrismaPrioritySetParam) settable()  {}
+func (queueItemWithPrismaPriorityEqualsParam) equals() {}
+
+type queueItemWithPrismaPriorityEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaPriorityEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaPriorityEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaPriorityEqualsUniqueParam) queueItemModel() {}
+func (p queueItemWithPrismaPriorityEqualsUniqueParam) priorityField()  {}
+
+func (queueItemWithPrismaPriorityEqualsUniqueParam) unique() {}
+func (queueItemWithPrismaPriorityEqualsUniqueParam) equals() {}
+
+type QueueItemWithPrismaIsQueuedEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	queueItemModel()
+	isQueuedField()
+}
+
+type QueueItemWithPrismaIsQueuedSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	isQueuedField()
+}
+
+type queueItemWithPrismaIsQueuedSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaIsQueuedSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaIsQueuedSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaIsQueuedSetParam) queueItemModel() {}
+
+func (p queueItemWithPrismaIsQueuedSetParam) isQueuedField() {}
+
+type QueueItemWithPrismaIsQueuedWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	isQueuedField()
+}
+
+type queueItemWithPrismaIsQueuedEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaIsQueuedEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaIsQueuedEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaIsQueuedEqualsParam) queueItemModel() {}
+
+func (p queueItemWithPrismaIsQueuedEqualsParam) isQueuedField() {}
+
+func (queueItemWithPrismaIsQueuedSetParam) settable()  {}
+func (queueItemWithPrismaIsQueuedEqualsParam) equals() {}
+
+type queueItemWithPrismaIsQueuedEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaIsQueuedEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaIsQueuedEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaIsQueuedEqualsUniqueParam) queueItemModel() {}
+func (p queueItemWithPrismaIsQueuedEqualsUniqueParam) isQueuedField()  {}
+
+func (queueItemWithPrismaIsQueuedEqualsUniqueParam) unique() {}
+func (queueItemWithPrismaIsQueuedEqualsUniqueParam) equals() {}
+
+type QueueItemWithPrismaTenantIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	queueItemModel()
+	tenantIDField()
+}
+
+type QueueItemWithPrismaTenantIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	tenantIDField()
+}
+
+type queueItemWithPrismaTenantIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaTenantIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaTenantIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaTenantIDSetParam) queueItemModel() {}
+
+func (p queueItemWithPrismaTenantIDSetParam) tenantIDField() {}
+
+type QueueItemWithPrismaTenantIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	tenantIDField()
+}
+
+type queueItemWithPrismaTenantIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaTenantIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaTenantIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaTenantIDEqualsParam) queueItemModel() {}
+
+func (p queueItemWithPrismaTenantIDEqualsParam) tenantIDField() {}
+
+func (queueItemWithPrismaTenantIDSetParam) settable()  {}
+func (queueItemWithPrismaTenantIDEqualsParam) equals() {}
+
+type queueItemWithPrismaTenantIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaTenantIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaTenantIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaTenantIDEqualsUniqueParam) queueItemModel() {}
+func (p queueItemWithPrismaTenantIDEqualsUniqueParam) tenantIDField()  {}
+
+func (queueItemWithPrismaTenantIDEqualsUniqueParam) unique() {}
+func (queueItemWithPrismaTenantIDEqualsUniqueParam) equals() {}
+
+type QueueItemWithPrismaQueueEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	queueItemModel()
+	queueField()
+}
+
+type QueueItemWithPrismaQueueSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	queueField()
+}
+
+type queueItemWithPrismaQueueSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaQueueSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaQueueSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaQueueSetParam) queueItemModel() {}
+
+func (p queueItemWithPrismaQueueSetParam) queueField() {}
+
+type QueueItemWithPrismaQueueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	queueField()
+}
+
+type queueItemWithPrismaQueueEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaQueueEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaQueueEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaQueueEqualsParam) queueItemModel() {}
+
+func (p queueItemWithPrismaQueueEqualsParam) queueField() {}
+
+func (queueItemWithPrismaQueueSetParam) settable()  {}
+func (queueItemWithPrismaQueueEqualsParam) equals() {}
+
+type queueItemWithPrismaQueueEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaQueueEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaQueueEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaQueueEqualsUniqueParam) queueItemModel() {}
+func (p queueItemWithPrismaQueueEqualsUniqueParam) queueField()     {}
+
+func (queueItemWithPrismaQueueEqualsUniqueParam) unique() {}
+func (queueItemWithPrismaQueueEqualsUniqueParam) equals() {}
+
+type QueueItemWithPrismaStickyEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	queueItemModel()
+	stickyField()
+}
+
+type QueueItemWithPrismaStickySetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	stickyField()
+}
+
+type queueItemWithPrismaStickySetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaStickySetParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaStickySetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaStickySetParam) queueItemModel() {}
+
+func (p queueItemWithPrismaStickySetParam) stickyField() {}
+
+type QueueItemWithPrismaStickyWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	stickyField()
+}
+
+type queueItemWithPrismaStickyEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaStickyEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaStickyEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaStickyEqualsParam) queueItemModel() {}
+
+func (p queueItemWithPrismaStickyEqualsParam) stickyField() {}
+
+func (queueItemWithPrismaStickySetParam) settable()  {}
+func (queueItemWithPrismaStickyEqualsParam) equals() {}
+
+type queueItemWithPrismaStickyEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaStickyEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaStickyEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaStickyEqualsUniqueParam) queueItemModel() {}
+func (p queueItemWithPrismaStickyEqualsUniqueParam) stickyField()    {}
+
+func (queueItemWithPrismaStickyEqualsUniqueParam) unique() {}
+func (queueItemWithPrismaStickyEqualsUniqueParam) equals() {}
+
+type QueueItemWithPrismaDesiredWorkerIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	queueItemModel()
+	desiredWorkerIDField()
+}
+
+type QueueItemWithPrismaDesiredWorkerIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	desiredWorkerIDField()
+}
+
+type queueItemWithPrismaDesiredWorkerIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaDesiredWorkerIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaDesiredWorkerIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaDesiredWorkerIDSetParam) queueItemModel() {}
+
+func (p queueItemWithPrismaDesiredWorkerIDSetParam) desiredWorkerIDField() {}
+
+type QueueItemWithPrismaDesiredWorkerIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueItemModel()
+	desiredWorkerIDField()
+}
+
+type queueItemWithPrismaDesiredWorkerIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaDesiredWorkerIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaDesiredWorkerIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaDesiredWorkerIDEqualsParam) queueItemModel() {}
+
+func (p queueItemWithPrismaDesiredWorkerIDEqualsParam) desiredWorkerIDField() {}
+
+func (queueItemWithPrismaDesiredWorkerIDSetParam) settable()  {}
+func (queueItemWithPrismaDesiredWorkerIDEqualsParam) equals() {}
+
+type queueItemWithPrismaDesiredWorkerIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueItemWithPrismaDesiredWorkerIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueItemWithPrismaDesiredWorkerIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemWithPrismaDesiredWorkerIDEqualsUniqueParam) queueItemModel()       {}
+func (p queueItemWithPrismaDesiredWorkerIDEqualsUniqueParam) desiredWorkerIDField() {}
+
+func (queueItemWithPrismaDesiredWorkerIDEqualsUniqueParam) unique() {}
+func (queueItemWithPrismaDesiredWorkerIDEqualsUniqueParam) equals() {}
 
 type stepRunEventActions struct {
 	// client holds the prisma client
@@ -247313,6 +254754,148 @@ func (r stepRunCreateOne) Exec(ctx context.Context) (*StepRunModel, error) {
 
 func (r stepRunCreateOne) Tx() StepRunUniqueTxResult {
 	v := newStepRunUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+// Creates a single queue.
+func (r queueActions) CreateOne(
+	_tenantID QueueWithPrismaTenantIDSetParam,
+	_name QueueWithPrismaNameSetParam,
+
+	optional ...QueueSetParam,
+) queueCreateOne {
+	var v queueCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "Queue"
+	v.query.Outputs = queueOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _tenantID.field())
+	fields = append(fields, _name.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r queueCreateOne) With(params ...QueueRelationWith) queueCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type queueCreateOne struct {
+	query builder.Query
+}
+
+func (p queueCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p queueCreateOne) queueModel() {}
+
+func (r queueCreateOne) Exec(ctx context.Context) (*QueueModel, error) {
+	var v QueueModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r queueCreateOne) Tx() QueueUniqueTxResult {
+	v := newQueueUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+// Creates a single queueItem.
+func (r queueItemActions) CreateOne(
+	_isQueued QueueItemWithPrismaIsQueuedSetParam,
+	_tenantID QueueItemWithPrismaTenantIDSetParam,
+	_queue QueueItemWithPrismaQueueSetParam,
+
+	optional ...QueueItemSetParam,
+) queueItemCreateOne {
+	var v queueItemCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "QueueItem"
+	v.query.Outputs = queueItemOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _isQueued.field())
+	fields = append(fields, _tenantID.field())
+	fields = append(fields, _queue.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r queueItemCreateOne) With(params ...QueueItemRelationWith) queueItemCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type queueItemCreateOne struct {
+	query builder.Query
+}
+
+func (p queueItemCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p queueItemCreateOne) queueItemModel() {}
+
+func (r queueItemCreateOne) Exec(ctx context.Context) (*QueueItemModel, error) {
+	var v QueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r queueItemCreateOne) Tx() QueueItemUniqueTxResult {
+	v := newQueueItemUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -359567,6 +367150,1306 @@ func (r stepRunDeleteMany) Tx() StepRunManyTxResult {
 	return v
 }
 
+type queueFindUnique struct {
+	query builder.Query
+}
+
+func (r queueFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r queueFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r queueFindUnique) with()          {}
+func (r queueFindUnique) queueModel()    {}
+func (r queueFindUnique) queueRelation() {}
+
+func (r queueActions) FindUnique(
+	params QueueEqualsUniqueWhereParam,
+) queueFindUnique {
+	var v queueFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "Queue"
+	v.query.Outputs = queueOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r queueFindUnique) With(params ...QueueRelationWith) queueFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r queueFindUnique) Select(params ...queuePrismaFields) queueFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r queueFindUnique) Omit(params ...queuePrismaFields) queueFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range queueOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r queueFindUnique) Exec(ctx context.Context) (
+	*QueueModel,
+	error,
+) {
+	var v *QueueModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r queueFindUnique) ExecInner(ctx context.Context) (
+	*InnerQueue,
+	error,
+) {
+	var v *InnerQueue
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r queueFindUnique) Update(params ...QueueSetParam) queueUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Queue"
+
+	var v queueUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type queueUpdateUnique struct {
+	query builder.Query
+}
+
+func (r queueUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r queueUpdateUnique) queueModel() {}
+
+func (r queueUpdateUnique) Exec(ctx context.Context) (*QueueModel, error) {
+	var v QueueModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r queueUpdateUnique) Tx() QueueUniqueTxResult {
+	v := newQueueUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r queueFindUnique) Delete() queueDeleteUnique {
+	var v queueDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Queue"
+
+	return v
+}
+
+type queueDeleteUnique struct {
+	query builder.Query
+}
+
+func (r queueDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p queueDeleteUnique) queueModel() {}
+
+func (r queueDeleteUnique) Exec(ctx context.Context) (*QueueModel, error) {
+	var v QueueModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r queueDeleteUnique) Tx() QueueUniqueTxResult {
+	v := newQueueUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type queueFindFirst struct {
+	query builder.Query
+}
+
+func (r queueFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r queueFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r queueFindFirst) with()          {}
+func (r queueFindFirst) queueModel()    {}
+func (r queueFindFirst) queueRelation() {}
+
+func (r queueActions) FindFirst(
+	params ...QueueWhereParam,
+) queueFindFirst {
+	var v queueFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "Queue"
+	v.query.Outputs = queueOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r queueFindFirst) With(params ...QueueRelationWith) queueFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r queueFindFirst) Select(params ...queuePrismaFields) queueFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r queueFindFirst) Omit(params ...queuePrismaFields) queueFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range queueOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r queueFindFirst) OrderBy(params ...QueueOrderByParam) queueFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r queueFindFirst) Skip(count int) queueFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r queueFindFirst) Take(count int) queueFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r queueFindFirst) Cursor(cursor QueueCursorParam) queueFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r queueFindFirst) Exec(ctx context.Context) (
+	*QueueModel,
+	error,
+) {
+	var v *QueueModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r queueFindFirst) ExecInner(ctx context.Context) (
+	*InnerQueue,
+	error,
+) {
+	var v *InnerQueue
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type queueFindMany struct {
+	query builder.Query
+}
+
+func (r queueFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r queueFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r queueFindMany) with()          {}
+func (r queueFindMany) queueModel()    {}
+func (r queueFindMany) queueRelation() {}
+
+func (r queueActions) FindMany(
+	params ...QueueWhereParam,
+) queueFindMany {
+	var v queueFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "Queue"
+	v.query.Outputs = queueOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r queueFindMany) With(params ...QueueRelationWith) queueFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r queueFindMany) Select(params ...queuePrismaFields) queueFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r queueFindMany) Omit(params ...queuePrismaFields) queueFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range queueOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r queueFindMany) OrderBy(params ...QueueOrderByParam) queueFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r queueFindMany) Skip(count int) queueFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r queueFindMany) Take(count int) queueFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r queueFindMany) Cursor(cursor QueueCursorParam) queueFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r queueFindMany) Exec(ctx context.Context) (
+	[]QueueModel,
+	error,
+) {
+	var v []QueueModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r queueFindMany) ExecInner(ctx context.Context) (
+	[]InnerQueue,
+	error,
+) {
+	var v []InnerQueue
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r queueFindMany) Update(params ...QueueSetParam) queueUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Queue"
+
+	r.query.Outputs = countOutput
+
+	var v queueUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type queueUpdateMany struct {
+	query builder.Query
+}
+
+func (r queueUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r queueUpdateMany) queueModel() {}
+
+func (r queueUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r queueUpdateMany) Tx() QueueManyTxResult {
+	v := newQueueManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r queueFindMany) Delete() queueDeleteMany {
+	var v queueDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Queue"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type queueDeleteMany struct {
+	query builder.Query
+}
+
+func (r queueDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p queueDeleteMany) queueModel() {}
+
+func (r queueDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r queueDeleteMany) Tx() QueueManyTxResult {
+	v := newQueueManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type queueItemFindUnique struct {
+	query builder.Query
+}
+
+func (r queueItemFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r queueItemFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r queueItemFindUnique) with()              {}
+func (r queueItemFindUnique) queueItemModel()    {}
+func (r queueItemFindUnique) queueItemRelation() {}
+
+func (r queueItemActions) FindUnique(
+	params QueueItemEqualsUniqueWhereParam,
+) queueItemFindUnique {
+	var v queueItemFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "QueueItem"
+	v.query.Outputs = queueItemOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r queueItemFindUnique) With(params ...QueueItemRelationWith) queueItemFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r queueItemFindUnique) Select(params ...queueItemPrismaFields) queueItemFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r queueItemFindUnique) Omit(params ...queueItemPrismaFields) queueItemFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range queueItemOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r queueItemFindUnique) Exec(ctx context.Context) (
+	*QueueItemModel,
+	error,
+) {
+	var v *QueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r queueItemFindUnique) ExecInner(ctx context.Context) (
+	*InnerQueueItem,
+	error,
+) {
+	var v *InnerQueueItem
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r queueItemFindUnique) Update(params ...QueueItemSetParam) queueItemUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "QueueItem"
+
+	var v queueItemUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type queueItemUpdateUnique struct {
+	query builder.Query
+}
+
+func (r queueItemUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r queueItemUpdateUnique) queueItemModel() {}
+
+func (r queueItemUpdateUnique) Exec(ctx context.Context) (*QueueItemModel, error) {
+	var v QueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r queueItemUpdateUnique) Tx() QueueItemUniqueTxResult {
+	v := newQueueItemUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r queueItemFindUnique) Delete() queueItemDeleteUnique {
+	var v queueItemDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "QueueItem"
+
+	return v
+}
+
+type queueItemDeleteUnique struct {
+	query builder.Query
+}
+
+func (r queueItemDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p queueItemDeleteUnique) queueItemModel() {}
+
+func (r queueItemDeleteUnique) Exec(ctx context.Context) (*QueueItemModel, error) {
+	var v QueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r queueItemDeleteUnique) Tx() QueueItemUniqueTxResult {
+	v := newQueueItemUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type queueItemFindFirst struct {
+	query builder.Query
+}
+
+func (r queueItemFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r queueItemFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r queueItemFindFirst) with()              {}
+func (r queueItemFindFirst) queueItemModel()    {}
+func (r queueItemFindFirst) queueItemRelation() {}
+
+func (r queueItemActions) FindFirst(
+	params ...QueueItemWhereParam,
+) queueItemFindFirst {
+	var v queueItemFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "QueueItem"
+	v.query.Outputs = queueItemOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r queueItemFindFirst) With(params ...QueueItemRelationWith) queueItemFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r queueItemFindFirst) Select(params ...queueItemPrismaFields) queueItemFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r queueItemFindFirst) Omit(params ...queueItemPrismaFields) queueItemFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range queueItemOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r queueItemFindFirst) OrderBy(params ...QueueItemOrderByParam) queueItemFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r queueItemFindFirst) Skip(count int) queueItemFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r queueItemFindFirst) Take(count int) queueItemFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r queueItemFindFirst) Cursor(cursor QueueItemCursorParam) queueItemFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r queueItemFindFirst) Exec(ctx context.Context) (
+	*QueueItemModel,
+	error,
+) {
+	var v *QueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r queueItemFindFirst) ExecInner(ctx context.Context) (
+	*InnerQueueItem,
+	error,
+) {
+	var v *InnerQueueItem
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type queueItemFindMany struct {
+	query builder.Query
+}
+
+func (r queueItemFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r queueItemFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r queueItemFindMany) with()              {}
+func (r queueItemFindMany) queueItemModel()    {}
+func (r queueItemFindMany) queueItemRelation() {}
+
+func (r queueItemActions) FindMany(
+	params ...QueueItemWhereParam,
+) queueItemFindMany {
+	var v queueItemFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "QueueItem"
+	v.query.Outputs = queueItemOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r queueItemFindMany) With(params ...QueueItemRelationWith) queueItemFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r queueItemFindMany) Select(params ...queueItemPrismaFields) queueItemFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r queueItemFindMany) Omit(params ...queueItemPrismaFields) queueItemFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range queueItemOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r queueItemFindMany) OrderBy(params ...QueueItemOrderByParam) queueItemFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r queueItemFindMany) Skip(count int) queueItemFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r queueItemFindMany) Take(count int) queueItemFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r queueItemFindMany) Cursor(cursor QueueItemCursorParam) queueItemFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r queueItemFindMany) Exec(ctx context.Context) (
+	[]QueueItemModel,
+	error,
+) {
+	var v []QueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r queueItemFindMany) ExecInner(ctx context.Context) (
+	[]InnerQueueItem,
+	error,
+) {
+	var v []InnerQueueItem
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r queueItemFindMany) Update(params ...QueueItemSetParam) queueItemUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "QueueItem"
+
+	r.query.Outputs = countOutput
+
+	var v queueItemUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type queueItemUpdateMany struct {
+	query builder.Query
+}
+
+func (r queueItemUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r queueItemUpdateMany) queueItemModel() {}
+
+func (r queueItemUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r queueItemUpdateMany) Tx() QueueItemManyTxResult {
+	v := newQueueItemManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r queueItemFindMany) Delete() queueItemDeleteMany {
+	var v queueItemDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "QueueItem"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type queueItemDeleteMany struct {
+	query builder.Query
+}
+
+func (r queueItemDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p queueItemDeleteMany) queueItemModel() {}
+
+func (r queueItemDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r queueItemDeleteMany) Tx() QueueItemManyTxResult {
+	v := newQueueItemManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 type stepRunEventToStepRunFindUnique struct {
 	query builder.Query
 }
@@ -389521,6 +398404,102 @@ func (r StepRunManyTxResult) Result() (v *BatchResult) {
 	return v
 }
 
+func newQueueUniqueTxResult() QueueUniqueTxResult {
+	return QueueUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type QueueUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p QueueUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p QueueUniqueTxResult) IsTx() {}
+
+func (r QueueUniqueTxResult) Result() (v *QueueModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newQueueManyTxResult() QueueManyTxResult {
+	return QueueManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type QueueManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p QueueManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p QueueManyTxResult) IsTx() {}
+
+func (r QueueManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newQueueItemUniqueTxResult() QueueItemUniqueTxResult {
+	return QueueItemUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type QueueItemUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p QueueItemUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p QueueItemUniqueTxResult) IsTx() {}
+
+func (r QueueItemUniqueTxResult) Result() (v *QueueItemModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newQueueItemManyTxResult() QueueItemManyTxResult {
+	return QueueItemManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type QueueItemManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p QueueItemManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p QueueItemManyTxResult) IsTx() {}
+
+func (r QueueItemManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
 func newStepRunEventUniqueTxResult() StepRunEventUniqueTxResult {
 	return StepRunEventUniqueTxResult{
 		result: &transaction.Result{},
@@ -394579,6 +403558,232 @@ func (r stepRunUpsertOne) Exec(ctx context.Context) (*StepRunModel, error) {
 
 func (r stepRunUpsertOne) Tx() StepRunUniqueTxResult {
 	v := newStepRunUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type queueUpsertOne struct {
+	query builder.Query
+}
+
+func (r queueUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r queueUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r queueUpsertOne) with()          {}
+func (r queueUpsertOne) queueModel()    {}
+func (r queueUpsertOne) queueRelation() {}
+
+func (r queueActions) UpsertOne(
+	params QueueEqualsUniqueWhereParam,
+) queueUpsertOne {
+	var v queueUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "Queue"
+	v.query.Outputs = queueOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r queueUpsertOne) Create(
+
+	_tenantID QueueWithPrismaTenantIDSetParam,
+	_name QueueWithPrismaNameSetParam,
+
+	optional ...QueueSetParam,
+) queueUpsertOne {
+	var v queueUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _tenantID.field())
+	fields = append(fields, _name.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r queueUpsertOne) Update(
+	params ...QueueSetParam,
+) queueUpsertOne {
+	var v queueUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r queueUpsertOne) Exec(ctx context.Context) (*QueueModel, error) {
+	var v QueueModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r queueUpsertOne) Tx() QueueUniqueTxResult {
+	v := newQueueUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type queueItemUpsertOne struct {
+	query builder.Query
+}
+
+func (r queueItemUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r queueItemUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r queueItemUpsertOne) with()              {}
+func (r queueItemUpsertOne) queueItemModel()    {}
+func (r queueItemUpsertOne) queueItemRelation() {}
+
+func (r queueItemActions) UpsertOne(
+	params QueueItemEqualsUniqueWhereParam,
+) queueItemUpsertOne {
+	var v queueItemUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "QueueItem"
+	v.query.Outputs = queueItemOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r queueItemUpsertOne) Create(
+
+	_isQueued QueueItemWithPrismaIsQueuedSetParam,
+	_tenantID QueueItemWithPrismaTenantIDSetParam,
+	_queue QueueItemWithPrismaQueueSetParam,
+
+	optional ...QueueItemSetParam,
+) queueItemUpsertOne {
+	var v queueItemUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _isQueued.field())
+	fields = append(fields, _tenantID.field())
+	fields = append(fields, _queue.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r queueItemUpsertOne) Update(
+	params ...QueueItemSetParam,
+) queueItemUpsertOne {
+	var v queueItemUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r queueItemUpsertOne) Exec(ctx context.Context) (*QueueItemModel, error) {
+	var v QueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r queueItemUpsertOne) Tx() QueueItemUniqueTxResult {
+	v := newQueueItemUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
