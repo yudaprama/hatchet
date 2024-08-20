@@ -1095,6 +1095,13 @@ model GetGroupKeyRun {
   cancelledError String?
 
   @@index([deletedAt])
+  @@index([tenantId])
+  @@index([workerId])
+  @@index([createdAt])
+  // index for ListStepRunsToReassign, ListStepRunsToRequeue
+  @@index([tenantId, deletedAt, status])
+  // index for PollGetGroupKeyRuns
+  @@index([status, deletedAt, timeoutAt])
 }
 
 model WorkflowRunTriggeredBy {
