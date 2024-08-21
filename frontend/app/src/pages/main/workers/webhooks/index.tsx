@@ -13,7 +13,6 @@ import { Button } from '@/components/ui/button.tsx';
 import { useState } from 'react';
 import { useApiError } from '@/lib/hooks.ts';
 import { Dialog } from '@/components/ui/dialog.tsx';
-import { CreateWebhookWorkerDialog } from '@/pages/main/tenant-settings/webhooks/components/create-webhook-worker-dialog.tsx';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,7 +20,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu.tsx';
 import { BiDotsVertical } from 'react-icons/bi';
-import { DeleteWebhookWorkerDialog } from '@/pages/main/tenant-settings/webhooks/components/delete-webhook-worker-dialog.tsx';
+import { CreateWebhookWorkerDialog } from './components/create-webhook-worker-dialog';
+import { DeleteWebhookWorkerDialog } from './components/delete-webhook-worker-dialog';
 
 export default function Webhooks() {
   const { tenant } = useOutletContext<TenantContextType>();
@@ -37,7 +37,7 @@ export default function Webhooks() {
       <div className="mx-auto max-w-7xl py-8 px-4 sm:px-6 lg:px-8">
         <div className="flex flex-row justify-between items-center">
           <h2 className="text-2xl font-semibold leading-tight text-foreground">
-            Webhooks
+            Webhook Workers (BETA)
           </h2>
 
           <Button
