@@ -625,6 +625,9 @@ model WorkflowVersion {
   // the default amount of time to wait while scheduling a step run
   scheduleTimeout String @default("5m")
 
+  // default priority for the workflow
+  defaultPriority Int?
+
   @@index([deletedAt])
 }
 
@@ -1007,6 +1010,9 @@ model WorkflowRun {
   // the duration of the run (ms)
   duration Int?
 
+  // priority of the workflow run
+  priority Int?
+
   // a list of dependents for this workflow run
   children          WorkflowRun[]                 @relation("WorkflowRunChild")
   scheduledChildren WorkflowTriggerScheduledRef[]
@@ -1291,7 +1297,8 @@ model StepRun {
 
   order BigInt @default(autoincrement()) @db.BigInt
 
-  queue String @default("default")
+  queue    String @default("default")
+  priority Int?
 
   // the worker assigned to this job
   worker   Worker? @relation(fields: [workerId], references: [id])
@@ -2515,6 +2522,7 @@ const (
 	WorkflowVersionScalarFieldEnumOnFailureJobID  WorkflowVersionScalarFieldEnum = "onFailureJobId"
 	WorkflowVersionScalarFieldEnumKind            WorkflowVersionScalarFieldEnum = "kind"
 	WorkflowVersionScalarFieldEnumScheduleTimeout WorkflowVersionScalarFieldEnum = "scheduleTimeout"
+	WorkflowVersionScalarFieldEnumDefaultPriority WorkflowVersionScalarFieldEnum = "defaultPriority"
 )
 
 type WorkflowConcurrencyScalarFieldEnum string
@@ -2675,6 +2683,7 @@ const (
 	WorkflowRunScalarFieldEnumStartedAt          WorkflowRunScalarFieldEnum = "startedAt"
 	WorkflowRunScalarFieldEnumFinishedAt         WorkflowRunScalarFieldEnum = "finishedAt"
 	WorkflowRunScalarFieldEnumDuration           WorkflowRunScalarFieldEnum = "duration"
+	WorkflowRunScalarFieldEnumPriority           WorkflowRunScalarFieldEnum = "priority"
 	WorkflowRunScalarFieldEnumParentID           WorkflowRunScalarFieldEnum = "parentId"
 	WorkflowRunScalarFieldEnumParentStepRunID    WorkflowRunScalarFieldEnum = "parentStepRunId"
 	WorkflowRunScalarFieldEnumChildIndex         WorkflowRunScalarFieldEnum = "childIndex"
@@ -2780,6 +2789,7 @@ const (
 	StepRunScalarFieldEnumStepID            StepRunScalarFieldEnum = "stepId"
 	StepRunScalarFieldEnumOrder             StepRunScalarFieldEnum = "order"
 	StepRunScalarFieldEnumQueue             StepRunScalarFieldEnum = "queue"
+	StepRunScalarFieldEnumPriority          StepRunScalarFieldEnum = "priority"
 	StepRunScalarFieldEnumWorkerID          StepRunScalarFieldEnum = "workerId"
 	StepRunScalarFieldEnumTickerID          StepRunScalarFieldEnum = "tickerId"
 	StepRunScalarFieldEnumStatus            StepRunScalarFieldEnum = "status"
@@ -3579,6 +3589,8 @@ const workflowVersionFieldKind workflowVersionPrismaFields = "kind"
 
 const workflowVersionFieldScheduleTimeout workflowVersionPrismaFields = "scheduleTimeout"
 
+const workflowVersionFieldDefaultPriority workflowVersionPrismaFields = "defaultPriority"
+
 type workflowConcurrencyPrismaFields = prismaFields
 
 const workflowConcurrencyFieldID workflowConcurrencyPrismaFields = "id"
@@ -3885,6 +3897,8 @@ const workflowRunFieldFinishedAt workflowRunPrismaFields = "finishedAt"
 
 const workflowRunFieldDuration workflowRunPrismaFields = "duration"
 
+const workflowRunFieldPriority workflowRunPrismaFields = "priority"
+
 const workflowRunFieldChildren workflowRunPrismaFields = "children"
 
 const workflowRunFieldScheduledChildren workflowRunPrismaFields = "scheduledChildren"
@@ -4100,6 +4114,8 @@ const stepRunFieldParents stepRunPrismaFields = "parents"
 const stepRunFieldOrder stepRunPrismaFields = "order"
 
 const stepRunFieldQueue stepRunPrismaFields = "queue"
+
+const stepRunFieldPriority stepRunPrismaFields = "priority"
 
 const stepRunFieldWorker stepRunPrismaFields = "worker"
 
@@ -8666,6 +8682,7 @@ type InnerWorkflowVersion struct {
 	OnFailureJobID  *string         `json:"onFailureJobId,omitempty"`
 	Kind            WorkflowKind    `json:"kind"`
 	ScheduleTimeout string          `json:"scheduleTimeout"`
+	DefaultPriority *int            `json:"defaultPriority,omitempty"`
 }
 
 // RawWorkflowVersionModel is a struct for WorkflowVersion when used in raw queries
@@ -8682,6 +8699,7 @@ type RawWorkflowVersionModel struct {
 	OnFailureJobID  *RawString         `json:"onFailureJobId,omitempty"`
 	Kind            RawWorkflowKind    `json:"kind"`
 	ScheduleTimeout RawString          `json:"scheduleTimeout"`
+	DefaultPriority *RawInt            `json:"defaultPriority,omitempty"`
 }
 
 // RelationsWorkflowVersion holds the relation data separately
@@ -8770,6 +8788,13 @@ func (r WorkflowVersionModel) Scheduled() (value []WorkflowTriggerScheduledRefMo
 		panic("attempted to access scheduled but did not fetch it using the .With() syntax")
 	}
 	return r.RelationsWorkflowVersion.Scheduled
+}
+
+func (r WorkflowVersionModel) DefaultPriority() (value Int, ok bool) {
+	if r.InnerWorkflowVersion.DefaultPriority == nil {
+		return value, false
+	}
+	return *r.InnerWorkflowVersion.DefaultPriority, true
 }
 
 // WorkflowConcurrencyModel represents the WorkflowConcurrency model and is a wrapper for accessing fields and methods
@@ -9632,6 +9657,7 @@ type InnerWorkflowRun struct {
 	StartedAt          *DateTime         `json:"startedAt,omitempty"`
 	FinishedAt         *DateTime         `json:"finishedAt,omitempty"`
 	Duration           *int              `json:"duration,omitempty"`
+	Priority           *int              `json:"priority,omitempty"`
 	ParentID           *string           `json:"parentId,omitempty"`
 	ParentStepRunID    *string           `json:"parentStepRunId,omitempty"`
 	ChildIndex         *int              `json:"childIndex,omitempty"`
@@ -9654,6 +9680,7 @@ type RawWorkflowRunModel struct {
 	StartedAt          *RawDateTime         `json:"startedAt,omitempty"`
 	FinishedAt         *RawDateTime         `json:"finishedAt,omitempty"`
 	Duration           *RawInt              `json:"duration,omitempty"`
+	Priority           *RawInt              `json:"priority,omitempty"`
 	ParentID           *RawString           `json:"parentId,omitempty"`
 	ParentStepRunID    *RawString           `json:"parentStepRunId,omitempty"`
 	ChildIndex         *RawInt              `json:"childIndex,omitempty"`
@@ -9764,6 +9791,13 @@ func (r WorkflowRunModel) Duration() (value Int, ok bool) {
 		return value, false
 	}
 	return *r.InnerWorkflowRun.Duration, true
+}
+
+func (r WorkflowRunModel) Priority() (value Int, ok bool) {
+	if r.InnerWorkflowRun.Priority == nil {
+		return value, false
+	}
+	return *r.InnerWorkflowRun.Priority, true
 }
 
 func (r WorkflowRunModel) Children() (value []WorkflowRunModel) {
@@ -10419,6 +10453,7 @@ type InnerStepRun struct {
 	StepID            string        `json:"stepId"`
 	Order             BigInt        `json:"order"`
 	Queue             string        `json:"queue"`
+	Priority          *int          `json:"priority,omitempty"`
 	WorkerID          *string       `json:"workerId,omitempty"`
 	TickerID          *string       `json:"tickerId,omitempty"`
 	Status            StepRunStatus `json:"status"`
@@ -10451,6 +10486,7 @@ type RawStepRunModel struct {
 	StepID            RawString        `json:"stepId"`
 	Order             RawBigInt        `json:"order"`
 	Queue             RawString        `json:"queue"`
+	Priority          *RawInt          `json:"priority,omitempty"`
 	WorkerID          *RawString       `json:"workerId,omitempty"`
 	TickerID          *RawString       `json:"tickerId,omitempty"`
 	Status            RawStepRunStatus `json:"status"`
@@ -10530,6 +10566,13 @@ func (r StepRunModel) Parents() (value []StepRunModel) {
 		panic("attempted to access parents but did not fetch it using the .With() syntax")
 	}
 	return r.RelationsStepRun.Parents
+}
+
+func (r StepRunModel) Priority() (value Int, ok bool) {
+	if r.InnerStepRun.Priority == nil {
+		return value, false
+	}
+	return *r.InnerStepRun.Priority, true
 }
 
 func (r StepRunModel) Worker() (value *WorkerModel, ok bool) {
@@ -66927,6 +66970,11 @@ type workflowVersionQuery struct {
 	//
 	// @required
 	ScheduleTimeout workflowVersionQueryScheduleTimeoutString
+
+	// DefaultPriority
+	//
+	// @optional
+	DefaultPriority workflowVersionQueryDefaultPriorityInt
 }
 
 func (workflowVersionQuery) Not(params ...WorkflowVersionWhereParam) workflowVersionDefaultParam {
@@ -71606,6 +71654,450 @@ func (r workflowVersionQueryScheduleTimeoutString) HasSuffixIfPresent(value *str
 
 func (r workflowVersionQueryScheduleTimeoutString) Field() workflowVersionPrismaFields {
 	return workflowVersionFieldScheduleTimeout
+}
+
+// base struct
+type workflowVersionQueryDefaultPriorityInt struct{}
+
+// Set the optional value of DefaultPriority
+func (r workflowVersionQueryDefaultPriorityInt) Set(value int) workflowVersionSetParam {
+
+	return workflowVersionSetParam{
+		data: builder.Field{
+			Name:  "defaultPriority",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of DefaultPriority dynamically
+func (r workflowVersionQueryDefaultPriorityInt) SetIfPresent(value *Int) workflowVersionSetParam {
+	if value == nil {
+		return workflowVersionSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of DefaultPriority dynamically
+func (r workflowVersionQueryDefaultPriorityInt) SetOptional(value *Int) workflowVersionSetParam {
+	if value == nil {
+
+		var v *int
+		return workflowVersionSetParam{
+			data: builder.Field{
+				Name:  "defaultPriority",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the optional value of DefaultPriority
+func (r workflowVersionQueryDefaultPriorityInt) Increment(value int) workflowVersionSetParam {
+	return workflowVersionSetParam{
+		data: builder.Field{
+			Name: "defaultPriority",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) IncrementIfPresent(value *int) workflowVersionSetParam {
+	if value == nil {
+		return workflowVersionSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the optional value of DefaultPriority
+func (r workflowVersionQueryDefaultPriorityInt) Decrement(value int) workflowVersionSetParam {
+	return workflowVersionSetParam{
+		data: builder.Field{
+			Name: "defaultPriority",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) DecrementIfPresent(value *int) workflowVersionSetParam {
+	if value == nil {
+		return workflowVersionSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the optional value of DefaultPriority
+func (r workflowVersionQueryDefaultPriorityInt) Multiply(value int) workflowVersionSetParam {
+	return workflowVersionSetParam{
+		data: builder.Field{
+			Name: "defaultPriority",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) MultiplyIfPresent(value *int) workflowVersionSetParam {
+	if value == nil {
+		return workflowVersionSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the optional value of DefaultPriority
+func (r workflowVersionQueryDefaultPriorityInt) Divide(value int) workflowVersionSetParam {
+	return workflowVersionSetParam{
+		data: builder.Field{
+			Name: "defaultPriority",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) DivideIfPresent(value *int) workflowVersionSetParam {
+	if value == nil {
+		return workflowVersionSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) Equals(value int) workflowVersionWithPrismaDefaultPriorityEqualsParam {
+
+	return workflowVersionWithPrismaDefaultPriorityEqualsParam{
+		data: builder.Field{
+			Name: "defaultPriority",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) EqualsIfPresent(value *int) workflowVersionWithPrismaDefaultPriorityEqualsParam {
+	if value == nil {
+		return workflowVersionWithPrismaDefaultPriorityEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) EqualsOptional(value *Int) workflowVersionDefaultParam {
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name: "defaultPriority",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) IsNull() workflowVersionDefaultParam {
+	var str *string = nil
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name: "defaultPriority",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) Order(direction SortOrder) workflowVersionDefaultParam {
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name:  "defaultPriority",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) Cursor(cursor int) workflowVersionCursorParam {
+	return workflowVersionCursorParam{
+		data: builder.Field{
+			Name:  "defaultPriority",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) In(value []int) workflowVersionDefaultParam {
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name: "defaultPriority",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) InIfPresent(value []int) workflowVersionDefaultParam {
+	if value == nil {
+		return workflowVersionDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) NotIn(value []int) workflowVersionDefaultParam {
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name: "defaultPriority",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) NotInIfPresent(value []int) workflowVersionDefaultParam {
+	if value == nil {
+		return workflowVersionDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) Lt(value int) workflowVersionDefaultParam {
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name: "defaultPriority",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) LtIfPresent(value *int) workflowVersionDefaultParam {
+	if value == nil {
+		return workflowVersionDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) Lte(value int) workflowVersionDefaultParam {
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name: "defaultPriority",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) LteIfPresent(value *int) workflowVersionDefaultParam {
+	if value == nil {
+		return workflowVersionDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) Gt(value int) workflowVersionDefaultParam {
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name: "defaultPriority",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) GtIfPresent(value *int) workflowVersionDefaultParam {
+	if value == nil {
+		return workflowVersionDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) Gte(value int) workflowVersionDefaultParam {
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name: "defaultPriority",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) GteIfPresent(value *int) workflowVersionDefaultParam {
+	if value == nil {
+		return workflowVersionDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) Not(value int) workflowVersionDefaultParam {
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name: "defaultPriority",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) NotIfPresent(value *int) workflowVersionDefaultParam {
+	if value == nil {
+		return workflowVersionDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r workflowVersionQueryDefaultPriorityInt) LT(value int) workflowVersionDefaultParam {
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name: "defaultPriority",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r workflowVersionQueryDefaultPriorityInt) LTIfPresent(value *int) workflowVersionDefaultParam {
+	if value == nil {
+		return workflowVersionDefaultParam{}
+	}
+	return r.LT(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r workflowVersionQueryDefaultPriorityInt) LTE(value int) workflowVersionDefaultParam {
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name: "defaultPriority",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r workflowVersionQueryDefaultPriorityInt) LTEIfPresent(value *int) workflowVersionDefaultParam {
+	if value == nil {
+		return workflowVersionDefaultParam{}
+	}
+	return r.LTE(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r workflowVersionQueryDefaultPriorityInt) GT(value int) workflowVersionDefaultParam {
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name: "defaultPriority",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r workflowVersionQueryDefaultPriorityInt) GTIfPresent(value *int) workflowVersionDefaultParam {
+	if value == nil {
+		return workflowVersionDefaultParam{}
+	}
+	return r.GT(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r workflowVersionQueryDefaultPriorityInt) GTE(value int) workflowVersionDefaultParam {
+	return workflowVersionDefaultParam{
+		data: builder.Field{
+			Name: "defaultPriority",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r workflowVersionQueryDefaultPriorityInt) GTEIfPresent(value *int) workflowVersionDefaultParam {
+	if value == nil {
+		return workflowVersionDefaultParam{}
+	}
+	return r.GTE(*value)
+}
+
+func (r workflowVersionQueryDefaultPriorityInt) Field() workflowVersionPrismaFields {
+	return workflowVersionFieldDefaultPriority
 }
 
 // WorkflowConcurrency acts as a namespaces to access query methods for the WorkflowConcurrency model
@@ -105260,6 +105752,11 @@ type workflowRunQuery struct {
 	// @optional
 	Duration workflowRunQueryDurationInt
 
+	// Priority
+	//
+	// @optional
+	Priority workflowRunQueryPriorityInt
+
 	Children workflowRunQueryChildrenRelations
 
 	ScheduledChildren workflowRunQueryScheduledChildrenRelations
@@ -110458,6 +110955,450 @@ func (r workflowRunQueryDurationInt) GTEIfPresent(value *int) workflowRunDefault
 
 func (r workflowRunQueryDurationInt) Field() workflowRunPrismaFields {
 	return workflowRunFieldDuration
+}
+
+// base struct
+type workflowRunQueryPriorityInt struct{}
+
+// Set the optional value of Priority
+func (r workflowRunQueryPriorityInt) Set(value int) workflowRunSetParam {
+
+	return workflowRunSetParam{
+		data: builder.Field{
+			Name:  "priority",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Priority dynamically
+func (r workflowRunQueryPriorityInt) SetIfPresent(value *Int) workflowRunSetParam {
+	if value == nil {
+		return workflowRunSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of Priority dynamically
+func (r workflowRunQueryPriorityInt) SetOptional(value *Int) workflowRunSetParam {
+	if value == nil {
+
+		var v *int
+		return workflowRunSetParam{
+			data: builder.Field{
+				Name:  "priority",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the optional value of Priority
+func (r workflowRunQueryPriorityInt) Increment(value int) workflowRunSetParam {
+	return workflowRunSetParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryPriorityInt) IncrementIfPresent(value *int) workflowRunSetParam {
+	if value == nil {
+		return workflowRunSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the optional value of Priority
+func (r workflowRunQueryPriorityInt) Decrement(value int) workflowRunSetParam {
+	return workflowRunSetParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryPriorityInt) DecrementIfPresent(value *int) workflowRunSetParam {
+	if value == nil {
+		return workflowRunSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the optional value of Priority
+func (r workflowRunQueryPriorityInt) Multiply(value int) workflowRunSetParam {
+	return workflowRunSetParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryPriorityInt) MultiplyIfPresent(value *int) workflowRunSetParam {
+	if value == nil {
+		return workflowRunSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the optional value of Priority
+func (r workflowRunQueryPriorityInt) Divide(value int) workflowRunSetParam {
+	return workflowRunSetParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryPriorityInt) DivideIfPresent(value *int) workflowRunSetParam {
+	if value == nil {
+		return workflowRunSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r workflowRunQueryPriorityInt) Equals(value int) workflowRunWithPrismaPriorityEqualsParam {
+
+	return workflowRunWithPrismaPriorityEqualsParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryPriorityInt) EqualsIfPresent(value *int) workflowRunWithPrismaPriorityEqualsParam {
+	if value == nil {
+		return workflowRunWithPrismaPriorityEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowRunQueryPriorityInt) EqualsOptional(value *Int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryPriorityInt) IsNull() workflowRunDefaultParam {
+	var str *string = nil
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryPriorityInt) Order(direction SortOrder) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name:  "priority",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowRunQueryPriorityInt) Cursor(cursor int) workflowRunCursorParam {
+	return workflowRunCursorParam{
+		data: builder.Field{
+			Name:  "priority",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowRunQueryPriorityInt) In(value []int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryPriorityInt) InIfPresent(value []int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowRunQueryPriorityInt) NotIn(value []int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryPriorityInt) NotInIfPresent(value []int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowRunQueryPriorityInt) Lt(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryPriorityInt) LtIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowRunQueryPriorityInt) Lte(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryPriorityInt) LteIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowRunQueryPriorityInt) Gt(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryPriorityInt) GtIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowRunQueryPriorityInt) Gte(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryPriorityInt) GteIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowRunQueryPriorityInt) Not(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryPriorityInt) NotIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r workflowRunQueryPriorityInt) LT(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r workflowRunQueryPriorityInt) LTIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.LT(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r workflowRunQueryPriorityInt) LTE(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r workflowRunQueryPriorityInt) LTEIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.LTE(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r workflowRunQueryPriorityInt) GT(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r workflowRunQueryPriorityInt) GTIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.GT(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r workflowRunQueryPriorityInt) GTE(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r workflowRunQueryPriorityInt) GTEIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.GTE(*value)
+}
+
+func (r workflowRunQueryPriorityInt) Field() workflowRunPrismaFields {
+	return workflowRunFieldPriority
 }
 
 // base struct
@@ -136483,6 +137424,11 @@ type stepRunQuery struct {
 	// @required
 	Queue stepRunQueryQueueString
 
+	// Priority
+	//
+	// @optional
+	Priority stepRunQueryPriorityInt
+
 	Worker stepRunQueryWorkerRelations
 
 	// WorkerID
@@ -140270,6 +141216,450 @@ func (r stepRunQueryQueueString) HasSuffixIfPresent(value *string) stepRunDefaul
 
 func (r stepRunQueryQueueString) Field() stepRunPrismaFields {
 	return stepRunFieldQueue
+}
+
+// base struct
+type stepRunQueryPriorityInt struct{}
+
+// Set the optional value of Priority
+func (r stepRunQueryPriorityInt) Set(value int) stepRunSetParam {
+
+	return stepRunSetParam{
+		data: builder.Field{
+			Name:  "priority",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Priority dynamically
+func (r stepRunQueryPriorityInt) SetIfPresent(value *Int) stepRunSetParam {
+	if value == nil {
+		return stepRunSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of Priority dynamically
+func (r stepRunQueryPriorityInt) SetOptional(value *Int) stepRunSetParam {
+	if value == nil {
+
+		var v *int
+		return stepRunSetParam{
+			data: builder.Field{
+				Name:  "priority",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the optional value of Priority
+func (r stepRunQueryPriorityInt) Increment(value int) stepRunSetParam {
+	return stepRunSetParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryPriorityInt) IncrementIfPresent(value *int) stepRunSetParam {
+	if value == nil {
+		return stepRunSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the optional value of Priority
+func (r stepRunQueryPriorityInt) Decrement(value int) stepRunSetParam {
+	return stepRunSetParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryPriorityInt) DecrementIfPresent(value *int) stepRunSetParam {
+	if value == nil {
+		return stepRunSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the optional value of Priority
+func (r stepRunQueryPriorityInt) Multiply(value int) stepRunSetParam {
+	return stepRunSetParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryPriorityInt) MultiplyIfPresent(value *int) stepRunSetParam {
+	if value == nil {
+		return stepRunSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the optional value of Priority
+func (r stepRunQueryPriorityInt) Divide(value int) stepRunSetParam {
+	return stepRunSetParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryPriorityInt) DivideIfPresent(value *int) stepRunSetParam {
+	if value == nil {
+		return stepRunSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r stepRunQueryPriorityInt) Equals(value int) stepRunWithPrismaPriorityEqualsParam {
+
+	return stepRunWithPrismaPriorityEqualsParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryPriorityInt) EqualsIfPresent(value *int) stepRunWithPrismaPriorityEqualsParam {
+	if value == nil {
+		return stepRunWithPrismaPriorityEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepRunQueryPriorityInt) EqualsOptional(value *Int) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryPriorityInt) IsNull() stepRunDefaultParam {
+	var str *string = nil
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryPriorityInt) Order(direction SortOrder) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name:  "priority",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepRunQueryPriorityInt) Cursor(cursor int) stepRunCursorParam {
+	return stepRunCursorParam{
+		data: builder.Field{
+			Name:  "priority",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepRunQueryPriorityInt) In(value []int) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryPriorityInt) InIfPresent(value []int) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r stepRunQueryPriorityInt) NotIn(value []int) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryPriorityInt) NotInIfPresent(value []int) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepRunQueryPriorityInt) Lt(value int) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryPriorityInt) LtIfPresent(value *int) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r stepRunQueryPriorityInt) Lte(value int) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryPriorityInt) LteIfPresent(value *int) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r stepRunQueryPriorityInt) Gt(value int) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryPriorityInt) GtIfPresent(value *int) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r stepRunQueryPriorityInt) Gte(value int) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryPriorityInt) GteIfPresent(value *int) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r stepRunQueryPriorityInt) Not(value int) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryPriorityInt) NotIfPresent(value *int) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r stepRunQueryPriorityInt) LT(value int) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r stepRunQueryPriorityInt) LTIfPresent(value *int) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.LT(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r stepRunQueryPriorityInt) LTE(value int) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r stepRunQueryPriorityInt) LTEIfPresent(value *int) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.LTE(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r stepRunQueryPriorityInt) GT(value int) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r stepRunQueryPriorityInt) GTIfPresent(value *int) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.GT(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r stepRunQueryPriorityInt) GTE(value int) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r stepRunQueryPriorityInt) GTEIfPresent(value *int) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.GTE(*value)
+}
+
+func (r stepRunQueryPriorityInt) Field() stepRunPrismaFields {
+	return stepRunFieldPriority
 }
 
 // base struct
@@ -214161,6 +215551,7 @@ var workflowVersionOutput = []builder.Output{
 	{Name: "onFailureJobId"},
 	{Name: "kind"},
 	{Name: "scheduleTimeout"},
+	{Name: "defaultPriority"},
 }
 
 type WorkflowVersionRelationWith interface {
@@ -215808,6 +217199,84 @@ func (p workflowVersionWithPrismaScheduleTimeoutEqualsUniqueParam) scheduleTimeo
 
 func (workflowVersionWithPrismaScheduleTimeoutEqualsUniqueParam) unique() {}
 func (workflowVersionWithPrismaScheduleTimeoutEqualsUniqueParam) equals() {}
+
+type WorkflowVersionWithPrismaDefaultPriorityEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowVersionModel()
+	defaultPriorityField()
+}
+
+type WorkflowVersionWithPrismaDefaultPrioritySetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowVersionModel()
+	defaultPriorityField()
+}
+
+type workflowVersionWithPrismaDefaultPrioritySetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowVersionWithPrismaDefaultPrioritySetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowVersionWithPrismaDefaultPrioritySetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowVersionWithPrismaDefaultPrioritySetParam) workflowVersionModel() {}
+
+func (p workflowVersionWithPrismaDefaultPrioritySetParam) defaultPriorityField() {}
+
+type WorkflowVersionWithPrismaDefaultPriorityWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowVersionModel()
+	defaultPriorityField()
+}
+
+type workflowVersionWithPrismaDefaultPriorityEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowVersionWithPrismaDefaultPriorityEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowVersionWithPrismaDefaultPriorityEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowVersionWithPrismaDefaultPriorityEqualsParam) workflowVersionModel() {}
+
+func (p workflowVersionWithPrismaDefaultPriorityEqualsParam) defaultPriorityField() {}
+
+func (workflowVersionWithPrismaDefaultPrioritySetParam) settable()  {}
+func (workflowVersionWithPrismaDefaultPriorityEqualsParam) equals() {}
+
+type workflowVersionWithPrismaDefaultPriorityEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowVersionWithPrismaDefaultPriorityEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowVersionWithPrismaDefaultPriorityEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowVersionWithPrismaDefaultPriorityEqualsUniqueParam) workflowVersionModel() {}
+func (p workflowVersionWithPrismaDefaultPriorityEqualsUniqueParam) defaultPriorityField() {}
+
+func (workflowVersionWithPrismaDefaultPriorityEqualsUniqueParam) unique() {}
+func (workflowVersionWithPrismaDefaultPriorityEqualsUniqueParam) equals() {}
 
 type workflowConcurrencyActions struct {
 	// client holds the prisma client
@@ -227451,6 +228920,7 @@ var workflowRunOutput = []builder.Output{
 	{Name: "startedAt"},
 	{Name: "finishedAt"},
 	{Name: "duration"},
+	{Name: "priority"},
 	{Name: "parentId"},
 	{Name: "parentStepRunId"},
 	{Name: "childIndex"},
@@ -229103,6 +230573,84 @@ func (p workflowRunWithPrismaDurationEqualsUniqueParam) durationField()    {}
 
 func (workflowRunWithPrismaDurationEqualsUniqueParam) unique() {}
 func (workflowRunWithPrismaDurationEqualsUniqueParam) equals() {}
+
+type WorkflowRunWithPrismaPriorityEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowRunModel()
+	priorityField()
+}
+
+type WorkflowRunWithPrismaPrioritySetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunModel()
+	priorityField()
+}
+
+type workflowRunWithPrismaPrioritySetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunWithPrismaPrioritySetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunWithPrismaPrioritySetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunWithPrismaPrioritySetParam) workflowRunModel() {}
+
+func (p workflowRunWithPrismaPrioritySetParam) priorityField() {}
+
+type WorkflowRunWithPrismaPriorityWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunModel()
+	priorityField()
+}
+
+type workflowRunWithPrismaPriorityEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunWithPrismaPriorityEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunWithPrismaPriorityEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunWithPrismaPriorityEqualsParam) workflowRunModel() {}
+
+func (p workflowRunWithPrismaPriorityEqualsParam) priorityField() {}
+
+func (workflowRunWithPrismaPrioritySetParam) settable()  {}
+func (workflowRunWithPrismaPriorityEqualsParam) equals() {}
+
+type workflowRunWithPrismaPriorityEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunWithPrismaPriorityEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunWithPrismaPriorityEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunWithPrismaPriorityEqualsUniqueParam) workflowRunModel() {}
+func (p workflowRunWithPrismaPriorityEqualsUniqueParam) priorityField()    {}
+
+func (workflowRunWithPrismaPriorityEqualsUniqueParam) unique() {}
+func (workflowRunWithPrismaPriorityEqualsUniqueParam) equals() {}
 
 type WorkflowRunWithPrismaChildrenEqualsSetParam interface {
 	field() builder.Field
@@ -236906,6 +238454,7 @@ var stepRunOutput = []builder.Output{
 	{Name: "stepId"},
 	{Name: "order"},
 	{Name: "queue"},
+	{Name: "priority"},
 	{Name: "workerId"},
 	{Name: "tickerId"},
 	{Name: "status"},
@@ -238182,6 +239731,84 @@ func (p stepRunWithPrismaQueueEqualsUniqueParam) queueField()   {}
 
 func (stepRunWithPrismaQueueEqualsUniqueParam) unique() {}
 func (stepRunWithPrismaQueueEqualsUniqueParam) equals() {}
+
+type StepRunWithPrismaPriorityEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepRunModel()
+	priorityField()
+}
+
+type StepRunWithPrismaPrioritySetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRunModel()
+	priorityField()
+}
+
+type stepRunWithPrismaPrioritySetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunWithPrismaPrioritySetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunWithPrismaPrioritySetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunWithPrismaPrioritySetParam) stepRunModel() {}
+
+func (p stepRunWithPrismaPrioritySetParam) priorityField() {}
+
+type StepRunWithPrismaPriorityWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRunModel()
+	priorityField()
+}
+
+type stepRunWithPrismaPriorityEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunWithPrismaPriorityEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunWithPrismaPriorityEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunWithPrismaPriorityEqualsParam) stepRunModel() {}
+
+func (p stepRunWithPrismaPriorityEqualsParam) priorityField() {}
+
+func (stepRunWithPrismaPrioritySetParam) settable()  {}
+func (stepRunWithPrismaPriorityEqualsParam) equals() {}
+
+type stepRunWithPrismaPriorityEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunWithPrismaPriorityEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunWithPrismaPriorityEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunWithPrismaPriorityEqualsUniqueParam) stepRunModel()  {}
+func (p stepRunWithPrismaPriorityEqualsUniqueParam) priorityField() {}
+
+func (stepRunWithPrismaPriorityEqualsUniqueParam) unique() {}
+func (stepRunWithPrismaPriorityEqualsUniqueParam) equals() {}
 
 type StepRunWithPrismaWorkerEqualsSetParam interface {
 	field() builder.Field
