@@ -233,6 +233,9 @@ model ControllerPartition {
   // lastHeartbeat is used for rebalancing partitions
   lastHeartbeat DateTime?
 
+  // name of the partition
+  name String?
+
   tenants Tenant[]
 }
 
@@ -243,6 +246,9 @@ model TenantWorkerPartition {
 
   // lastHeartbeat is used for rebalancing partitions
   lastHeartbeat DateTime?
+
+  // name of the partition
+  name String?
 
   tenants Tenant[]
 }
@@ -2358,6 +2364,7 @@ const (
 	ControllerPartitionScalarFieldEnumCreatedAt     ControllerPartitionScalarFieldEnum = "createdAt"
 	ControllerPartitionScalarFieldEnumUpdatedAt     ControllerPartitionScalarFieldEnum = "updatedAt"
 	ControllerPartitionScalarFieldEnumLastHeartbeat ControllerPartitionScalarFieldEnum = "lastHeartbeat"
+	ControllerPartitionScalarFieldEnumName          ControllerPartitionScalarFieldEnum = "name"
 )
 
 type TenantWorkerPartitionScalarFieldEnum string
@@ -2367,6 +2374,7 @@ const (
 	TenantWorkerPartitionScalarFieldEnumCreatedAt     TenantWorkerPartitionScalarFieldEnum = "createdAt"
 	TenantWorkerPartitionScalarFieldEnumUpdatedAt     TenantWorkerPartitionScalarFieldEnum = "updatedAt"
 	TenantWorkerPartitionScalarFieldEnumLastHeartbeat TenantWorkerPartitionScalarFieldEnum = "lastHeartbeat"
+	TenantWorkerPartitionScalarFieldEnumName          TenantWorkerPartitionScalarFieldEnum = "name"
 )
 
 type TenantScalarFieldEnum string
@@ -3231,6 +3239,8 @@ const controllerPartitionFieldUpdatedAt controllerPartitionPrismaFields = "updat
 
 const controllerPartitionFieldLastHeartbeat controllerPartitionPrismaFields = "lastHeartbeat"
 
+const controllerPartitionFieldName controllerPartitionPrismaFields = "name"
+
 const controllerPartitionFieldTenants controllerPartitionPrismaFields = "tenants"
 
 type tenantWorkerPartitionPrismaFields = prismaFields
@@ -3242,6 +3252,8 @@ const tenantWorkerPartitionFieldCreatedAt tenantWorkerPartitionPrismaFields = "c
 const tenantWorkerPartitionFieldUpdatedAt tenantWorkerPartitionPrismaFields = "updatedAt"
 
 const tenantWorkerPartitionFieldLastHeartbeat tenantWorkerPartitionPrismaFields = "lastHeartbeat"
+
+const tenantWorkerPartitionFieldName tenantWorkerPartitionPrismaFields = "name"
 
 const tenantWorkerPartitionFieldTenants tenantWorkerPartitionPrismaFields = "tenants"
 
@@ -7678,6 +7690,7 @@ type InnerControllerPartition struct {
 	CreatedAt     DateTime  `json:"createdAt"`
 	UpdatedAt     DateTime  `json:"updatedAt"`
 	LastHeartbeat *DateTime `json:"lastHeartbeat,omitempty"`
+	Name          *string   `json:"name,omitempty"`
 }
 
 // RawControllerPartitionModel is a struct for ControllerPartition when used in raw queries
@@ -7686,6 +7699,7 @@ type RawControllerPartitionModel struct {
 	CreatedAt     RawDateTime  `json:"createdAt"`
 	UpdatedAt     RawDateTime  `json:"updatedAt"`
 	LastHeartbeat *RawDateTime `json:"lastHeartbeat,omitempty"`
+	Name          *RawString   `json:"name,omitempty"`
 }
 
 // RelationsControllerPartition holds the relation data separately
@@ -7698,6 +7712,13 @@ func (r ControllerPartitionModel) LastHeartbeat() (value DateTime, ok bool) {
 		return value, false
 	}
 	return *r.InnerControllerPartition.LastHeartbeat, true
+}
+
+func (r ControllerPartitionModel) Name() (value String, ok bool) {
+	if r.InnerControllerPartition.Name == nil {
+		return value, false
+	}
+	return *r.InnerControllerPartition.Name, true
 }
 
 func (r ControllerPartitionModel) Tenants() (value []TenantModel) {
@@ -7719,6 +7740,7 @@ type InnerTenantWorkerPartition struct {
 	CreatedAt     DateTime  `json:"createdAt"`
 	UpdatedAt     DateTime  `json:"updatedAt"`
 	LastHeartbeat *DateTime `json:"lastHeartbeat,omitempty"`
+	Name          *string   `json:"name,omitempty"`
 }
 
 // RawTenantWorkerPartitionModel is a struct for TenantWorkerPartition when used in raw queries
@@ -7727,6 +7749,7 @@ type RawTenantWorkerPartitionModel struct {
 	CreatedAt     RawDateTime  `json:"createdAt"`
 	UpdatedAt     RawDateTime  `json:"updatedAt"`
 	LastHeartbeat *RawDateTime `json:"lastHeartbeat,omitempty"`
+	Name          *RawString   `json:"name,omitempty"`
 }
 
 // RelationsTenantWorkerPartition holds the relation data separately
@@ -7739,6 +7762,13 @@ func (r TenantWorkerPartitionModel) LastHeartbeat() (value DateTime, ok bool) {
 		return value, false
 	}
 	return *r.InnerTenantWorkerPartition.LastHeartbeat, true
+}
+
+func (r TenantWorkerPartitionModel) Name() (value String, ok bool) {
+	if r.InnerTenantWorkerPartition.Name == nil {
+		return value, false
+	}
+	return *r.InnerTenantWorkerPartition.Name, true
 }
 
 func (r TenantWorkerPartitionModel) Tenants() (value []TenantModel) {
@@ -27636,6 +27666,11 @@ type controllerPartitionQuery struct {
 	// @optional
 	LastHeartbeat controllerPartitionQueryLastHeartbeatDateTime
 
+	// Name
+	//
+	// @optional
+	Name controllerPartitionQueryNameString
+
 	Tenants controllerPartitionQueryTenantsRelations
 }
 
@@ -29016,6 +29051,398 @@ func (r controllerPartitionQueryLastHeartbeatDateTime) Field() controllerPartiti
 }
 
 // base struct
+type controllerPartitionQueryNameString struct{}
+
+// Set the optional value of Name
+func (r controllerPartitionQueryNameString) Set(value string) controllerPartitionSetParam {
+
+	return controllerPartitionSetParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Name dynamically
+func (r controllerPartitionQueryNameString) SetIfPresent(value *String) controllerPartitionSetParam {
+	if value == nil {
+		return controllerPartitionSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of Name dynamically
+func (r controllerPartitionQueryNameString) SetOptional(value *String) controllerPartitionSetParam {
+	if value == nil {
+
+		var v *string
+		return controllerPartitionSetParam{
+			data: builder.Field{
+				Name:  "name",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r controllerPartitionQueryNameString) Equals(value string) controllerPartitionWithPrismaNameEqualsParam {
+
+	return controllerPartitionWithPrismaNameEqualsParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryNameString) EqualsIfPresent(value *string) controllerPartitionWithPrismaNameEqualsParam {
+	if value == nil {
+		return controllerPartitionWithPrismaNameEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r controllerPartitionQueryNameString) EqualsOptional(value *String) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryNameString) IsNull() controllerPartitionDefaultParam {
+	var str *string = nil
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryNameString) Order(direction SortOrder) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: direction,
+		},
+	}
+}
+
+func (r controllerPartitionQueryNameString) Cursor(cursor string) controllerPartitionCursorParam {
+	return controllerPartitionCursorParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: cursor,
+		},
+	}
+}
+
+func (r controllerPartitionQueryNameString) In(value []string) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryNameString) InIfPresent(value []string) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r controllerPartitionQueryNameString) NotIn(value []string) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryNameString) NotInIfPresent(value []string) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r controllerPartitionQueryNameString) Lt(value string) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryNameString) LtIfPresent(value *string) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r controllerPartitionQueryNameString) Lte(value string) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryNameString) LteIfPresent(value *string) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r controllerPartitionQueryNameString) Gt(value string) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryNameString) GtIfPresent(value *string) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r controllerPartitionQueryNameString) Gte(value string) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryNameString) GteIfPresent(value *string) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r controllerPartitionQueryNameString) Contains(value string) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryNameString) ContainsIfPresent(value *string) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r controllerPartitionQueryNameString) StartsWith(value string) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryNameString) StartsWithIfPresent(value *string) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r controllerPartitionQueryNameString) EndsWith(value string) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryNameString) EndsWithIfPresent(value *string) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r controllerPartitionQueryNameString) Mode(value QueryMode) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryNameString) ModeIfPresent(value *QueryMode) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r controllerPartitionQueryNameString) Not(value string) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r controllerPartitionQueryNameString) NotIfPresent(value *string) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r controllerPartitionQueryNameString) HasPrefix(value string) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r controllerPartitionQueryNameString) HasPrefixIfPresent(value *string) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r controllerPartitionQueryNameString) HasSuffix(value string) controllerPartitionDefaultParam {
+	return controllerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r controllerPartitionQueryNameString) HasSuffixIfPresent(value *string) controllerPartitionDefaultParam {
+	if value == nil {
+		return controllerPartitionDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r controllerPartitionQueryNameString) Field() controllerPartitionPrismaFields {
+	return controllerPartitionFieldName
+}
+
+// base struct
 type controllerPartitionQueryTenantsTenant struct{}
 
 type controllerPartitionQueryTenantsRelations struct{}
@@ -29212,6 +29639,11 @@ type tenantWorkerPartitionQuery struct {
 	//
 	// @optional
 	LastHeartbeat tenantWorkerPartitionQueryLastHeartbeatDateTime
+
+	// Name
+	//
+	// @optional
+	Name tenantWorkerPartitionQueryNameString
 
 	Tenants tenantWorkerPartitionQueryTenantsRelations
 }
@@ -30590,6 +31022,398 @@ func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) AfterEqualsIfPresent(va
 
 func (r tenantWorkerPartitionQueryLastHeartbeatDateTime) Field() tenantWorkerPartitionPrismaFields {
 	return tenantWorkerPartitionFieldLastHeartbeat
+}
+
+// base struct
+type tenantWorkerPartitionQueryNameString struct{}
+
+// Set the optional value of Name
+func (r tenantWorkerPartitionQueryNameString) Set(value string) tenantWorkerPartitionSetParam {
+
+	return tenantWorkerPartitionSetParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Name dynamically
+func (r tenantWorkerPartitionQueryNameString) SetIfPresent(value *String) tenantWorkerPartitionSetParam {
+	if value == nil {
+		return tenantWorkerPartitionSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of Name dynamically
+func (r tenantWorkerPartitionQueryNameString) SetOptional(value *String) tenantWorkerPartitionSetParam {
+	if value == nil {
+
+		var v *string
+		return tenantWorkerPartitionSetParam{
+			data: builder.Field{
+				Name:  "name",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r tenantWorkerPartitionQueryNameString) Equals(value string) tenantWorkerPartitionWithPrismaNameEqualsParam {
+
+	return tenantWorkerPartitionWithPrismaNameEqualsParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryNameString) EqualsIfPresent(value *string) tenantWorkerPartitionWithPrismaNameEqualsParam {
+	if value == nil {
+		return tenantWorkerPartitionWithPrismaNameEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r tenantWorkerPartitionQueryNameString) EqualsOptional(value *String) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryNameString) IsNull() tenantWorkerPartitionDefaultParam {
+	var str *string = nil
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryNameString) Order(direction SortOrder) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: direction,
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryNameString) Cursor(cursor string) tenantWorkerPartitionCursorParam {
+	return tenantWorkerPartitionCursorParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: cursor,
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryNameString) In(value []string) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryNameString) InIfPresent(value []string) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r tenantWorkerPartitionQueryNameString) NotIn(value []string) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryNameString) NotInIfPresent(value []string) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r tenantWorkerPartitionQueryNameString) Lt(value string) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryNameString) LtIfPresent(value *string) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r tenantWorkerPartitionQueryNameString) Lte(value string) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryNameString) LteIfPresent(value *string) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r tenantWorkerPartitionQueryNameString) Gt(value string) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryNameString) GtIfPresent(value *string) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r tenantWorkerPartitionQueryNameString) Gte(value string) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryNameString) GteIfPresent(value *string) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r tenantWorkerPartitionQueryNameString) Contains(value string) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryNameString) ContainsIfPresent(value *string) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r tenantWorkerPartitionQueryNameString) StartsWith(value string) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryNameString) StartsWithIfPresent(value *string) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r tenantWorkerPartitionQueryNameString) EndsWith(value string) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryNameString) EndsWithIfPresent(value *string) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r tenantWorkerPartitionQueryNameString) Mode(value QueryMode) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryNameString) ModeIfPresent(value *QueryMode) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r tenantWorkerPartitionQueryNameString) Not(value string) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantWorkerPartitionQueryNameString) NotIfPresent(value *string) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r tenantWorkerPartitionQueryNameString) HasPrefix(value string) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r tenantWorkerPartitionQueryNameString) HasPrefixIfPresent(value *string) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r tenantWorkerPartitionQueryNameString) HasSuffix(value string) tenantWorkerPartitionDefaultParam {
+	return tenantWorkerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r tenantWorkerPartitionQueryNameString) HasSuffixIfPresent(value *string) tenantWorkerPartitionDefaultParam {
+	if value == nil {
+		return tenantWorkerPartitionDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r tenantWorkerPartitionQueryNameString) Field() tenantWorkerPartitionPrismaFields {
+	return tenantWorkerPartitionFieldName
 }
 
 // base struct
@@ -201499,6 +202323,7 @@ var controllerPartitionOutput = []builder.Output{
 	{Name: "createdAt"},
 	{Name: "updatedAt"},
 	{Name: "lastHeartbeat"},
+	{Name: "name"},
 }
 
 type ControllerPartitionRelationWith interface {
@@ -201977,6 +202802,84 @@ func (p controllerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) lastHeartbe
 func (controllerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) unique() {}
 func (controllerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) equals() {}
 
+type ControllerPartitionWithPrismaNameEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	controllerPartitionModel()
+	nameField()
+}
+
+type ControllerPartitionWithPrismaNameSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	controllerPartitionModel()
+	nameField()
+}
+
+type controllerPartitionWithPrismaNameSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionWithPrismaNameSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionWithPrismaNameSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p controllerPartitionWithPrismaNameSetParam) controllerPartitionModel() {}
+
+func (p controllerPartitionWithPrismaNameSetParam) nameField() {}
+
+type ControllerPartitionWithPrismaNameWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	controllerPartitionModel()
+	nameField()
+}
+
+type controllerPartitionWithPrismaNameEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionWithPrismaNameEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionWithPrismaNameEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p controllerPartitionWithPrismaNameEqualsParam) controllerPartitionModel() {}
+
+func (p controllerPartitionWithPrismaNameEqualsParam) nameField() {}
+
+func (controllerPartitionWithPrismaNameSetParam) settable()  {}
+func (controllerPartitionWithPrismaNameEqualsParam) equals() {}
+
+type controllerPartitionWithPrismaNameEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p controllerPartitionWithPrismaNameEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p controllerPartitionWithPrismaNameEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p controllerPartitionWithPrismaNameEqualsUniqueParam) controllerPartitionModel() {}
+func (p controllerPartitionWithPrismaNameEqualsUniqueParam) nameField()                {}
+
+func (controllerPartitionWithPrismaNameEqualsUniqueParam) unique() {}
+func (controllerPartitionWithPrismaNameEqualsUniqueParam) equals() {}
+
 type ControllerPartitionWithPrismaTenantsEqualsSetParam interface {
 	field() builder.Field
 	getQuery() builder.Query
@@ -202065,6 +202968,7 @@ var tenantWorkerPartitionOutput = []builder.Output{
 	{Name: "createdAt"},
 	{Name: "updatedAt"},
 	{Name: "lastHeartbeat"},
+	{Name: "name"},
 }
 
 type TenantWorkerPartitionRelationWith interface {
@@ -202542,6 +203446,84 @@ func (p tenantWorkerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) lastHeart
 
 func (tenantWorkerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) unique() {}
 func (tenantWorkerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) equals() {}
+
+type TenantWorkerPartitionWithPrismaNameEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tenantWorkerPartitionModel()
+	nameField()
+}
+
+type TenantWorkerPartitionWithPrismaNameSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantWorkerPartitionModel()
+	nameField()
+}
+
+type tenantWorkerPartitionWithPrismaNameSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionWithPrismaNameSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionWithPrismaNameSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWorkerPartitionWithPrismaNameSetParam) tenantWorkerPartitionModel() {}
+
+func (p tenantWorkerPartitionWithPrismaNameSetParam) nameField() {}
+
+type TenantWorkerPartitionWithPrismaNameWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantWorkerPartitionModel()
+	nameField()
+}
+
+type tenantWorkerPartitionWithPrismaNameEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionWithPrismaNameEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionWithPrismaNameEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWorkerPartitionWithPrismaNameEqualsParam) tenantWorkerPartitionModel() {}
+
+func (p tenantWorkerPartitionWithPrismaNameEqualsParam) nameField() {}
+
+func (tenantWorkerPartitionWithPrismaNameSetParam) settable()  {}
+func (tenantWorkerPartitionWithPrismaNameEqualsParam) equals() {}
+
+type tenantWorkerPartitionWithPrismaNameEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWorkerPartitionWithPrismaNameEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWorkerPartitionWithPrismaNameEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWorkerPartitionWithPrismaNameEqualsUniqueParam) tenantWorkerPartitionModel() {}
+func (p tenantWorkerPartitionWithPrismaNameEqualsUniqueParam) nameField()                  {}
+
+func (tenantWorkerPartitionWithPrismaNameEqualsUniqueParam) unique() {}
+func (tenantWorkerPartitionWithPrismaNameEqualsUniqueParam) equals() {}
 
 type TenantWorkerPartitionWithPrismaTenantsEqualsSetParam interface {
 	field() builder.Field
