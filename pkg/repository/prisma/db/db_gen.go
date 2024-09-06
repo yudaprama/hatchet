@@ -1427,6 +1427,29 @@ model QueueItem {
   @@index([isQueued, tenantId, queue, priority(sort: Desc), id], name: "QueueItem_isQueued_priority_tenantId_queue_id_idx_2")
 }
 
+enum InternalQueue {
+  WORKER_SEMAPHORE_COUNT
+  STEP_RUN_UPDATE
+}
+
+model InternalQueueItem {
+  id BigInt @id @default(autoincrement()) @db.BigInt
+
+  queue    InternalQueue
+  isQueued Boolean
+  data     Json?
+
+  tenantId String @db.Uuid
+
+  // ALTER TABLE "InternalQueueItem" ADD CONSTRAINT "InternalQueueItem_priority_check" CHECK ("priority" >= 1 AND "priority" <= 4);
+  priority Int @default(1) // custom migration to set this between 1 and 4
+
+  uniqueKey String?
+
+  @@unique([tenantId, queue, uniqueKey])
+  @@index([isQueued, tenantId, queue, priority(sort: Desc), id])
+}
+
 enum StepRunEventReason {
   REQUEUED_NO_WORKER
   REQUEUED_RATE_LIMIT
@@ -1633,6 +1656,9 @@ model Worker {
 
   slots WorkerSemaphoreSlot[]
 
+  semaphoreCount WorkerSemaphoreCount?
+  assignedEvents WorkerAssignEvent[]
+
   webhook   WebhookWorker? @relation(fields: [webhookId], references: [id], onDelete: SetNull, onUpdate: Cascade)
   webhookId String?        @unique @db.Uuid
 
@@ -1662,6 +1688,29 @@ model WorkerSemaphoreSlot {
   stepRunId String?  @unique @db.Uuid
 
   @@index([workerId])
+}
+
+model WorkerSemaphoreCount {
+  // the parent semaphore
+  worker   Worker @relation(fields: [workerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  workerId String @id @unique @db.Uuid
+
+  // the count of the semaphore
+  count Int
+
+  @@index([workerId])
+}
+
+model WorkerAssignEvent {
+  id BigInt @id @default(autoincrement()) @db.BigInt
+
+  // the parent worker
+  worker   Worker @relation(fields: [workerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  workerId String @db.Uuid
+
+  assignedStepRuns Json?
+
+  @@index([workerId, id(order: Desc)])
 }
 
 model Service {
@@ -1927,6 +1976,7 @@ func newClient() *PrismaClient {
 	c.StepRun = stepRunActions{client: c}
 	c.Queue = queueActions{client: c}
 	c.QueueItem = queueItemActions{client: c}
+	c.InternalQueueItem = internalQueueItemActions{client: c}
 	c.StepRunEvent = stepRunEventActions{client: c}
 	c.StepRunResultArchive = stepRunResultArchiveActions{client: c}
 	c.Dispatcher = dispatcherActions{client: c}
@@ -1935,6 +1985,8 @@ func newClient() *PrismaClient {
 	c.Worker = workerActions{client: c}
 	c.WorkerSemaphore = workerSemaphoreActions{client: c}
 	c.WorkerSemaphoreSlot = workerSemaphoreSlotActions{client: c}
+	c.WorkerSemaphoreCount = workerSemaphoreCountActions{client: c}
+	c.WorkerAssignEvent = workerAssignEventActions{client: c}
 	c.Service = serviceActions{client: c}
 	c.TenantVcsProvider = tenantVcsProviderActions{client: c}
 	c.TenantAlertEmailGroup = tenantAlertEmailGroupActions{client: c}
@@ -2049,6 +2101,8 @@ type PrismaClient struct {
 	Queue queueActions
 	// QueueItem provides access to CRUD methods.
 	QueueItem queueItemActions
+	// InternalQueueItem provides access to CRUD methods.
+	InternalQueueItem internalQueueItemActions
 	// StepRunEvent provides access to CRUD methods.
 	StepRunEvent stepRunEventActions
 	// StepRunResultArchive provides access to CRUD methods.
@@ -2065,6 +2119,10 @@ type PrismaClient struct {
 	WorkerSemaphore workerSemaphoreActions
 	// WorkerSemaphoreSlot provides access to CRUD methods.
 	WorkerSemaphoreSlot workerSemaphoreSlotActions
+	// WorkerSemaphoreCount provides access to CRUD methods.
+	WorkerSemaphoreCount workerSemaphoreCountActions
+	// WorkerAssignEvent provides access to CRUD methods.
+	WorkerAssignEvent workerAssignEventActions
 	// Service provides access to CRUD methods.
 	Service serviceActions
 	// TenantVcsProvider provides access to CRUD methods.
@@ -2202,6 +2260,14 @@ const (
 )
 
 type RawStepRunStatus StepRunStatus
+type InternalQueue string
+
+const (
+	InternalQueueWorkerSemaphoreCount InternalQueue = "WORKER_SEMAPHORE_COUNT"
+	InternalQueueStepRunUpdate        InternalQueue = "STEP_RUN_UPDATE"
+)
+
+type RawInternalQueue InternalQueue
 type StepRunEventReason string
 
 const (
@@ -2844,6 +2910,18 @@ const (
 	QueueItemScalarFieldEnumDesiredWorkerID   QueueItemScalarFieldEnum = "desiredWorkerId"
 )
 
+type InternalQueueItemScalarFieldEnum string
+
+const (
+	InternalQueueItemScalarFieldEnumID        InternalQueueItemScalarFieldEnum = "id"
+	InternalQueueItemScalarFieldEnumQueue     InternalQueueItemScalarFieldEnum = "queue"
+	InternalQueueItemScalarFieldEnumIsQueued  InternalQueueItemScalarFieldEnum = "isQueued"
+	InternalQueueItemScalarFieldEnumData      InternalQueueItemScalarFieldEnum = "data"
+	InternalQueueItemScalarFieldEnumTenantID  InternalQueueItemScalarFieldEnum = "tenantId"
+	InternalQueueItemScalarFieldEnumPriority  InternalQueueItemScalarFieldEnum = "priority"
+	InternalQueueItemScalarFieldEnumUniqueKey InternalQueueItemScalarFieldEnum = "uniqueKey"
+)
+
 type StepRunEventScalarFieldEnum string
 
 const (
@@ -2943,6 +3021,21 @@ const (
 	WorkerSemaphoreSlotScalarFieldEnumID        WorkerSemaphoreSlotScalarFieldEnum = "id"
 	WorkerSemaphoreSlotScalarFieldEnumWorkerID  WorkerSemaphoreSlotScalarFieldEnum = "workerId"
 	WorkerSemaphoreSlotScalarFieldEnumStepRunID WorkerSemaphoreSlotScalarFieldEnum = "stepRunId"
+)
+
+type WorkerSemaphoreCountScalarFieldEnum string
+
+const (
+	WorkerSemaphoreCountScalarFieldEnumWorkerID WorkerSemaphoreCountScalarFieldEnum = "workerId"
+	WorkerSemaphoreCountScalarFieldEnumCount    WorkerSemaphoreCountScalarFieldEnum = "count"
+)
+
+type WorkerAssignEventScalarFieldEnum string
+
+const (
+	WorkerAssignEventScalarFieldEnumID               WorkerAssignEventScalarFieldEnum = "id"
+	WorkerAssignEventScalarFieldEnumWorkerID         WorkerAssignEventScalarFieldEnum = "workerId"
+	WorkerAssignEventScalarFieldEnumAssignedStepRuns WorkerAssignEventScalarFieldEnum = "assignedStepRuns"
 )
 
 type ServiceScalarFieldEnum string
@@ -4219,6 +4312,22 @@ const queueItemFieldSticky queueItemPrismaFields = "sticky"
 
 const queueItemFieldDesiredWorkerID queueItemPrismaFields = "desiredWorkerId"
 
+type internalQueueItemPrismaFields = prismaFields
+
+const internalQueueItemFieldID internalQueueItemPrismaFields = "id"
+
+const internalQueueItemFieldQueue internalQueueItemPrismaFields = "queue"
+
+const internalQueueItemFieldIsQueued internalQueueItemPrismaFields = "isQueued"
+
+const internalQueueItemFieldData internalQueueItemPrismaFields = "data"
+
+const internalQueueItemFieldTenantID internalQueueItemPrismaFields = "tenantId"
+
+const internalQueueItemFieldPriority internalQueueItemPrismaFields = "priority"
+
+const internalQueueItemFieldUniqueKey internalQueueItemPrismaFields = "uniqueKey"
+
 type stepRunEventPrismaFields = prismaFields
 
 const stepRunEventFieldID stepRunEventPrismaFields = "id"
@@ -4377,6 +4486,10 @@ const workerFieldGroupKeyRuns workerPrismaFields = "groupKeyRuns"
 
 const workerFieldSlots workerPrismaFields = "slots"
 
+const workerFieldSemaphoreCount workerPrismaFields = "semaphoreCount"
+
+const workerFieldAssignedEvents workerPrismaFields = "assignedEvents"
+
 const workerFieldWebhook workerPrismaFields = "webhook"
 
 const workerFieldWebhookID workerPrismaFields = "webhookId"
@@ -4402,6 +4515,24 @@ const workerSemaphoreSlotFieldWorkerID workerSemaphoreSlotPrismaFields = "worker
 const workerSemaphoreSlotFieldStepRun workerSemaphoreSlotPrismaFields = "stepRun"
 
 const workerSemaphoreSlotFieldStepRunID workerSemaphoreSlotPrismaFields = "stepRunId"
+
+type workerSemaphoreCountPrismaFields = prismaFields
+
+const workerSemaphoreCountFieldWorker workerSemaphoreCountPrismaFields = "worker"
+
+const workerSemaphoreCountFieldWorkerID workerSemaphoreCountPrismaFields = "workerId"
+
+const workerSemaphoreCountFieldCount workerSemaphoreCountPrismaFields = "count"
+
+type workerAssignEventPrismaFields = prismaFields
+
+const workerAssignEventFieldID workerAssignEventPrismaFields = "id"
+
+const workerAssignEventFieldWorker workerAssignEventPrismaFields = "worker"
+
+const workerAssignEventFieldWorkerID workerAssignEventPrismaFields = "workerId"
+
+const workerAssignEventFieldAssignedStepRuns workerAssignEventPrismaFields = "assignedStepRuns"
 
 type servicePrismaFields = prismaFields
 
@@ -4711,6 +4842,10 @@ func NewMock() (*PrismaClient, *Mock, func(t *testing.T)) {
 		mock: m,
 	}
 
+	m.InternalQueueItem = internalQueueItemMock{
+		mock: m,
+	}
+
 	m.StepRunEvent = stepRunEventMock{
 		mock: m,
 	}
@@ -4740,6 +4875,14 @@ func NewMock() (*PrismaClient, *Mock, func(t *testing.T)) {
 	}
 
 	m.WorkerSemaphoreSlot = workerSemaphoreSlotMock{
+		mock: m,
+	}
+
+	m.WorkerSemaphoreCount = workerSemaphoreCountMock{
+		mock: m,
+	}
+
+	m.WorkerAssignEvent = workerAssignEventMock{
 		mock: m,
 	}
 
@@ -4863,6 +5006,8 @@ type Mock struct {
 
 	QueueItem queueItemMock
 
+	InternalQueueItem internalQueueItemMock
+
 	StepRunEvent stepRunEventMock
 
 	StepRunResultArchive stepRunResultArchiveMock
@@ -4878,6 +5023,10 @@ type Mock struct {
 	WorkerSemaphore workerSemaphoreMock
 
 	WorkerSemaphoreSlot workerSemaphoreSlotMock
+
+	WorkerSemaphoreCount workerSemaphoreCountMock
+
+	WorkerAssignEvent workerAssignEventMock
 
 	Service serviceMock
 
@@ -6618,6 +6767,48 @@ func (m *queueItemMockExec) Errors(err error) {
 	})
 }
 
+type internalQueueItemMock struct {
+	mock *Mock
+}
+
+type InternalQueueItemMockExpectParam interface {
+	ExtractQuery() builder.Query
+	internalQueueItemModel()
+}
+
+func (m *internalQueueItemMock) Expect(query InternalQueueItemMockExpectParam) *internalQueueItemMockExec {
+	return &internalQueueItemMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type internalQueueItemMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *internalQueueItemMockExec) Returns(v InternalQueueItemModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *internalQueueItemMockExec) ReturnsMany(v []InternalQueueItemModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *internalQueueItemMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
 type stepRunEventMock struct {
 	mock *Mock
 }
@@ -6948,6 +7139,90 @@ func (m *workerSemaphoreSlotMockExec) ReturnsMany(v []WorkerSemaphoreSlotModel) 
 }
 
 func (m *workerSemaphoreSlotMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
+type workerSemaphoreCountMock struct {
+	mock *Mock
+}
+
+type WorkerSemaphoreCountMockExpectParam interface {
+	ExtractQuery() builder.Query
+	workerSemaphoreCountModel()
+}
+
+func (m *workerSemaphoreCountMock) Expect(query WorkerSemaphoreCountMockExpectParam) *workerSemaphoreCountMockExec {
+	return &workerSemaphoreCountMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type workerSemaphoreCountMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *workerSemaphoreCountMockExec) Returns(v WorkerSemaphoreCountModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *workerSemaphoreCountMockExec) ReturnsMany(v []WorkerSemaphoreCountModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *workerSemaphoreCountMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
+type workerAssignEventMock struct {
+	mock *Mock
+}
+
+type WorkerAssignEventMockExpectParam interface {
+	ExtractQuery() builder.Query
+	workerAssignEventModel()
+}
+
+func (m *workerAssignEventMock) Expect(query WorkerAssignEventMockExpectParam) *workerAssignEventMockExec {
+	return &workerAssignEventMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type workerAssignEventMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *workerAssignEventMockExec) Returns(v WorkerAssignEventModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *workerAssignEventMockExec) ReturnsMany(v []WorkerAssignEventModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *workerAssignEventMockExec) Errors(err error) {
 	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
 		Query:   m.query,
 		WantErr: err,
@@ -10895,6 +11170,52 @@ func (r QueueItemModel) DesiredWorkerID() (value String, ok bool) {
 	return *r.InnerQueueItem.DesiredWorkerID, true
 }
 
+// InternalQueueItemModel represents the InternalQueueItem model and is a wrapper for accessing fields and methods
+type InternalQueueItemModel struct {
+	InnerInternalQueueItem
+	RelationsInternalQueueItem
+}
+
+// InnerInternalQueueItem holds the actual data
+type InnerInternalQueueItem struct {
+	ID        BigInt        `json:"id"`
+	Queue     InternalQueue `json:"queue"`
+	IsQueued  bool          `json:"isQueued"`
+	Data      *JSON         `json:"data,omitempty"`
+	TenantID  string        `json:"tenantId"`
+	Priority  int           `json:"priority"`
+	UniqueKey *string       `json:"uniqueKey,omitempty"`
+}
+
+// RawInternalQueueItemModel is a struct for InternalQueueItem when used in raw queries
+type RawInternalQueueItemModel struct {
+	ID        RawBigInt        `json:"id"`
+	Queue     RawInternalQueue `json:"queue"`
+	IsQueued  RawBoolean       `json:"isQueued"`
+	Data      *RawJSON         `json:"data,omitempty"`
+	TenantID  RawString        `json:"tenantId"`
+	Priority  RawInt           `json:"priority"`
+	UniqueKey *RawString       `json:"uniqueKey,omitempty"`
+}
+
+// RelationsInternalQueueItem holds the relation data separately
+type RelationsInternalQueueItem struct {
+}
+
+func (r InternalQueueItemModel) Data() (value JSON, ok bool) {
+	if r.InnerInternalQueueItem.Data == nil {
+		return value, false
+	}
+	return *r.InnerInternalQueueItem.Data, true
+}
+
+func (r InternalQueueItemModel) UniqueKey() (value String, ok bool) {
+	if r.InnerInternalQueueItem.UniqueKey == nil {
+		return value, false
+	}
+	return *r.InnerInternalQueueItem.UniqueKey, true
+}
+
 // StepRunEventModel represents the StepRunEvent model and is a wrapper for accessing fields and methods
 type StepRunEventModel struct {
 	InnerStepRunEvent
@@ -11305,16 +11626,18 @@ type RawWorkerModel struct {
 
 // RelationsWorker holds the relation data separately
 type RelationsWorker struct {
-	Labels       []WorkerLabelModel         `json:"labels,omitempty"`
-	Tenant       *TenantModel               `json:"tenant,omitempty"`
-	Dispatcher   *DispatcherModel           `json:"dispatcher,omitempty"`
-	Services     []ServiceModel             `json:"services,omitempty"`
-	Actions      []ActionModel              `json:"actions,omitempty"`
-	StepRuns     []StepRunModel             `json:"stepRuns,omitempty"`
-	GroupKeyRuns []GetGroupKeyRunModel      `json:"groupKeyRuns,omitempty"`
-	Slots        []WorkerSemaphoreSlotModel `json:"slots,omitempty"`
-	Webhook      *WebhookWorkerModel        `json:"webhook,omitempty"`
-	Semaphore    *WorkerSemaphoreModel      `json:"semaphore,omitempty"`
+	Labels         []WorkerLabelModel         `json:"labels,omitempty"`
+	Tenant         *TenantModel               `json:"tenant,omitempty"`
+	Dispatcher     *DispatcherModel           `json:"dispatcher,omitempty"`
+	Services       []ServiceModel             `json:"services,omitempty"`
+	Actions        []ActionModel              `json:"actions,omitempty"`
+	StepRuns       []StepRunModel             `json:"stepRuns,omitempty"`
+	GroupKeyRuns   []GetGroupKeyRunModel      `json:"groupKeyRuns,omitempty"`
+	Slots          []WorkerSemaphoreSlotModel `json:"slots,omitempty"`
+	SemaphoreCount *WorkerSemaphoreCountModel `json:"semaphoreCount,omitempty"`
+	AssignedEvents []WorkerAssignEventModel   `json:"assignedEvents,omitempty"`
+	Webhook        *WebhookWorkerModel        `json:"webhook,omitempty"`
+	Semaphore      *WorkerSemaphoreModel      `json:"semaphore,omitempty"`
 }
 
 func (r WorkerModel) DeletedAt() (value DateTime, ok bool) {
@@ -11399,6 +11722,20 @@ func (r WorkerModel) Slots() (value []WorkerSemaphoreSlotModel) {
 		panic("attempted to access slots but did not fetch it using the .With() syntax")
 	}
 	return r.RelationsWorker.Slots
+}
+
+func (r WorkerModel) SemaphoreCount() (value *WorkerSemaphoreCountModel, ok bool) {
+	if r.RelationsWorker.SemaphoreCount == nil {
+		return value, false
+	}
+	return r.RelationsWorker.SemaphoreCount, true
+}
+
+func (r WorkerModel) AssignedEvents() (value []WorkerAssignEventModel) {
+	if r.RelationsWorker.AssignedEvents == nil {
+		panic("attempted to access assignedEvents but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsWorker.AssignedEvents
 }
 
 func (r WorkerModel) Webhook() (value *WebhookWorkerModel, ok bool) {
@@ -11497,6 +11834,75 @@ func (r WorkerSemaphoreSlotModel) StepRunID() (value String, ok bool) {
 		return value, false
 	}
 	return *r.InnerWorkerSemaphoreSlot.StepRunID, true
+}
+
+// WorkerSemaphoreCountModel represents the WorkerSemaphoreCount model and is a wrapper for accessing fields and methods
+type WorkerSemaphoreCountModel struct {
+	InnerWorkerSemaphoreCount
+	RelationsWorkerSemaphoreCount
+}
+
+// InnerWorkerSemaphoreCount holds the actual data
+type InnerWorkerSemaphoreCount struct {
+	WorkerID string `json:"workerId"`
+	Count    int    `json:"count"`
+}
+
+// RawWorkerSemaphoreCountModel is a struct for WorkerSemaphoreCount when used in raw queries
+type RawWorkerSemaphoreCountModel struct {
+	WorkerID RawString `json:"workerId"`
+	Count    RawInt    `json:"count"`
+}
+
+// RelationsWorkerSemaphoreCount holds the relation data separately
+type RelationsWorkerSemaphoreCount struct {
+	Worker *WorkerModel `json:"worker,omitempty"`
+}
+
+func (r WorkerSemaphoreCountModel) Worker() (value *WorkerModel) {
+	if r.RelationsWorkerSemaphoreCount.Worker == nil {
+		panic("attempted to access worker but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsWorkerSemaphoreCount.Worker
+}
+
+// WorkerAssignEventModel represents the WorkerAssignEvent model and is a wrapper for accessing fields and methods
+type WorkerAssignEventModel struct {
+	InnerWorkerAssignEvent
+	RelationsWorkerAssignEvent
+}
+
+// InnerWorkerAssignEvent holds the actual data
+type InnerWorkerAssignEvent struct {
+	ID               BigInt `json:"id"`
+	WorkerID         string `json:"workerId"`
+	AssignedStepRuns *JSON  `json:"assignedStepRuns,omitempty"`
+}
+
+// RawWorkerAssignEventModel is a struct for WorkerAssignEvent when used in raw queries
+type RawWorkerAssignEventModel struct {
+	ID               RawBigInt `json:"id"`
+	WorkerID         RawString `json:"workerId"`
+	AssignedStepRuns *RawJSON  `json:"assignedStepRuns,omitempty"`
+}
+
+// RelationsWorkerAssignEvent holds the relation data separately
+type RelationsWorkerAssignEvent struct {
+	Worker *WorkerModel `json:"worker,omitempty"`
+}
+
+func (r WorkerAssignEventModel) Worker() (value *WorkerModel) {
+	if r.RelationsWorkerAssignEvent.Worker == nil {
+		panic("attempted to access worker but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsWorkerAssignEvent.Worker
+}
+
+func (r WorkerAssignEventModel) AssignedStepRuns() (value JSON, ok bool) {
+	if r.InnerWorkerAssignEvent.AssignedStepRuns == nil {
+		return value, false
+	}
+	return *r.InnerWorkerAssignEvent.AssignedStepRuns, true
 }
 
 // ServiceModel represents the Service model and is a wrapper for accessing fields and methods
@@ -155490,6 +155896,2125 @@ func (r queueItemQueryDesiredWorkerIDString) Field() queueItemPrismaFields {
 	return queueItemFieldDesiredWorkerID
 }
 
+// InternalQueueItem acts as a namespaces to access query methods for the InternalQueueItem model
+var InternalQueueItem = internalQueueItemQuery{}
+
+// internalQueueItemQuery exposes query functions for the internalQueueItem model
+type internalQueueItemQuery struct {
+
+	// ID
+	//
+	// @required
+	ID internalQueueItemQueryIDBigInt
+
+	// Queue
+	//
+	// @required
+	Queue internalQueueItemQueryQueueInternalQueue
+
+	// IsQueued
+	//
+	// @required
+	IsQueued internalQueueItemQueryIsQueuedBoolean
+
+	// Data
+	//
+	// @optional
+	Data internalQueueItemQueryDataJson
+
+	// TenantID
+	//
+	// @required
+	TenantID internalQueueItemQueryTenantIDString
+
+	// Priority
+	//
+	// @required
+	Priority internalQueueItemQueryPriorityInt
+
+	// UniqueKey
+	//
+	// @optional
+	UniqueKey internalQueueItemQueryUniqueKeyString
+}
+
+func (internalQueueItemQuery) Not(params ...InternalQueueItemWhereParam) internalQueueItemDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (internalQueueItemQuery) Or(params ...InternalQueueItemWhereParam) internalQueueItemDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (internalQueueItemQuery) And(params ...InternalQueueItemWhereParam) internalQueueItemDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (internalQueueItemQuery) TenantIDQueueUniqueKey(
+	_tenantID InternalQueueItemWithPrismaTenantIDWhereParam,
+
+	_queue InternalQueueItemWithPrismaQueueWhereParam,
+
+	_uniqueKey InternalQueueItemWithPrismaUniqueKeyWhereParam,
+) InternalQueueItemEqualsUniqueWhereParam {
+	var fields []builder.Field
+
+	fields = append(fields, _tenantID.field())
+	fields = append(fields, _queue.field())
+	fields = append(fields, _uniqueKey.field())
+
+	return internalQueueItemEqualsUniqueParam{
+		data: builder.Field{
+			Name:   "tenantId_queue_uniqueKey",
+			Fields: builder.TransformEquals(fields),
+		},
+	}
+}
+
+// base struct
+type internalQueueItemQueryIDBigInt struct{}
+
+// Set the required value of ID
+func (r internalQueueItemQueryIDBigInt) Set(value BigInt) internalQueueItemSetParam {
+
+	return internalQueueItemSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r internalQueueItemQueryIDBigInt) SetIfPresent(value *BigInt) internalQueueItemSetParam {
+	if value == nil {
+		return internalQueueItemSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the required value of ID
+func (r internalQueueItemQueryIDBigInt) Increment(value BigInt) internalQueueItemSetParam {
+	return internalQueueItemSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryIDBigInt) IncrementIfPresent(value *BigInt) internalQueueItemSetParam {
+	if value == nil {
+		return internalQueueItemSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the required value of ID
+func (r internalQueueItemQueryIDBigInt) Decrement(value BigInt) internalQueueItemSetParam {
+	return internalQueueItemSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryIDBigInt) DecrementIfPresent(value *BigInt) internalQueueItemSetParam {
+	if value == nil {
+		return internalQueueItemSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the required value of ID
+func (r internalQueueItemQueryIDBigInt) Multiply(value BigInt) internalQueueItemSetParam {
+	return internalQueueItemSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryIDBigInt) MultiplyIfPresent(value *BigInt) internalQueueItemSetParam {
+	if value == nil {
+		return internalQueueItemSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the required value of ID
+func (r internalQueueItemQueryIDBigInt) Divide(value BigInt) internalQueueItemSetParam {
+	return internalQueueItemSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryIDBigInt) DivideIfPresent(value *BigInt) internalQueueItemSetParam {
+	if value == nil {
+		return internalQueueItemSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r internalQueueItemQueryIDBigInt) Equals(value BigInt) internalQueueItemWithPrismaIDEqualsUniqueParam {
+
+	return internalQueueItemWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryIDBigInt) EqualsIfPresent(value *BigInt) internalQueueItemWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return internalQueueItemWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r internalQueueItemQueryIDBigInt) Order(direction SortOrder) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r internalQueueItemQueryIDBigInt) Cursor(cursor BigInt) internalQueueItemCursorParam {
+	return internalQueueItemCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r internalQueueItemQueryIDBigInt) In(value []BigInt) internalQueueItemParamUnique {
+	return internalQueueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryIDBigInt) InIfPresent(value []BigInt) internalQueueItemParamUnique {
+	if value == nil {
+		return internalQueueItemParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r internalQueueItemQueryIDBigInt) NotIn(value []BigInt) internalQueueItemParamUnique {
+	return internalQueueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryIDBigInt) NotInIfPresent(value []BigInt) internalQueueItemParamUnique {
+	if value == nil {
+		return internalQueueItemParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r internalQueueItemQueryIDBigInt) Lt(value BigInt) internalQueueItemParamUnique {
+	return internalQueueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryIDBigInt) LtIfPresent(value *BigInt) internalQueueItemParamUnique {
+	if value == nil {
+		return internalQueueItemParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r internalQueueItemQueryIDBigInt) Lte(value BigInt) internalQueueItemParamUnique {
+	return internalQueueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryIDBigInt) LteIfPresent(value *BigInt) internalQueueItemParamUnique {
+	if value == nil {
+		return internalQueueItemParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r internalQueueItemQueryIDBigInt) Gt(value BigInt) internalQueueItemParamUnique {
+	return internalQueueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryIDBigInt) GtIfPresent(value *BigInt) internalQueueItemParamUnique {
+	if value == nil {
+		return internalQueueItemParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r internalQueueItemQueryIDBigInt) Gte(value BigInt) internalQueueItemParamUnique {
+	return internalQueueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryIDBigInt) GteIfPresent(value *BigInt) internalQueueItemParamUnique {
+	if value == nil {
+		return internalQueueItemParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r internalQueueItemQueryIDBigInt) Not(value BigInt) internalQueueItemParamUnique {
+	return internalQueueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryIDBigInt) NotIfPresent(value *BigInt) internalQueueItemParamUnique {
+	if value == nil {
+		return internalQueueItemParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+func (r internalQueueItemQueryIDBigInt) Field() internalQueueItemPrismaFields {
+	return internalQueueItemFieldID
+}
+
+// base struct
+type internalQueueItemQueryQueueInternalQueue struct{}
+
+// Set the required value of Queue
+func (r internalQueueItemQueryQueueInternalQueue) Set(value InternalQueue) internalQueueItemWithPrismaQueueSetParam {
+
+	return internalQueueItemWithPrismaQueueSetParam{
+		data: builder.Field{
+			Name:  "queue",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Queue dynamically
+func (r internalQueueItemQueryQueueInternalQueue) SetIfPresent(value *InternalQueue) internalQueueItemWithPrismaQueueSetParam {
+	if value == nil {
+		return internalQueueItemWithPrismaQueueSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r internalQueueItemQueryQueueInternalQueue) Equals(value InternalQueue) internalQueueItemWithPrismaQueueEqualsParam {
+
+	return internalQueueItemWithPrismaQueueEqualsParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryQueueInternalQueue) EqualsIfPresent(value *InternalQueue) internalQueueItemWithPrismaQueueEqualsParam {
+	if value == nil {
+		return internalQueueItemWithPrismaQueueEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r internalQueueItemQueryQueueInternalQueue) Order(direction SortOrder) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name:  "queue",
+			Value: direction,
+		},
+	}
+}
+
+func (r internalQueueItemQueryQueueInternalQueue) Cursor(cursor InternalQueue) internalQueueItemCursorParam {
+	return internalQueueItemCursorParam{
+		data: builder.Field{
+			Name:  "queue",
+			Value: cursor,
+		},
+	}
+}
+
+func (r internalQueueItemQueryQueueInternalQueue) In(value []InternalQueue) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryQueueInternalQueue) InIfPresent(value []InternalQueue) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r internalQueueItemQueryQueueInternalQueue) NotIn(value []InternalQueue) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryQueueInternalQueue) NotInIfPresent(value []InternalQueue) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r internalQueueItemQueryQueueInternalQueue) Not(value InternalQueue) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "queue",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryQueueInternalQueue) NotIfPresent(value *InternalQueue) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+func (r internalQueueItemQueryQueueInternalQueue) Field() internalQueueItemPrismaFields {
+	return internalQueueItemFieldQueue
+}
+
+// base struct
+type internalQueueItemQueryIsQueuedBoolean struct{}
+
+// Set the required value of IsQueued
+func (r internalQueueItemQueryIsQueuedBoolean) Set(value bool) internalQueueItemWithPrismaIsQueuedSetParam {
+
+	return internalQueueItemWithPrismaIsQueuedSetParam{
+		data: builder.Field{
+			Name:  "isQueued",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of IsQueued dynamically
+func (r internalQueueItemQueryIsQueuedBoolean) SetIfPresent(value *Boolean) internalQueueItemWithPrismaIsQueuedSetParam {
+	if value == nil {
+		return internalQueueItemWithPrismaIsQueuedSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r internalQueueItemQueryIsQueuedBoolean) Equals(value bool) internalQueueItemWithPrismaIsQueuedEqualsParam {
+
+	return internalQueueItemWithPrismaIsQueuedEqualsParam{
+		data: builder.Field{
+			Name: "isQueued",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryIsQueuedBoolean) EqualsIfPresent(value *bool) internalQueueItemWithPrismaIsQueuedEqualsParam {
+	if value == nil {
+		return internalQueueItemWithPrismaIsQueuedEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r internalQueueItemQueryIsQueuedBoolean) Order(direction SortOrder) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name:  "isQueued",
+			Value: direction,
+		},
+	}
+}
+
+func (r internalQueueItemQueryIsQueuedBoolean) Cursor(cursor bool) internalQueueItemCursorParam {
+	return internalQueueItemCursorParam{
+		data: builder.Field{
+			Name:  "isQueued",
+			Value: cursor,
+		},
+	}
+}
+
+func (r internalQueueItemQueryIsQueuedBoolean) Field() internalQueueItemPrismaFields {
+	return internalQueueItemFieldIsQueued
+}
+
+// base struct
+type internalQueueItemQueryDataJson struct{}
+
+// Set the optional value of Data
+func (r internalQueueItemQueryDataJson) Set(value JSON) internalQueueItemSetParam {
+
+	return internalQueueItemSetParam{
+		data: builder.Field{
+			Name:  "data",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Data dynamically
+func (r internalQueueItemQueryDataJson) SetIfPresent(value *JSON) internalQueueItemSetParam {
+	if value == nil {
+		return internalQueueItemSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of Data dynamically
+func (r internalQueueItemQueryDataJson) SetOptional(value *JSON) internalQueueItemSetParam {
+	if value == nil {
+
+		var v *JSON
+		return internalQueueItemSetParam{
+			data: builder.Field{
+				Name:  "data",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r internalQueueItemQueryDataJson) Equals(value JSON) internalQueueItemWithPrismaDataEqualsParam {
+
+	return internalQueueItemWithPrismaDataEqualsParam{
+		data: builder.Field{
+			Name: "data",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryDataJson) EqualsIfPresent(value *JSON) internalQueueItemWithPrismaDataEqualsParam {
+	if value == nil {
+		return internalQueueItemWithPrismaDataEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r internalQueueItemQueryDataJson) EqualsOptional(value *JSON) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "data",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryDataJson) IsNull() internalQueueItemDefaultParam {
+	var str *string = nil
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "data",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryDataJson) Order(direction SortOrder) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name:  "data",
+			Value: direction,
+		},
+	}
+}
+
+func (r internalQueueItemQueryDataJson) Cursor(cursor JSON) internalQueueItemCursorParam {
+	return internalQueueItemCursorParam{
+		data: builder.Field{
+			Name:  "data",
+			Value: cursor,
+		},
+	}
+}
+
+func (r internalQueueItemQueryDataJson) Path(value []string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "data",
+			Fields: []builder.Field{
+				{
+					Name:  "path",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryDataJson) PathIfPresent(value []string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Path(value)
+}
+
+func (r internalQueueItemQueryDataJson) StringContains(value string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "data",
+			Fields: []builder.Field{
+				{
+					Name:  "string_contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryDataJson) StringContainsIfPresent(value *string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.StringContains(*value)
+}
+
+func (r internalQueueItemQueryDataJson) StringStartsWith(value string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "data",
+			Fields: []builder.Field{
+				{
+					Name:  "string_starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryDataJson) StringStartsWithIfPresent(value *string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.StringStartsWith(*value)
+}
+
+func (r internalQueueItemQueryDataJson) StringEndsWith(value string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "data",
+			Fields: []builder.Field{
+				{
+					Name:  "string_ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryDataJson) StringEndsWithIfPresent(value *string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.StringEndsWith(*value)
+}
+
+func (r internalQueueItemQueryDataJson) ArrayContains(value JSON) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "data",
+			Fields: []builder.Field{
+				{
+					Name:  "array_contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryDataJson) ArrayContainsIfPresent(value *JSON) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.ArrayContains(*value)
+}
+
+func (r internalQueueItemQueryDataJson) ArrayStartsWith(value JSON) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "data",
+			Fields: []builder.Field{
+				{
+					Name:  "array_starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryDataJson) ArrayStartsWithIfPresent(value *JSON) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.ArrayStartsWith(*value)
+}
+
+func (r internalQueueItemQueryDataJson) ArrayEndsWith(value JSON) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "data",
+			Fields: []builder.Field{
+				{
+					Name:  "array_ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryDataJson) ArrayEndsWithIfPresent(value *JSON) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.ArrayEndsWith(*value)
+}
+
+func (r internalQueueItemQueryDataJson) Lt(value JSON) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "data",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryDataJson) LtIfPresent(value *JSON) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r internalQueueItemQueryDataJson) Lte(value JSON) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "data",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryDataJson) LteIfPresent(value *JSON) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r internalQueueItemQueryDataJson) Gt(value JSON) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "data",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryDataJson) GtIfPresent(value *JSON) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r internalQueueItemQueryDataJson) Gte(value JSON) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "data",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryDataJson) GteIfPresent(value *JSON) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r internalQueueItemQueryDataJson) Not(value JSONNullValueFilter) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "data",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryDataJson) NotIfPresent(value *JSONNullValueFilter) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+func (r internalQueueItemQueryDataJson) Field() internalQueueItemPrismaFields {
+	return internalQueueItemFieldData
+}
+
+// base struct
+type internalQueueItemQueryTenantIDString struct{}
+
+// Set the required value of TenantID
+func (r internalQueueItemQueryTenantIDString) Set(value string) internalQueueItemWithPrismaTenantIDSetParam {
+
+	return internalQueueItemWithPrismaTenantIDSetParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of TenantID dynamically
+func (r internalQueueItemQueryTenantIDString) SetIfPresent(value *String) internalQueueItemWithPrismaTenantIDSetParam {
+	if value == nil {
+		return internalQueueItemWithPrismaTenantIDSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r internalQueueItemQueryTenantIDString) Equals(value string) internalQueueItemWithPrismaTenantIDEqualsParam {
+
+	return internalQueueItemWithPrismaTenantIDEqualsParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryTenantIDString) EqualsIfPresent(value *string) internalQueueItemWithPrismaTenantIDEqualsParam {
+	if value == nil {
+		return internalQueueItemWithPrismaTenantIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r internalQueueItemQueryTenantIDString) Order(direction SortOrder) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: direction,
+		},
+	}
+}
+
+func (r internalQueueItemQueryTenantIDString) Cursor(cursor string) internalQueueItemCursorParam {
+	return internalQueueItemCursorParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r internalQueueItemQueryTenantIDString) In(value []string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryTenantIDString) InIfPresent(value []string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r internalQueueItemQueryTenantIDString) NotIn(value []string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryTenantIDString) NotInIfPresent(value []string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r internalQueueItemQueryTenantIDString) Lt(value string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryTenantIDString) LtIfPresent(value *string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r internalQueueItemQueryTenantIDString) Lte(value string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryTenantIDString) LteIfPresent(value *string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r internalQueueItemQueryTenantIDString) Gt(value string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryTenantIDString) GtIfPresent(value *string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r internalQueueItemQueryTenantIDString) Gte(value string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryTenantIDString) GteIfPresent(value *string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r internalQueueItemQueryTenantIDString) Contains(value string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryTenantIDString) ContainsIfPresent(value *string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r internalQueueItemQueryTenantIDString) StartsWith(value string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryTenantIDString) StartsWithIfPresent(value *string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r internalQueueItemQueryTenantIDString) EndsWith(value string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryTenantIDString) EndsWithIfPresent(value *string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r internalQueueItemQueryTenantIDString) Mode(value QueryMode) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryTenantIDString) ModeIfPresent(value *QueryMode) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r internalQueueItemQueryTenantIDString) Not(value string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryTenantIDString) NotIfPresent(value *string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r internalQueueItemQueryTenantIDString) HasPrefix(value string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r internalQueueItemQueryTenantIDString) HasPrefixIfPresent(value *string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r internalQueueItemQueryTenantIDString) HasSuffix(value string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r internalQueueItemQueryTenantIDString) HasSuffixIfPresent(value *string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r internalQueueItemQueryTenantIDString) Field() internalQueueItemPrismaFields {
+	return internalQueueItemFieldTenantID
+}
+
+// base struct
+type internalQueueItemQueryPriorityInt struct{}
+
+// Set the required value of Priority
+func (r internalQueueItemQueryPriorityInt) Set(value int) internalQueueItemSetParam {
+
+	return internalQueueItemSetParam{
+		data: builder.Field{
+			Name:  "priority",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Priority dynamically
+func (r internalQueueItemQueryPriorityInt) SetIfPresent(value *Int) internalQueueItemSetParam {
+	if value == nil {
+		return internalQueueItemSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the required value of Priority
+func (r internalQueueItemQueryPriorityInt) Increment(value int) internalQueueItemSetParam {
+	return internalQueueItemSetParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryPriorityInt) IncrementIfPresent(value *int) internalQueueItemSetParam {
+	if value == nil {
+		return internalQueueItemSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the required value of Priority
+func (r internalQueueItemQueryPriorityInt) Decrement(value int) internalQueueItemSetParam {
+	return internalQueueItemSetParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryPriorityInt) DecrementIfPresent(value *int) internalQueueItemSetParam {
+	if value == nil {
+		return internalQueueItemSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the required value of Priority
+func (r internalQueueItemQueryPriorityInt) Multiply(value int) internalQueueItemSetParam {
+	return internalQueueItemSetParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryPriorityInt) MultiplyIfPresent(value *int) internalQueueItemSetParam {
+	if value == nil {
+		return internalQueueItemSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the required value of Priority
+func (r internalQueueItemQueryPriorityInt) Divide(value int) internalQueueItemSetParam {
+	return internalQueueItemSetParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryPriorityInt) DivideIfPresent(value *int) internalQueueItemSetParam {
+	if value == nil {
+		return internalQueueItemSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r internalQueueItemQueryPriorityInt) Equals(value int) internalQueueItemWithPrismaPriorityEqualsParam {
+
+	return internalQueueItemWithPrismaPriorityEqualsParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryPriorityInt) EqualsIfPresent(value *int) internalQueueItemWithPrismaPriorityEqualsParam {
+	if value == nil {
+		return internalQueueItemWithPrismaPriorityEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r internalQueueItemQueryPriorityInt) Order(direction SortOrder) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name:  "priority",
+			Value: direction,
+		},
+	}
+}
+
+func (r internalQueueItemQueryPriorityInt) Cursor(cursor int) internalQueueItemCursorParam {
+	return internalQueueItemCursorParam{
+		data: builder.Field{
+			Name:  "priority",
+			Value: cursor,
+		},
+	}
+}
+
+func (r internalQueueItemQueryPriorityInt) In(value []int) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryPriorityInt) InIfPresent(value []int) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r internalQueueItemQueryPriorityInt) NotIn(value []int) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryPriorityInt) NotInIfPresent(value []int) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r internalQueueItemQueryPriorityInt) Lt(value int) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryPriorityInt) LtIfPresent(value *int) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r internalQueueItemQueryPriorityInt) Lte(value int) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryPriorityInt) LteIfPresent(value *int) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r internalQueueItemQueryPriorityInt) Gt(value int) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryPriorityInt) GtIfPresent(value *int) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r internalQueueItemQueryPriorityInt) Gte(value int) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryPriorityInt) GteIfPresent(value *int) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r internalQueueItemQueryPriorityInt) Not(value int) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryPriorityInt) NotIfPresent(value *int) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r internalQueueItemQueryPriorityInt) LT(value int) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r internalQueueItemQueryPriorityInt) LTIfPresent(value *int) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.LT(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r internalQueueItemQueryPriorityInt) LTE(value int) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r internalQueueItemQueryPriorityInt) LTEIfPresent(value *int) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.LTE(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r internalQueueItemQueryPriorityInt) GT(value int) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r internalQueueItemQueryPriorityInt) GTIfPresent(value *int) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.GT(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r internalQueueItemQueryPriorityInt) GTE(value int) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "priority",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r internalQueueItemQueryPriorityInt) GTEIfPresent(value *int) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.GTE(*value)
+}
+
+func (r internalQueueItemQueryPriorityInt) Field() internalQueueItemPrismaFields {
+	return internalQueueItemFieldPriority
+}
+
+// base struct
+type internalQueueItemQueryUniqueKeyString struct{}
+
+// Set the optional value of UniqueKey
+func (r internalQueueItemQueryUniqueKeyString) Set(value string) internalQueueItemSetParam {
+
+	return internalQueueItemSetParam{
+		data: builder.Field{
+			Name:  "uniqueKey",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of UniqueKey dynamically
+func (r internalQueueItemQueryUniqueKeyString) SetIfPresent(value *String) internalQueueItemSetParam {
+	if value == nil {
+		return internalQueueItemSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of UniqueKey dynamically
+func (r internalQueueItemQueryUniqueKeyString) SetOptional(value *String) internalQueueItemSetParam {
+	if value == nil {
+
+		var v *string
+		return internalQueueItemSetParam{
+			data: builder.Field{
+				Name:  "uniqueKey",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r internalQueueItemQueryUniqueKeyString) Equals(value string) internalQueueItemWithPrismaUniqueKeyEqualsParam {
+
+	return internalQueueItemWithPrismaUniqueKeyEqualsParam{
+		data: builder.Field{
+			Name: "uniqueKey",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryUniqueKeyString) EqualsIfPresent(value *string) internalQueueItemWithPrismaUniqueKeyEqualsParam {
+	if value == nil {
+		return internalQueueItemWithPrismaUniqueKeyEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r internalQueueItemQueryUniqueKeyString) EqualsOptional(value *String) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "uniqueKey",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryUniqueKeyString) IsNull() internalQueueItemDefaultParam {
+	var str *string = nil
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "uniqueKey",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryUniqueKeyString) Order(direction SortOrder) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name:  "uniqueKey",
+			Value: direction,
+		},
+	}
+}
+
+func (r internalQueueItemQueryUniqueKeyString) Cursor(cursor string) internalQueueItemCursorParam {
+	return internalQueueItemCursorParam{
+		data: builder.Field{
+			Name:  "uniqueKey",
+			Value: cursor,
+		},
+	}
+}
+
+func (r internalQueueItemQueryUniqueKeyString) In(value []string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "uniqueKey",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryUniqueKeyString) InIfPresent(value []string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r internalQueueItemQueryUniqueKeyString) NotIn(value []string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "uniqueKey",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryUniqueKeyString) NotInIfPresent(value []string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r internalQueueItemQueryUniqueKeyString) Lt(value string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "uniqueKey",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryUniqueKeyString) LtIfPresent(value *string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r internalQueueItemQueryUniqueKeyString) Lte(value string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "uniqueKey",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryUniqueKeyString) LteIfPresent(value *string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r internalQueueItemQueryUniqueKeyString) Gt(value string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "uniqueKey",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryUniqueKeyString) GtIfPresent(value *string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r internalQueueItemQueryUniqueKeyString) Gte(value string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "uniqueKey",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryUniqueKeyString) GteIfPresent(value *string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r internalQueueItemQueryUniqueKeyString) Contains(value string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "uniqueKey",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryUniqueKeyString) ContainsIfPresent(value *string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r internalQueueItemQueryUniqueKeyString) StartsWith(value string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "uniqueKey",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryUniqueKeyString) StartsWithIfPresent(value *string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r internalQueueItemQueryUniqueKeyString) EndsWith(value string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "uniqueKey",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryUniqueKeyString) EndsWithIfPresent(value *string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r internalQueueItemQueryUniqueKeyString) Mode(value QueryMode) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "uniqueKey",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryUniqueKeyString) ModeIfPresent(value *QueryMode) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r internalQueueItemQueryUniqueKeyString) Not(value string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "uniqueKey",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r internalQueueItemQueryUniqueKeyString) NotIfPresent(value *string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r internalQueueItemQueryUniqueKeyString) HasPrefix(value string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "uniqueKey",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r internalQueueItemQueryUniqueKeyString) HasPrefixIfPresent(value *string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r internalQueueItemQueryUniqueKeyString) HasSuffix(value string) internalQueueItemDefaultParam {
+	return internalQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "uniqueKey",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r internalQueueItemQueryUniqueKeyString) HasSuffixIfPresent(value *string) internalQueueItemDefaultParam {
+	if value == nil {
+		return internalQueueItemDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r internalQueueItemQueryUniqueKeyString) Field() internalQueueItemPrismaFields {
+	return internalQueueItemFieldUniqueKey
+}
+
 // StepRunEvent acts as a namespaces to access query methods for the StepRunEvent model
 var StepRunEvent = stepRunEventQuery{}
 
@@ -171131,6 +173656,10 @@ type workerQuery struct {
 
 	Slots workerQuerySlotsRelations
 
+	SemaphoreCount workerQuerySemaphoreCountRelations
+
+	AssignedEvents workerQueryAssignedEventsRelations
+
 	Webhook workerQueryWebhookRelations
 
 	// WebhookID
@@ -176191,6 +178720,266 @@ func (r workerQuerySlotsWorkerSemaphoreSlot) Field() workerPrismaFields {
 }
 
 // base struct
+type workerQuerySemaphoreCountWorkerSemaphoreCount struct{}
+
+type workerQuerySemaphoreCountRelations struct{}
+
+// Worker -> SemaphoreCount
+//
+// @relation
+// @optional
+func (workerQuerySemaphoreCountRelations) Where(
+	params ...WorkerSemaphoreCountWhereParam,
+) workerDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "semaphoreCount",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (workerQuerySemaphoreCountRelations) Fetch() workerToSemaphoreCountFindUnique {
+	var v workerToSemaphoreCountFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "semaphoreCount"
+	v.query.Outputs = workerSemaphoreCountOutput
+
+	return v
+}
+
+func (r workerQuerySemaphoreCountRelations) Link(
+	params WorkerSemaphoreCountWhereParam,
+) workerSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return workerSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return workerSetParam{
+		data: builder.Field{
+			Name: "semaphoreCount",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r workerQuerySemaphoreCountRelations) Unlink() workerSetParam {
+	var v workerSetParam
+
+	v = workerSetParam{
+		data: builder.Field{
+			Name: "semaphoreCount",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r workerQuerySemaphoreCountWorkerSemaphoreCount) Field() workerPrismaFields {
+	return workerFieldSemaphoreCount
+}
+
+// base struct
+type workerQueryAssignedEventsWorkerAssignEvent struct{}
+
+type workerQueryAssignedEventsRelations struct{}
+
+// Worker -> AssignedEvents
+//
+// @relation
+// @required
+func (workerQueryAssignedEventsRelations) Some(
+	params ...WorkerAssignEventWhereParam,
+) workerDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "assignedEvents",
+			Fields: []builder.Field{
+				{
+					Name:   "some",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Worker -> AssignedEvents
+//
+// @relation
+// @required
+func (workerQueryAssignedEventsRelations) Every(
+	params ...WorkerAssignEventWhereParam,
+) workerDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "assignedEvents",
+			Fields: []builder.Field{
+				{
+					Name:   "every",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// Worker -> AssignedEvents
+//
+// @relation
+// @required
+func (workerQueryAssignedEventsRelations) None(
+	params ...WorkerAssignEventWhereParam,
+) workerDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "assignedEvents",
+			Fields: []builder.Field{
+				{
+					Name:   "none",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (workerQueryAssignedEventsRelations) Fetch(
+
+	params ...WorkerAssignEventWhereParam,
+
+) workerToAssignedEventsFindMany {
+	var v workerToAssignedEventsFindMany
+
+	v.query.Operation = "query"
+	v.query.Method = "assignedEvents"
+	v.query.Outputs = workerAssignEventOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r workerQueryAssignedEventsRelations) Link(
+	params ...WorkerAssignEventWhereParam,
+) workerSetParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workerSetParam{
+		data: builder.Field{
+			Name: "assignedEvents",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+
+					List:     true,
+					WrapList: true,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryAssignedEventsRelations) Unlink(
+	params ...WorkerAssignEventWhereParam,
+) workerSetParam {
+	var v workerSetParam
+
+	var fields []builder.Field
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+	v = workerSetParam{
+		data: builder.Field{
+			Name: "assignedEvents",
+			Fields: []builder.Field{
+				{
+					Name:     "disconnect",
+					List:     true,
+					WrapList: true,
+					Fields:   builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r workerQueryAssignedEventsWorkerAssignEvent) Field() workerPrismaFields {
+	return workerFieldAssignedEvents
+}
+
+// base struct
 type workerQueryWebhookWebhookWorker struct{}
 
 type workerQueryWebhookRelations struct{}
@@ -179000,6 +181789,2087 @@ func (r workerSemaphoreSlotQueryStepRunIDString) HasSuffixIfPresent(value *strin
 
 func (r workerSemaphoreSlotQueryStepRunIDString) Field() workerSemaphoreSlotPrismaFields {
 	return workerSemaphoreSlotFieldStepRunID
+}
+
+// WorkerSemaphoreCount acts as a namespaces to access query methods for the WorkerSemaphoreCount model
+var WorkerSemaphoreCount = workerSemaphoreCountQuery{}
+
+// workerSemaphoreCountQuery exposes query functions for the workerSemaphoreCount model
+type workerSemaphoreCountQuery struct {
+	Worker workerSemaphoreCountQueryWorkerRelations
+
+	// WorkerID
+	//
+	// @required
+	WorkerID workerSemaphoreCountQueryWorkerIDString
+
+	// Count
+	//
+	// @required
+	Count workerSemaphoreCountQueryCountInt
+}
+
+func (workerSemaphoreCountQuery) Not(params ...WorkerSemaphoreCountWhereParam) workerSemaphoreCountDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workerSemaphoreCountDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (workerSemaphoreCountQuery) Or(params ...WorkerSemaphoreCountWhereParam) workerSemaphoreCountDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workerSemaphoreCountDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (workerSemaphoreCountQuery) And(params ...WorkerSemaphoreCountWhereParam) workerSemaphoreCountDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workerSemaphoreCountDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+// base struct
+type workerSemaphoreCountQueryWorkerWorker struct{}
+
+type workerSemaphoreCountQueryWorkerRelations struct{}
+
+// WorkerSemaphoreCount -> Worker
+//
+// @relation
+// @required
+func (workerSemaphoreCountQueryWorkerRelations) Where(
+	params ...WorkerWhereParam,
+) workerSemaphoreCountDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workerSemaphoreCountDefaultParam{
+		data: builder.Field{
+			Name: "worker",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (workerSemaphoreCountQueryWorkerRelations) Fetch() workerSemaphoreCountToWorkerFindUnique {
+	var v workerSemaphoreCountToWorkerFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "worker"
+	v.query.Outputs = workerOutput
+
+	return v
+}
+
+func (r workerSemaphoreCountQueryWorkerRelations) Link(
+	params WorkerWhereParam,
+) workerSemaphoreCountWithPrismaWorkerSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return workerSemaphoreCountWithPrismaWorkerSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return workerSemaphoreCountWithPrismaWorkerSetParam{
+		data: builder.Field{
+			Name: "worker",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryWorkerRelations) Unlink() workerSemaphoreCountWithPrismaWorkerSetParam {
+	var v workerSemaphoreCountWithPrismaWorkerSetParam
+
+	v = workerSemaphoreCountWithPrismaWorkerSetParam{
+		data: builder.Field{
+			Name: "worker",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r workerSemaphoreCountQueryWorkerWorker) Field() workerSemaphoreCountPrismaFields {
+	return workerSemaphoreCountFieldWorker
+}
+
+// base struct
+type workerSemaphoreCountQueryWorkerIDString struct{}
+
+// Set the required value of WorkerID
+func (r workerSemaphoreCountQueryWorkerIDString) Set(value string) workerSemaphoreCountSetParam {
+
+	return workerSemaphoreCountSetParam{
+		data: builder.Field{
+			Name:  "workerId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of WorkerID dynamically
+func (r workerSemaphoreCountQueryWorkerIDString) SetIfPresent(value *String) workerSemaphoreCountSetParam {
+	if value == nil {
+		return workerSemaphoreCountSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) Equals(value string) workerSemaphoreCountWithPrismaWorkerIDEqualsUniqueParam {
+
+	return workerSemaphoreCountWithPrismaWorkerIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) EqualsIfPresent(value *string) workerSemaphoreCountWithPrismaWorkerIDEqualsUniqueParam {
+	if value == nil {
+		return workerSemaphoreCountWithPrismaWorkerIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) Order(direction SortOrder) workerSemaphoreCountDefaultParam {
+	return workerSemaphoreCountDefaultParam{
+		data: builder.Field{
+			Name:  "workerId",
+			Value: direction,
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) Cursor(cursor string) workerSemaphoreCountCursorParam {
+	return workerSemaphoreCountCursorParam{
+		data: builder.Field{
+			Name:  "workerId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) In(value []string) workerSemaphoreCountParamUnique {
+	return workerSemaphoreCountParamUnique{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) InIfPresent(value []string) workerSemaphoreCountParamUnique {
+	if value == nil {
+		return workerSemaphoreCountParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) NotIn(value []string) workerSemaphoreCountParamUnique {
+	return workerSemaphoreCountParamUnique{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) NotInIfPresent(value []string) workerSemaphoreCountParamUnique {
+	if value == nil {
+		return workerSemaphoreCountParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) Lt(value string) workerSemaphoreCountParamUnique {
+	return workerSemaphoreCountParamUnique{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) LtIfPresent(value *string) workerSemaphoreCountParamUnique {
+	if value == nil {
+		return workerSemaphoreCountParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) Lte(value string) workerSemaphoreCountParamUnique {
+	return workerSemaphoreCountParamUnique{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) LteIfPresent(value *string) workerSemaphoreCountParamUnique {
+	if value == nil {
+		return workerSemaphoreCountParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) Gt(value string) workerSemaphoreCountParamUnique {
+	return workerSemaphoreCountParamUnique{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) GtIfPresent(value *string) workerSemaphoreCountParamUnique {
+	if value == nil {
+		return workerSemaphoreCountParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) Gte(value string) workerSemaphoreCountParamUnique {
+	return workerSemaphoreCountParamUnique{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) GteIfPresent(value *string) workerSemaphoreCountParamUnique {
+	if value == nil {
+		return workerSemaphoreCountParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) Contains(value string) workerSemaphoreCountParamUnique {
+	return workerSemaphoreCountParamUnique{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) ContainsIfPresent(value *string) workerSemaphoreCountParamUnique {
+	if value == nil {
+		return workerSemaphoreCountParamUnique{}
+	}
+	return r.Contains(*value)
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) StartsWith(value string) workerSemaphoreCountParamUnique {
+	return workerSemaphoreCountParamUnique{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) StartsWithIfPresent(value *string) workerSemaphoreCountParamUnique {
+	if value == nil {
+		return workerSemaphoreCountParamUnique{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) EndsWith(value string) workerSemaphoreCountParamUnique {
+	return workerSemaphoreCountParamUnique{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) EndsWithIfPresent(value *string) workerSemaphoreCountParamUnique {
+	if value == nil {
+		return workerSemaphoreCountParamUnique{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) Mode(value QueryMode) workerSemaphoreCountParamUnique {
+	return workerSemaphoreCountParamUnique{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) ModeIfPresent(value *QueryMode) workerSemaphoreCountParamUnique {
+	if value == nil {
+		return workerSemaphoreCountParamUnique{}
+	}
+	return r.Mode(*value)
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) Not(value string) workerSemaphoreCountParamUnique {
+	return workerSemaphoreCountParamUnique{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) NotIfPresent(value *string) workerSemaphoreCountParamUnique {
+	if value == nil {
+		return workerSemaphoreCountParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r workerSemaphoreCountQueryWorkerIDString) HasPrefix(value string) workerSemaphoreCountParamUnique {
+	return workerSemaphoreCountParamUnique{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r workerSemaphoreCountQueryWorkerIDString) HasPrefixIfPresent(value *string) workerSemaphoreCountParamUnique {
+	if value == nil {
+		return workerSemaphoreCountParamUnique{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r workerSemaphoreCountQueryWorkerIDString) HasSuffix(value string) workerSemaphoreCountParamUnique {
+	return workerSemaphoreCountParamUnique{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r workerSemaphoreCountQueryWorkerIDString) HasSuffixIfPresent(value *string) workerSemaphoreCountParamUnique {
+	if value == nil {
+		return workerSemaphoreCountParamUnique{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r workerSemaphoreCountQueryWorkerIDString) Field() workerSemaphoreCountPrismaFields {
+	return workerSemaphoreCountFieldWorkerID
+}
+
+// base struct
+type workerSemaphoreCountQueryCountInt struct{}
+
+// Set the required value of Count
+func (r workerSemaphoreCountQueryCountInt) Set(value int) workerSemaphoreCountWithPrismaCountSetParam {
+
+	return workerSemaphoreCountWithPrismaCountSetParam{
+		data: builder.Field{
+			Name:  "count",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Count dynamically
+func (r workerSemaphoreCountQueryCountInt) SetIfPresent(value *Int) workerSemaphoreCountWithPrismaCountSetParam {
+	if value == nil {
+		return workerSemaphoreCountWithPrismaCountSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the required value of Count
+func (r workerSemaphoreCountQueryCountInt) Increment(value int) workerSemaphoreCountWithPrismaCountSetParam {
+	return workerSemaphoreCountWithPrismaCountSetParam{
+		data: builder.Field{
+			Name: "count",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryCountInt) IncrementIfPresent(value *int) workerSemaphoreCountWithPrismaCountSetParam {
+	if value == nil {
+		return workerSemaphoreCountWithPrismaCountSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the required value of Count
+func (r workerSemaphoreCountQueryCountInt) Decrement(value int) workerSemaphoreCountWithPrismaCountSetParam {
+	return workerSemaphoreCountWithPrismaCountSetParam{
+		data: builder.Field{
+			Name: "count",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryCountInt) DecrementIfPresent(value *int) workerSemaphoreCountWithPrismaCountSetParam {
+	if value == nil {
+		return workerSemaphoreCountWithPrismaCountSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the required value of Count
+func (r workerSemaphoreCountQueryCountInt) Multiply(value int) workerSemaphoreCountWithPrismaCountSetParam {
+	return workerSemaphoreCountWithPrismaCountSetParam{
+		data: builder.Field{
+			Name: "count",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryCountInt) MultiplyIfPresent(value *int) workerSemaphoreCountWithPrismaCountSetParam {
+	if value == nil {
+		return workerSemaphoreCountWithPrismaCountSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the required value of Count
+func (r workerSemaphoreCountQueryCountInt) Divide(value int) workerSemaphoreCountWithPrismaCountSetParam {
+	return workerSemaphoreCountWithPrismaCountSetParam{
+		data: builder.Field{
+			Name: "count",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryCountInt) DivideIfPresent(value *int) workerSemaphoreCountWithPrismaCountSetParam {
+	if value == nil {
+		return workerSemaphoreCountWithPrismaCountSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r workerSemaphoreCountQueryCountInt) Equals(value int) workerSemaphoreCountWithPrismaCountEqualsParam {
+
+	return workerSemaphoreCountWithPrismaCountEqualsParam{
+		data: builder.Field{
+			Name: "count",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryCountInt) EqualsIfPresent(value *int) workerSemaphoreCountWithPrismaCountEqualsParam {
+	if value == nil {
+		return workerSemaphoreCountWithPrismaCountEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workerSemaphoreCountQueryCountInt) Order(direction SortOrder) workerSemaphoreCountDefaultParam {
+	return workerSemaphoreCountDefaultParam{
+		data: builder.Field{
+			Name:  "count",
+			Value: direction,
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryCountInt) Cursor(cursor int) workerSemaphoreCountCursorParam {
+	return workerSemaphoreCountCursorParam{
+		data: builder.Field{
+			Name:  "count",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryCountInt) In(value []int) workerSemaphoreCountDefaultParam {
+	return workerSemaphoreCountDefaultParam{
+		data: builder.Field{
+			Name: "count",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryCountInt) InIfPresent(value []int) workerSemaphoreCountDefaultParam {
+	if value == nil {
+		return workerSemaphoreCountDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workerSemaphoreCountQueryCountInt) NotIn(value []int) workerSemaphoreCountDefaultParam {
+	return workerSemaphoreCountDefaultParam{
+		data: builder.Field{
+			Name: "count",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryCountInt) NotInIfPresent(value []int) workerSemaphoreCountDefaultParam {
+	if value == nil {
+		return workerSemaphoreCountDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workerSemaphoreCountQueryCountInt) Lt(value int) workerSemaphoreCountDefaultParam {
+	return workerSemaphoreCountDefaultParam{
+		data: builder.Field{
+			Name: "count",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryCountInt) LtIfPresent(value *int) workerSemaphoreCountDefaultParam {
+	if value == nil {
+		return workerSemaphoreCountDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workerSemaphoreCountQueryCountInt) Lte(value int) workerSemaphoreCountDefaultParam {
+	return workerSemaphoreCountDefaultParam{
+		data: builder.Field{
+			Name: "count",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryCountInt) LteIfPresent(value *int) workerSemaphoreCountDefaultParam {
+	if value == nil {
+		return workerSemaphoreCountDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workerSemaphoreCountQueryCountInt) Gt(value int) workerSemaphoreCountDefaultParam {
+	return workerSemaphoreCountDefaultParam{
+		data: builder.Field{
+			Name: "count",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryCountInt) GtIfPresent(value *int) workerSemaphoreCountDefaultParam {
+	if value == nil {
+		return workerSemaphoreCountDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workerSemaphoreCountQueryCountInt) Gte(value int) workerSemaphoreCountDefaultParam {
+	return workerSemaphoreCountDefaultParam{
+		data: builder.Field{
+			Name: "count",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryCountInt) GteIfPresent(value *int) workerSemaphoreCountDefaultParam {
+	if value == nil {
+		return workerSemaphoreCountDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workerSemaphoreCountQueryCountInt) Not(value int) workerSemaphoreCountDefaultParam {
+	return workerSemaphoreCountDefaultParam{
+		data: builder.Field{
+			Name: "count",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerSemaphoreCountQueryCountInt) NotIfPresent(value *int) workerSemaphoreCountDefaultParam {
+	if value == nil {
+		return workerSemaphoreCountDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r workerSemaphoreCountQueryCountInt) LT(value int) workerSemaphoreCountDefaultParam {
+	return workerSemaphoreCountDefaultParam{
+		data: builder.Field{
+			Name: "count",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r workerSemaphoreCountQueryCountInt) LTIfPresent(value *int) workerSemaphoreCountDefaultParam {
+	if value == nil {
+		return workerSemaphoreCountDefaultParam{}
+	}
+	return r.LT(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r workerSemaphoreCountQueryCountInt) LTE(value int) workerSemaphoreCountDefaultParam {
+	return workerSemaphoreCountDefaultParam{
+		data: builder.Field{
+			Name: "count",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r workerSemaphoreCountQueryCountInt) LTEIfPresent(value *int) workerSemaphoreCountDefaultParam {
+	if value == nil {
+		return workerSemaphoreCountDefaultParam{}
+	}
+	return r.LTE(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r workerSemaphoreCountQueryCountInt) GT(value int) workerSemaphoreCountDefaultParam {
+	return workerSemaphoreCountDefaultParam{
+		data: builder.Field{
+			Name: "count",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r workerSemaphoreCountQueryCountInt) GTIfPresent(value *int) workerSemaphoreCountDefaultParam {
+	if value == nil {
+		return workerSemaphoreCountDefaultParam{}
+	}
+	return r.GT(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r workerSemaphoreCountQueryCountInt) GTE(value int) workerSemaphoreCountDefaultParam {
+	return workerSemaphoreCountDefaultParam{
+		data: builder.Field{
+			Name: "count",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r workerSemaphoreCountQueryCountInt) GTEIfPresent(value *int) workerSemaphoreCountDefaultParam {
+	if value == nil {
+		return workerSemaphoreCountDefaultParam{}
+	}
+	return r.GTE(*value)
+}
+
+func (r workerSemaphoreCountQueryCountInt) Field() workerSemaphoreCountPrismaFields {
+	return workerSemaphoreCountFieldCount
+}
+
+// WorkerAssignEvent acts as a namespaces to access query methods for the WorkerAssignEvent model
+var WorkerAssignEvent = workerAssignEventQuery{}
+
+// workerAssignEventQuery exposes query functions for the workerAssignEvent model
+type workerAssignEventQuery struct {
+
+	// ID
+	//
+	// @required
+	ID workerAssignEventQueryIDBigInt
+
+	Worker workerAssignEventQueryWorkerRelations
+
+	// WorkerID
+	//
+	// @required
+	WorkerID workerAssignEventQueryWorkerIDString
+
+	// AssignedStepRuns
+	//
+	// @optional
+	AssignedStepRuns workerAssignEventQueryAssignedStepRunsJson
+}
+
+func (workerAssignEventQuery) Not(params ...WorkerAssignEventWhereParam) workerAssignEventDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (workerAssignEventQuery) Or(params ...WorkerAssignEventWhereParam) workerAssignEventDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (workerAssignEventQuery) And(params ...WorkerAssignEventWhereParam) workerAssignEventDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+// base struct
+type workerAssignEventQueryIDBigInt struct{}
+
+// Set the required value of ID
+func (r workerAssignEventQueryIDBigInt) Set(value BigInt) workerAssignEventSetParam {
+
+	return workerAssignEventSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r workerAssignEventQueryIDBigInt) SetIfPresent(value *BigInt) workerAssignEventSetParam {
+	if value == nil {
+		return workerAssignEventSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the required value of ID
+func (r workerAssignEventQueryIDBigInt) Increment(value BigInt) workerAssignEventSetParam {
+	return workerAssignEventSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryIDBigInt) IncrementIfPresent(value *BigInt) workerAssignEventSetParam {
+	if value == nil {
+		return workerAssignEventSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the required value of ID
+func (r workerAssignEventQueryIDBigInt) Decrement(value BigInt) workerAssignEventSetParam {
+	return workerAssignEventSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryIDBigInt) DecrementIfPresent(value *BigInt) workerAssignEventSetParam {
+	if value == nil {
+		return workerAssignEventSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the required value of ID
+func (r workerAssignEventQueryIDBigInt) Multiply(value BigInt) workerAssignEventSetParam {
+	return workerAssignEventSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryIDBigInt) MultiplyIfPresent(value *BigInt) workerAssignEventSetParam {
+	if value == nil {
+		return workerAssignEventSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the required value of ID
+func (r workerAssignEventQueryIDBigInt) Divide(value BigInt) workerAssignEventSetParam {
+	return workerAssignEventSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryIDBigInt) DivideIfPresent(value *BigInt) workerAssignEventSetParam {
+	if value == nil {
+		return workerAssignEventSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r workerAssignEventQueryIDBigInt) Equals(value BigInt) workerAssignEventWithPrismaIDEqualsUniqueParam {
+
+	return workerAssignEventWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryIDBigInt) EqualsIfPresent(value *BigInt) workerAssignEventWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return workerAssignEventWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workerAssignEventQueryIDBigInt) Order(direction SortOrder) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r workerAssignEventQueryIDBigInt) Cursor(cursor BigInt) workerAssignEventCursorParam {
+	return workerAssignEventCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workerAssignEventQueryIDBigInt) In(value []BigInt) workerAssignEventParamUnique {
+	return workerAssignEventParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryIDBigInt) InIfPresent(value []BigInt) workerAssignEventParamUnique {
+	if value == nil {
+		return workerAssignEventParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r workerAssignEventQueryIDBigInt) NotIn(value []BigInt) workerAssignEventParamUnique {
+	return workerAssignEventParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryIDBigInt) NotInIfPresent(value []BigInt) workerAssignEventParamUnique {
+	if value == nil {
+		return workerAssignEventParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workerAssignEventQueryIDBigInt) Lt(value BigInt) workerAssignEventParamUnique {
+	return workerAssignEventParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryIDBigInt) LtIfPresent(value *BigInt) workerAssignEventParamUnique {
+	if value == nil {
+		return workerAssignEventParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workerAssignEventQueryIDBigInt) Lte(value BigInt) workerAssignEventParamUnique {
+	return workerAssignEventParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryIDBigInt) LteIfPresent(value *BigInt) workerAssignEventParamUnique {
+	if value == nil {
+		return workerAssignEventParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workerAssignEventQueryIDBigInt) Gt(value BigInt) workerAssignEventParamUnique {
+	return workerAssignEventParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryIDBigInt) GtIfPresent(value *BigInt) workerAssignEventParamUnique {
+	if value == nil {
+		return workerAssignEventParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workerAssignEventQueryIDBigInt) Gte(value BigInt) workerAssignEventParamUnique {
+	return workerAssignEventParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryIDBigInt) GteIfPresent(value *BigInt) workerAssignEventParamUnique {
+	if value == nil {
+		return workerAssignEventParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workerAssignEventQueryIDBigInt) Not(value BigInt) workerAssignEventParamUnique {
+	return workerAssignEventParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryIDBigInt) NotIfPresent(value *BigInt) workerAssignEventParamUnique {
+	if value == nil {
+		return workerAssignEventParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+func (r workerAssignEventQueryIDBigInt) Field() workerAssignEventPrismaFields {
+	return workerAssignEventFieldID
+}
+
+// base struct
+type workerAssignEventQueryWorkerWorker struct{}
+
+type workerAssignEventQueryWorkerRelations struct{}
+
+// WorkerAssignEvent -> Worker
+//
+// @relation
+// @required
+func (workerAssignEventQueryWorkerRelations) Where(
+	params ...WorkerWhereParam,
+) workerAssignEventDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "worker",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (workerAssignEventQueryWorkerRelations) Fetch() workerAssignEventToWorkerFindUnique {
+	var v workerAssignEventToWorkerFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "worker"
+	v.query.Outputs = workerOutput
+
+	return v
+}
+
+func (r workerAssignEventQueryWorkerRelations) Link(
+	params WorkerWhereParam,
+) workerAssignEventWithPrismaWorkerSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return workerAssignEventWithPrismaWorkerSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return workerAssignEventWithPrismaWorkerSetParam{
+		data: builder.Field{
+			Name: "worker",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryWorkerRelations) Unlink() workerAssignEventWithPrismaWorkerSetParam {
+	var v workerAssignEventWithPrismaWorkerSetParam
+
+	v = workerAssignEventWithPrismaWorkerSetParam{
+		data: builder.Field{
+			Name: "worker",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r workerAssignEventQueryWorkerWorker) Field() workerAssignEventPrismaFields {
+	return workerAssignEventFieldWorker
+}
+
+// base struct
+type workerAssignEventQueryWorkerIDString struct{}
+
+// Set the required value of WorkerID
+func (r workerAssignEventQueryWorkerIDString) Set(value string) workerAssignEventSetParam {
+
+	return workerAssignEventSetParam{
+		data: builder.Field{
+			Name:  "workerId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of WorkerID dynamically
+func (r workerAssignEventQueryWorkerIDString) SetIfPresent(value *String) workerAssignEventSetParam {
+	if value == nil {
+		return workerAssignEventSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workerAssignEventQueryWorkerIDString) Equals(value string) workerAssignEventWithPrismaWorkerIDEqualsParam {
+
+	return workerAssignEventWithPrismaWorkerIDEqualsParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryWorkerIDString) EqualsIfPresent(value *string) workerAssignEventWithPrismaWorkerIDEqualsParam {
+	if value == nil {
+		return workerAssignEventWithPrismaWorkerIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workerAssignEventQueryWorkerIDString) Order(direction SortOrder) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name:  "workerId",
+			Value: direction,
+		},
+	}
+}
+
+func (r workerAssignEventQueryWorkerIDString) Cursor(cursor string) workerAssignEventCursorParam {
+	return workerAssignEventCursorParam{
+		data: builder.Field{
+			Name:  "workerId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workerAssignEventQueryWorkerIDString) In(value []string) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryWorkerIDString) InIfPresent(value []string) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workerAssignEventQueryWorkerIDString) NotIn(value []string) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryWorkerIDString) NotInIfPresent(value []string) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workerAssignEventQueryWorkerIDString) Lt(value string) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryWorkerIDString) LtIfPresent(value *string) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workerAssignEventQueryWorkerIDString) Lte(value string) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryWorkerIDString) LteIfPresent(value *string) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workerAssignEventQueryWorkerIDString) Gt(value string) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryWorkerIDString) GtIfPresent(value *string) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workerAssignEventQueryWorkerIDString) Gte(value string) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryWorkerIDString) GteIfPresent(value *string) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workerAssignEventQueryWorkerIDString) Contains(value string) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryWorkerIDString) ContainsIfPresent(value *string) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r workerAssignEventQueryWorkerIDString) StartsWith(value string) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryWorkerIDString) StartsWithIfPresent(value *string) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r workerAssignEventQueryWorkerIDString) EndsWith(value string) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryWorkerIDString) EndsWithIfPresent(value *string) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r workerAssignEventQueryWorkerIDString) Mode(value QueryMode) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryWorkerIDString) ModeIfPresent(value *QueryMode) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r workerAssignEventQueryWorkerIDString) Not(value string) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryWorkerIDString) NotIfPresent(value *string) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r workerAssignEventQueryWorkerIDString) HasPrefix(value string) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r workerAssignEventQueryWorkerIDString) HasPrefixIfPresent(value *string) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r workerAssignEventQueryWorkerIDString) HasSuffix(value string) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r workerAssignEventQueryWorkerIDString) HasSuffixIfPresent(value *string) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r workerAssignEventQueryWorkerIDString) Field() workerAssignEventPrismaFields {
+	return workerAssignEventFieldWorkerID
+}
+
+// base struct
+type workerAssignEventQueryAssignedStepRunsJson struct{}
+
+// Set the optional value of AssignedStepRuns
+func (r workerAssignEventQueryAssignedStepRunsJson) Set(value JSON) workerAssignEventSetParam {
+
+	return workerAssignEventSetParam{
+		data: builder.Field{
+			Name:  "assignedStepRuns",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of AssignedStepRuns dynamically
+func (r workerAssignEventQueryAssignedStepRunsJson) SetIfPresent(value *JSON) workerAssignEventSetParam {
+	if value == nil {
+		return workerAssignEventSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of AssignedStepRuns dynamically
+func (r workerAssignEventQueryAssignedStepRunsJson) SetOptional(value *JSON) workerAssignEventSetParam {
+	if value == nil {
+
+		var v *JSON
+		return workerAssignEventSetParam{
+			data: builder.Field{
+				Name:  "assignedStepRuns",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) Equals(value JSON) workerAssignEventWithPrismaAssignedStepRunsEqualsParam {
+
+	return workerAssignEventWithPrismaAssignedStepRunsEqualsParam{
+		data: builder.Field{
+			Name: "assignedStepRuns",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) EqualsIfPresent(value *JSON) workerAssignEventWithPrismaAssignedStepRunsEqualsParam {
+	if value == nil {
+		return workerAssignEventWithPrismaAssignedStepRunsEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) EqualsOptional(value *JSON) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "assignedStepRuns",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) IsNull() workerAssignEventDefaultParam {
+	var str *string = nil
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "assignedStepRuns",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) Order(direction SortOrder) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name:  "assignedStepRuns",
+			Value: direction,
+		},
+	}
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) Cursor(cursor JSON) workerAssignEventCursorParam {
+	return workerAssignEventCursorParam{
+		data: builder.Field{
+			Name:  "assignedStepRuns",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) Path(value []string) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "assignedStepRuns",
+			Fields: []builder.Field{
+				{
+					Name:  "path",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) PathIfPresent(value []string) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.Path(value)
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) StringContains(value string) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "assignedStepRuns",
+			Fields: []builder.Field{
+				{
+					Name:  "string_contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) StringContainsIfPresent(value *string) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.StringContains(*value)
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) StringStartsWith(value string) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "assignedStepRuns",
+			Fields: []builder.Field{
+				{
+					Name:  "string_starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) StringStartsWithIfPresent(value *string) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.StringStartsWith(*value)
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) StringEndsWith(value string) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "assignedStepRuns",
+			Fields: []builder.Field{
+				{
+					Name:  "string_ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) StringEndsWithIfPresent(value *string) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.StringEndsWith(*value)
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) ArrayContains(value JSON) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "assignedStepRuns",
+			Fields: []builder.Field{
+				{
+					Name:  "array_contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) ArrayContainsIfPresent(value *JSON) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.ArrayContains(*value)
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) ArrayStartsWith(value JSON) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "assignedStepRuns",
+			Fields: []builder.Field{
+				{
+					Name:  "array_starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) ArrayStartsWithIfPresent(value *JSON) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.ArrayStartsWith(*value)
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) ArrayEndsWith(value JSON) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "assignedStepRuns",
+			Fields: []builder.Field{
+				{
+					Name:  "array_ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) ArrayEndsWithIfPresent(value *JSON) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.ArrayEndsWith(*value)
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) Lt(value JSON) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "assignedStepRuns",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) LtIfPresent(value *JSON) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) Lte(value JSON) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "assignedStepRuns",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) LteIfPresent(value *JSON) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) Gt(value JSON) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "assignedStepRuns",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) GtIfPresent(value *JSON) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) Gte(value JSON) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "assignedStepRuns",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) GteIfPresent(value *JSON) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) Not(value JSONNullValueFilter) workerAssignEventDefaultParam {
+	return workerAssignEventDefaultParam{
+		data: builder.Field{
+			Name: "assignedStepRuns",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) NotIfPresent(value *JSONNullValueFilter) workerAssignEventDefaultParam {
+	if value == nil {
+		return workerAssignEventDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+func (r workerAssignEventQueryAssignedStepRunsJson) Field() workerAssignEventPrismaFields {
+	return workerAssignEventFieldAssignedStepRuns
 }
 
 // Service acts as a namespaces to access query methods for the Service model
@@ -244505,6 +249375,731 @@ func (p queueItemWithPrismaDesiredWorkerIDEqualsUniqueParam) desiredWorkerIDFiel
 func (queueItemWithPrismaDesiredWorkerIDEqualsUniqueParam) unique() {}
 func (queueItemWithPrismaDesiredWorkerIDEqualsUniqueParam) equals() {}
 
+type internalQueueItemActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var internalQueueItemOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "queue"},
+	{Name: "isQueued"},
+	{Name: "data"},
+	{Name: "tenantId"},
+	{Name: "priority"},
+	{Name: "uniqueKey"},
+}
+
+type InternalQueueItemRelationWith interface {
+	getQuery() builder.Query
+	with()
+	internalQueueItemRelation()
+}
+
+type InternalQueueItemWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	internalQueueItemModel()
+}
+
+type internalQueueItemDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemDefaultParam) internalQueueItemModel() {}
+
+type InternalQueueItemOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	internalQueueItemModel()
+}
+
+type internalQueueItemOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemOrderByParam) internalQueueItemModel() {}
+
+type InternalQueueItemCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	internalQueueItemModel()
+	isCursor()
+}
+
+type internalQueueItemCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemCursorParam) isCursor() {}
+
+func (p internalQueueItemCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemCursorParam) internalQueueItemModel() {}
+
+type InternalQueueItemParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	internalQueueItemModel()
+}
+
+type internalQueueItemParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemParamUnique) internalQueueItemModel() {}
+
+func (internalQueueItemParamUnique) unique() {}
+
+func (p internalQueueItemParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type InternalQueueItemEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	internalQueueItemModel()
+}
+
+type internalQueueItemEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemEqualsParam) internalQueueItemModel() {}
+
+func (internalQueueItemEqualsParam) equals() {}
+
+func (p internalQueueItemEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type InternalQueueItemEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	internalQueueItemModel()
+}
+
+type internalQueueItemEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemEqualsUniqueParam) internalQueueItemModel() {}
+
+func (internalQueueItemEqualsUniqueParam) unique() {}
+func (internalQueueItemEqualsUniqueParam) equals() {}
+
+func (p internalQueueItemEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type InternalQueueItemSetParam interface {
+	field() builder.Field
+	settable()
+	internalQueueItemModel()
+}
+
+type internalQueueItemSetParam struct {
+	data builder.Field
+}
+
+func (internalQueueItemSetParam) settable() {}
+
+func (p internalQueueItemSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemSetParam) internalQueueItemModel() {}
+
+type InternalQueueItemWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	internalQueueItemModel()
+	idField()
+}
+
+type InternalQueueItemWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	internalQueueItemModel()
+	idField()
+}
+
+type internalQueueItemWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemWithPrismaIDSetParam) internalQueueItemModel() {}
+
+func (p internalQueueItemWithPrismaIDSetParam) idField() {}
+
+type InternalQueueItemWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	internalQueueItemModel()
+	idField()
+}
+
+type internalQueueItemWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemWithPrismaIDEqualsParam) internalQueueItemModel() {}
+
+func (p internalQueueItemWithPrismaIDEqualsParam) idField() {}
+
+func (internalQueueItemWithPrismaIDSetParam) settable()  {}
+func (internalQueueItemWithPrismaIDEqualsParam) equals() {}
+
+type internalQueueItemWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemWithPrismaIDEqualsUniqueParam) internalQueueItemModel() {}
+func (p internalQueueItemWithPrismaIDEqualsUniqueParam) idField()                {}
+
+func (internalQueueItemWithPrismaIDEqualsUniqueParam) unique() {}
+func (internalQueueItemWithPrismaIDEqualsUniqueParam) equals() {}
+
+type InternalQueueItemWithPrismaQueueEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	internalQueueItemModel()
+	queueField()
+}
+
+type InternalQueueItemWithPrismaQueueSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	internalQueueItemModel()
+	queueField()
+}
+
+type internalQueueItemWithPrismaQueueSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemWithPrismaQueueSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemWithPrismaQueueSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemWithPrismaQueueSetParam) internalQueueItemModel() {}
+
+func (p internalQueueItemWithPrismaQueueSetParam) queueField() {}
+
+type InternalQueueItemWithPrismaQueueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	internalQueueItemModel()
+	queueField()
+}
+
+type internalQueueItemWithPrismaQueueEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemWithPrismaQueueEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemWithPrismaQueueEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemWithPrismaQueueEqualsParam) internalQueueItemModel() {}
+
+func (p internalQueueItemWithPrismaQueueEqualsParam) queueField() {}
+
+func (internalQueueItemWithPrismaQueueSetParam) settable()  {}
+func (internalQueueItemWithPrismaQueueEqualsParam) equals() {}
+
+type internalQueueItemWithPrismaQueueEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemWithPrismaQueueEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemWithPrismaQueueEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemWithPrismaQueueEqualsUniqueParam) internalQueueItemModel() {}
+func (p internalQueueItemWithPrismaQueueEqualsUniqueParam) queueField()             {}
+
+func (internalQueueItemWithPrismaQueueEqualsUniqueParam) unique() {}
+func (internalQueueItemWithPrismaQueueEqualsUniqueParam) equals() {}
+
+type InternalQueueItemWithPrismaIsQueuedEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	internalQueueItemModel()
+	isQueuedField()
+}
+
+type InternalQueueItemWithPrismaIsQueuedSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	internalQueueItemModel()
+	isQueuedField()
+}
+
+type internalQueueItemWithPrismaIsQueuedSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemWithPrismaIsQueuedSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemWithPrismaIsQueuedSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemWithPrismaIsQueuedSetParam) internalQueueItemModel() {}
+
+func (p internalQueueItemWithPrismaIsQueuedSetParam) isQueuedField() {}
+
+type InternalQueueItemWithPrismaIsQueuedWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	internalQueueItemModel()
+	isQueuedField()
+}
+
+type internalQueueItemWithPrismaIsQueuedEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemWithPrismaIsQueuedEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemWithPrismaIsQueuedEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemWithPrismaIsQueuedEqualsParam) internalQueueItemModel() {}
+
+func (p internalQueueItemWithPrismaIsQueuedEqualsParam) isQueuedField() {}
+
+func (internalQueueItemWithPrismaIsQueuedSetParam) settable()  {}
+func (internalQueueItemWithPrismaIsQueuedEqualsParam) equals() {}
+
+type internalQueueItemWithPrismaIsQueuedEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemWithPrismaIsQueuedEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemWithPrismaIsQueuedEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemWithPrismaIsQueuedEqualsUniqueParam) internalQueueItemModel() {}
+func (p internalQueueItemWithPrismaIsQueuedEqualsUniqueParam) isQueuedField()          {}
+
+func (internalQueueItemWithPrismaIsQueuedEqualsUniqueParam) unique() {}
+func (internalQueueItemWithPrismaIsQueuedEqualsUniqueParam) equals() {}
+
+type InternalQueueItemWithPrismaDataEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	internalQueueItemModel()
+	dataField()
+}
+
+type InternalQueueItemWithPrismaDataSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	internalQueueItemModel()
+	dataField()
+}
+
+type internalQueueItemWithPrismaDataSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemWithPrismaDataSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemWithPrismaDataSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemWithPrismaDataSetParam) internalQueueItemModel() {}
+
+func (p internalQueueItemWithPrismaDataSetParam) dataField() {}
+
+type InternalQueueItemWithPrismaDataWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	internalQueueItemModel()
+	dataField()
+}
+
+type internalQueueItemWithPrismaDataEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemWithPrismaDataEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemWithPrismaDataEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemWithPrismaDataEqualsParam) internalQueueItemModel() {}
+
+func (p internalQueueItemWithPrismaDataEqualsParam) dataField() {}
+
+func (internalQueueItemWithPrismaDataSetParam) settable()  {}
+func (internalQueueItemWithPrismaDataEqualsParam) equals() {}
+
+type internalQueueItemWithPrismaDataEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemWithPrismaDataEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemWithPrismaDataEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemWithPrismaDataEqualsUniqueParam) internalQueueItemModel() {}
+func (p internalQueueItemWithPrismaDataEqualsUniqueParam) dataField()              {}
+
+func (internalQueueItemWithPrismaDataEqualsUniqueParam) unique() {}
+func (internalQueueItemWithPrismaDataEqualsUniqueParam) equals() {}
+
+type InternalQueueItemWithPrismaTenantIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	internalQueueItemModel()
+	tenantIDField()
+}
+
+type InternalQueueItemWithPrismaTenantIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	internalQueueItemModel()
+	tenantIDField()
+}
+
+type internalQueueItemWithPrismaTenantIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemWithPrismaTenantIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemWithPrismaTenantIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemWithPrismaTenantIDSetParam) internalQueueItemModel() {}
+
+func (p internalQueueItemWithPrismaTenantIDSetParam) tenantIDField() {}
+
+type InternalQueueItemWithPrismaTenantIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	internalQueueItemModel()
+	tenantIDField()
+}
+
+type internalQueueItemWithPrismaTenantIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemWithPrismaTenantIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemWithPrismaTenantIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemWithPrismaTenantIDEqualsParam) internalQueueItemModel() {}
+
+func (p internalQueueItemWithPrismaTenantIDEqualsParam) tenantIDField() {}
+
+func (internalQueueItemWithPrismaTenantIDSetParam) settable()  {}
+func (internalQueueItemWithPrismaTenantIDEqualsParam) equals() {}
+
+type internalQueueItemWithPrismaTenantIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemWithPrismaTenantIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemWithPrismaTenantIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemWithPrismaTenantIDEqualsUniqueParam) internalQueueItemModel() {}
+func (p internalQueueItemWithPrismaTenantIDEqualsUniqueParam) tenantIDField()          {}
+
+func (internalQueueItemWithPrismaTenantIDEqualsUniqueParam) unique() {}
+func (internalQueueItemWithPrismaTenantIDEqualsUniqueParam) equals() {}
+
+type InternalQueueItemWithPrismaPriorityEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	internalQueueItemModel()
+	priorityField()
+}
+
+type InternalQueueItemWithPrismaPrioritySetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	internalQueueItemModel()
+	priorityField()
+}
+
+type internalQueueItemWithPrismaPrioritySetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemWithPrismaPrioritySetParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemWithPrismaPrioritySetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemWithPrismaPrioritySetParam) internalQueueItemModel() {}
+
+func (p internalQueueItemWithPrismaPrioritySetParam) priorityField() {}
+
+type InternalQueueItemWithPrismaPriorityWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	internalQueueItemModel()
+	priorityField()
+}
+
+type internalQueueItemWithPrismaPriorityEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemWithPrismaPriorityEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemWithPrismaPriorityEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemWithPrismaPriorityEqualsParam) internalQueueItemModel() {}
+
+func (p internalQueueItemWithPrismaPriorityEqualsParam) priorityField() {}
+
+func (internalQueueItemWithPrismaPrioritySetParam) settable()  {}
+func (internalQueueItemWithPrismaPriorityEqualsParam) equals() {}
+
+type internalQueueItemWithPrismaPriorityEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemWithPrismaPriorityEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemWithPrismaPriorityEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemWithPrismaPriorityEqualsUniqueParam) internalQueueItemModel() {}
+func (p internalQueueItemWithPrismaPriorityEqualsUniqueParam) priorityField()          {}
+
+func (internalQueueItemWithPrismaPriorityEqualsUniqueParam) unique() {}
+func (internalQueueItemWithPrismaPriorityEqualsUniqueParam) equals() {}
+
+type InternalQueueItemWithPrismaUniqueKeyEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	internalQueueItemModel()
+	uniqueKeyField()
+}
+
+type InternalQueueItemWithPrismaUniqueKeySetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	internalQueueItemModel()
+	uniqueKeyField()
+}
+
+type internalQueueItemWithPrismaUniqueKeySetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemWithPrismaUniqueKeySetParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemWithPrismaUniqueKeySetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemWithPrismaUniqueKeySetParam) internalQueueItemModel() {}
+
+func (p internalQueueItemWithPrismaUniqueKeySetParam) uniqueKeyField() {}
+
+type InternalQueueItemWithPrismaUniqueKeyWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	internalQueueItemModel()
+	uniqueKeyField()
+}
+
+type internalQueueItemWithPrismaUniqueKeyEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemWithPrismaUniqueKeyEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemWithPrismaUniqueKeyEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemWithPrismaUniqueKeyEqualsParam) internalQueueItemModel() {}
+
+func (p internalQueueItemWithPrismaUniqueKeyEqualsParam) uniqueKeyField() {}
+
+func (internalQueueItemWithPrismaUniqueKeySetParam) settable()  {}
+func (internalQueueItemWithPrismaUniqueKeyEqualsParam) equals() {}
+
+type internalQueueItemWithPrismaUniqueKeyEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p internalQueueItemWithPrismaUniqueKeyEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p internalQueueItemWithPrismaUniqueKeyEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemWithPrismaUniqueKeyEqualsUniqueParam) internalQueueItemModel() {}
+func (p internalQueueItemWithPrismaUniqueKeyEqualsUniqueParam) uniqueKeyField()         {}
+
+func (internalQueueItemWithPrismaUniqueKeyEqualsUniqueParam) unique() {}
+func (internalQueueItemWithPrismaUniqueKeyEqualsUniqueParam) equals() {}
+
 type stepRunEventActions struct {
 	// client holds the prisma client
 	client *PrismaClient
@@ -251287,6 +256882,162 @@ func (p workerWithPrismaSlotsEqualsUniqueParam) slotsField()  {}
 func (workerWithPrismaSlotsEqualsUniqueParam) unique() {}
 func (workerWithPrismaSlotsEqualsUniqueParam) equals() {}
 
+type WorkerWithPrismaSemaphoreCountEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerModel()
+	semaphoreCountField()
+}
+
+type WorkerWithPrismaSemaphoreCountSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerModel()
+	semaphoreCountField()
+}
+
+type workerWithPrismaSemaphoreCountSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaSemaphoreCountSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaSemaphoreCountSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaSemaphoreCountSetParam) workerModel() {}
+
+func (p workerWithPrismaSemaphoreCountSetParam) semaphoreCountField() {}
+
+type WorkerWithPrismaSemaphoreCountWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerModel()
+	semaphoreCountField()
+}
+
+type workerWithPrismaSemaphoreCountEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaSemaphoreCountEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaSemaphoreCountEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaSemaphoreCountEqualsParam) workerModel() {}
+
+func (p workerWithPrismaSemaphoreCountEqualsParam) semaphoreCountField() {}
+
+func (workerWithPrismaSemaphoreCountSetParam) settable()  {}
+func (workerWithPrismaSemaphoreCountEqualsParam) equals() {}
+
+type workerWithPrismaSemaphoreCountEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaSemaphoreCountEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaSemaphoreCountEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaSemaphoreCountEqualsUniqueParam) workerModel()         {}
+func (p workerWithPrismaSemaphoreCountEqualsUniqueParam) semaphoreCountField() {}
+
+func (workerWithPrismaSemaphoreCountEqualsUniqueParam) unique() {}
+func (workerWithPrismaSemaphoreCountEqualsUniqueParam) equals() {}
+
+type WorkerWithPrismaAssignedEventsEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerModel()
+	assignedEventsField()
+}
+
+type WorkerWithPrismaAssignedEventsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerModel()
+	assignedEventsField()
+}
+
+type workerWithPrismaAssignedEventsSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaAssignedEventsSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaAssignedEventsSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaAssignedEventsSetParam) workerModel() {}
+
+func (p workerWithPrismaAssignedEventsSetParam) assignedEventsField() {}
+
+type WorkerWithPrismaAssignedEventsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerModel()
+	assignedEventsField()
+}
+
+type workerWithPrismaAssignedEventsEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaAssignedEventsEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaAssignedEventsEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaAssignedEventsEqualsParam) workerModel() {}
+
+func (p workerWithPrismaAssignedEventsEqualsParam) assignedEventsField() {}
+
+func (workerWithPrismaAssignedEventsSetParam) settable()  {}
+func (workerWithPrismaAssignedEventsEqualsParam) equals() {}
+
+type workerWithPrismaAssignedEventsEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaAssignedEventsEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaAssignedEventsEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaAssignedEventsEqualsUniqueParam) workerModel()         {}
+func (p workerWithPrismaAssignedEventsEqualsUniqueParam) assignedEventsField() {}
+
+func (workerWithPrismaAssignedEventsEqualsUniqueParam) unique() {}
+func (workerWithPrismaAssignedEventsEqualsUniqueParam) equals() {}
+
 type WorkerWithPrismaWebhookEqualsSetParam interface {
 	field() builder.Field
 	getQuery() builder.Query
@@ -252493,6 +258244,901 @@ func (p workerSemaphoreSlotWithPrismaStepRunIDEqualsUniqueParam) stepRunIDField(
 
 func (workerSemaphoreSlotWithPrismaStepRunIDEqualsUniqueParam) unique() {}
 func (workerSemaphoreSlotWithPrismaStepRunIDEqualsUniqueParam) equals() {}
+
+type workerSemaphoreCountActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var workerSemaphoreCountOutput = []builder.Output{
+	{Name: "workerId"},
+	{Name: "count"},
+}
+
+type WorkerSemaphoreCountRelationWith interface {
+	getQuery() builder.Query
+	with()
+	workerSemaphoreCountRelation()
+}
+
+type WorkerSemaphoreCountWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerSemaphoreCountModel()
+}
+
+type workerSemaphoreCountDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerSemaphoreCountDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerSemaphoreCountDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerSemaphoreCountDefaultParam) workerSemaphoreCountModel() {}
+
+type WorkerSemaphoreCountOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerSemaphoreCountModel()
+}
+
+type workerSemaphoreCountOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerSemaphoreCountOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerSemaphoreCountOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerSemaphoreCountOrderByParam) workerSemaphoreCountModel() {}
+
+type WorkerSemaphoreCountCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerSemaphoreCountModel()
+	isCursor()
+}
+
+type workerSemaphoreCountCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerSemaphoreCountCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerSemaphoreCountCursorParam) isCursor() {}
+
+func (p workerSemaphoreCountCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerSemaphoreCountCursorParam) workerSemaphoreCountModel() {}
+
+type WorkerSemaphoreCountParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	workerSemaphoreCountModel()
+}
+
+type workerSemaphoreCountParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerSemaphoreCountParamUnique) workerSemaphoreCountModel() {}
+
+func (workerSemaphoreCountParamUnique) unique() {}
+
+func (p workerSemaphoreCountParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p workerSemaphoreCountParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type WorkerSemaphoreCountEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerSemaphoreCountModel()
+}
+
+type workerSemaphoreCountEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerSemaphoreCountEqualsParam) workerSemaphoreCountModel() {}
+
+func (workerSemaphoreCountEqualsParam) equals() {}
+
+func (p workerSemaphoreCountEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerSemaphoreCountEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type WorkerSemaphoreCountEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	workerSemaphoreCountModel()
+}
+
+type workerSemaphoreCountEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerSemaphoreCountEqualsUniqueParam) workerSemaphoreCountModel() {}
+
+func (workerSemaphoreCountEqualsUniqueParam) unique() {}
+func (workerSemaphoreCountEqualsUniqueParam) equals() {}
+
+func (p workerSemaphoreCountEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerSemaphoreCountEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type WorkerSemaphoreCountSetParam interface {
+	field() builder.Field
+	settable()
+	workerSemaphoreCountModel()
+}
+
+type workerSemaphoreCountSetParam struct {
+	data builder.Field
+}
+
+func (workerSemaphoreCountSetParam) settable() {}
+
+func (p workerSemaphoreCountSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerSemaphoreCountSetParam) workerSemaphoreCountModel() {}
+
+type WorkerSemaphoreCountWithPrismaWorkerEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerSemaphoreCountModel()
+	workerField()
+}
+
+type WorkerSemaphoreCountWithPrismaWorkerSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerSemaphoreCountModel()
+	workerField()
+}
+
+type workerSemaphoreCountWithPrismaWorkerSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerSemaphoreCountWithPrismaWorkerSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerSemaphoreCountWithPrismaWorkerSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerSemaphoreCountWithPrismaWorkerSetParam) workerSemaphoreCountModel() {}
+
+func (p workerSemaphoreCountWithPrismaWorkerSetParam) workerField() {}
+
+type WorkerSemaphoreCountWithPrismaWorkerWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerSemaphoreCountModel()
+	workerField()
+}
+
+type workerSemaphoreCountWithPrismaWorkerEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerSemaphoreCountWithPrismaWorkerEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerSemaphoreCountWithPrismaWorkerEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerSemaphoreCountWithPrismaWorkerEqualsParam) workerSemaphoreCountModel() {}
+
+func (p workerSemaphoreCountWithPrismaWorkerEqualsParam) workerField() {}
+
+func (workerSemaphoreCountWithPrismaWorkerSetParam) settable()  {}
+func (workerSemaphoreCountWithPrismaWorkerEqualsParam) equals() {}
+
+type workerSemaphoreCountWithPrismaWorkerEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerSemaphoreCountWithPrismaWorkerEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerSemaphoreCountWithPrismaWorkerEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerSemaphoreCountWithPrismaWorkerEqualsUniqueParam) workerSemaphoreCountModel() {}
+func (p workerSemaphoreCountWithPrismaWorkerEqualsUniqueParam) workerField()               {}
+
+func (workerSemaphoreCountWithPrismaWorkerEqualsUniqueParam) unique() {}
+func (workerSemaphoreCountWithPrismaWorkerEqualsUniqueParam) equals() {}
+
+type WorkerSemaphoreCountWithPrismaWorkerIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerSemaphoreCountModel()
+	workerIDField()
+}
+
+type WorkerSemaphoreCountWithPrismaWorkerIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerSemaphoreCountModel()
+	workerIDField()
+}
+
+type workerSemaphoreCountWithPrismaWorkerIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerSemaphoreCountWithPrismaWorkerIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerSemaphoreCountWithPrismaWorkerIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerSemaphoreCountWithPrismaWorkerIDSetParam) workerSemaphoreCountModel() {}
+
+func (p workerSemaphoreCountWithPrismaWorkerIDSetParam) workerIDField() {}
+
+type WorkerSemaphoreCountWithPrismaWorkerIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerSemaphoreCountModel()
+	workerIDField()
+}
+
+type workerSemaphoreCountWithPrismaWorkerIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerSemaphoreCountWithPrismaWorkerIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerSemaphoreCountWithPrismaWorkerIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerSemaphoreCountWithPrismaWorkerIDEqualsParam) workerSemaphoreCountModel() {}
+
+func (p workerSemaphoreCountWithPrismaWorkerIDEqualsParam) workerIDField() {}
+
+func (workerSemaphoreCountWithPrismaWorkerIDSetParam) settable()  {}
+func (workerSemaphoreCountWithPrismaWorkerIDEqualsParam) equals() {}
+
+type workerSemaphoreCountWithPrismaWorkerIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerSemaphoreCountWithPrismaWorkerIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerSemaphoreCountWithPrismaWorkerIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerSemaphoreCountWithPrismaWorkerIDEqualsUniqueParam) workerSemaphoreCountModel() {}
+func (p workerSemaphoreCountWithPrismaWorkerIDEqualsUniqueParam) workerIDField()             {}
+
+func (workerSemaphoreCountWithPrismaWorkerIDEqualsUniqueParam) unique() {}
+func (workerSemaphoreCountWithPrismaWorkerIDEqualsUniqueParam) equals() {}
+
+type WorkerSemaphoreCountWithPrismaCountEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerSemaphoreCountModel()
+	countField()
+}
+
+type WorkerSemaphoreCountWithPrismaCountSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerSemaphoreCountModel()
+	countField()
+}
+
+type workerSemaphoreCountWithPrismaCountSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerSemaphoreCountWithPrismaCountSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerSemaphoreCountWithPrismaCountSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerSemaphoreCountWithPrismaCountSetParam) workerSemaphoreCountModel() {}
+
+func (p workerSemaphoreCountWithPrismaCountSetParam) countField() {}
+
+type WorkerSemaphoreCountWithPrismaCountWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerSemaphoreCountModel()
+	countField()
+}
+
+type workerSemaphoreCountWithPrismaCountEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerSemaphoreCountWithPrismaCountEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerSemaphoreCountWithPrismaCountEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerSemaphoreCountWithPrismaCountEqualsParam) workerSemaphoreCountModel() {}
+
+func (p workerSemaphoreCountWithPrismaCountEqualsParam) countField() {}
+
+func (workerSemaphoreCountWithPrismaCountSetParam) settable()  {}
+func (workerSemaphoreCountWithPrismaCountEqualsParam) equals() {}
+
+type workerSemaphoreCountWithPrismaCountEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerSemaphoreCountWithPrismaCountEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerSemaphoreCountWithPrismaCountEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerSemaphoreCountWithPrismaCountEqualsUniqueParam) workerSemaphoreCountModel() {}
+func (p workerSemaphoreCountWithPrismaCountEqualsUniqueParam) countField()                {}
+
+func (workerSemaphoreCountWithPrismaCountEqualsUniqueParam) unique() {}
+func (workerSemaphoreCountWithPrismaCountEqualsUniqueParam) equals() {}
+
+type workerAssignEventActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var workerAssignEventOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "workerId"},
+	{Name: "assignedStepRuns"},
+}
+
+type WorkerAssignEventRelationWith interface {
+	getQuery() builder.Query
+	with()
+	workerAssignEventRelation()
+}
+
+type WorkerAssignEventWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerAssignEventModel()
+}
+
+type workerAssignEventDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerAssignEventDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerAssignEventDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerAssignEventDefaultParam) workerAssignEventModel() {}
+
+type WorkerAssignEventOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerAssignEventModel()
+}
+
+type workerAssignEventOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerAssignEventOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerAssignEventOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerAssignEventOrderByParam) workerAssignEventModel() {}
+
+type WorkerAssignEventCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerAssignEventModel()
+	isCursor()
+}
+
+type workerAssignEventCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerAssignEventCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerAssignEventCursorParam) isCursor() {}
+
+func (p workerAssignEventCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerAssignEventCursorParam) workerAssignEventModel() {}
+
+type WorkerAssignEventParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	workerAssignEventModel()
+}
+
+type workerAssignEventParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerAssignEventParamUnique) workerAssignEventModel() {}
+
+func (workerAssignEventParamUnique) unique() {}
+
+func (p workerAssignEventParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p workerAssignEventParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type WorkerAssignEventEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerAssignEventModel()
+}
+
+type workerAssignEventEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerAssignEventEqualsParam) workerAssignEventModel() {}
+
+func (workerAssignEventEqualsParam) equals() {}
+
+func (p workerAssignEventEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerAssignEventEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type WorkerAssignEventEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	workerAssignEventModel()
+}
+
+type workerAssignEventEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerAssignEventEqualsUniqueParam) workerAssignEventModel() {}
+
+func (workerAssignEventEqualsUniqueParam) unique() {}
+func (workerAssignEventEqualsUniqueParam) equals() {}
+
+func (p workerAssignEventEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerAssignEventEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type WorkerAssignEventSetParam interface {
+	field() builder.Field
+	settable()
+	workerAssignEventModel()
+}
+
+type workerAssignEventSetParam struct {
+	data builder.Field
+}
+
+func (workerAssignEventSetParam) settable() {}
+
+func (p workerAssignEventSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerAssignEventSetParam) workerAssignEventModel() {}
+
+type WorkerAssignEventWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerAssignEventModel()
+	idField()
+}
+
+type WorkerAssignEventWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerAssignEventModel()
+	idField()
+}
+
+type workerAssignEventWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerAssignEventWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerAssignEventWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerAssignEventWithPrismaIDSetParam) workerAssignEventModel() {}
+
+func (p workerAssignEventWithPrismaIDSetParam) idField() {}
+
+type WorkerAssignEventWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerAssignEventModel()
+	idField()
+}
+
+type workerAssignEventWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerAssignEventWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerAssignEventWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerAssignEventWithPrismaIDEqualsParam) workerAssignEventModel() {}
+
+func (p workerAssignEventWithPrismaIDEqualsParam) idField() {}
+
+func (workerAssignEventWithPrismaIDSetParam) settable()  {}
+func (workerAssignEventWithPrismaIDEqualsParam) equals() {}
+
+type workerAssignEventWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerAssignEventWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerAssignEventWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerAssignEventWithPrismaIDEqualsUniqueParam) workerAssignEventModel() {}
+func (p workerAssignEventWithPrismaIDEqualsUniqueParam) idField()                {}
+
+func (workerAssignEventWithPrismaIDEqualsUniqueParam) unique() {}
+func (workerAssignEventWithPrismaIDEqualsUniqueParam) equals() {}
+
+type WorkerAssignEventWithPrismaWorkerEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerAssignEventModel()
+	workerField()
+}
+
+type WorkerAssignEventWithPrismaWorkerSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerAssignEventModel()
+	workerField()
+}
+
+type workerAssignEventWithPrismaWorkerSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerAssignEventWithPrismaWorkerSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerAssignEventWithPrismaWorkerSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerAssignEventWithPrismaWorkerSetParam) workerAssignEventModel() {}
+
+func (p workerAssignEventWithPrismaWorkerSetParam) workerField() {}
+
+type WorkerAssignEventWithPrismaWorkerWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerAssignEventModel()
+	workerField()
+}
+
+type workerAssignEventWithPrismaWorkerEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerAssignEventWithPrismaWorkerEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerAssignEventWithPrismaWorkerEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerAssignEventWithPrismaWorkerEqualsParam) workerAssignEventModel() {}
+
+func (p workerAssignEventWithPrismaWorkerEqualsParam) workerField() {}
+
+func (workerAssignEventWithPrismaWorkerSetParam) settable()  {}
+func (workerAssignEventWithPrismaWorkerEqualsParam) equals() {}
+
+type workerAssignEventWithPrismaWorkerEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerAssignEventWithPrismaWorkerEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerAssignEventWithPrismaWorkerEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerAssignEventWithPrismaWorkerEqualsUniqueParam) workerAssignEventModel() {}
+func (p workerAssignEventWithPrismaWorkerEqualsUniqueParam) workerField()            {}
+
+func (workerAssignEventWithPrismaWorkerEqualsUniqueParam) unique() {}
+func (workerAssignEventWithPrismaWorkerEqualsUniqueParam) equals() {}
+
+type WorkerAssignEventWithPrismaWorkerIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerAssignEventModel()
+	workerIDField()
+}
+
+type WorkerAssignEventWithPrismaWorkerIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerAssignEventModel()
+	workerIDField()
+}
+
+type workerAssignEventWithPrismaWorkerIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerAssignEventWithPrismaWorkerIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerAssignEventWithPrismaWorkerIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerAssignEventWithPrismaWorkerIDSetParam) workerAssignEventModel() {}
+
+func (p workerAssignEventWithPrismaWorkerIDSetParam) workerIDField() {}
+
+type WorkerAssignEventWithPrismaWorkerIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerAssignEventModel()
+	workerIDField()
+}
+
+type workerAssignEventWithPrismaWorkerIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerAssignEventWithPrismaWorkerIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerAssignEventWithPrismaWorkerIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerAssignEventWithPrismaWorkerIDEqualsParam) workerAssignEventModel() {}
+
+func (p workerAssignEventWithPrismaWorkerIDEqualsParam) workerIDField() {}
+
+func (workerAssignEventWithPrismaWorkerIDSetParam) settable()  {}
+func (workerAssignEventWithPrismaWorkerIDEqualsParam) equals() {}
+
+type workerAssignEventWithPrismaWorkerIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerAssignEventWithPrismaWorkerIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerAssignEventWithPrismaWorkerIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerAssignEventWithPrismaWorkerIDEqualsUniqueParam) workerAssignEventModel() {}
+func (p workerAssignEventWithPrismaWorkerIDEqualsUniqueParam) workerIDField()          {}
+
+func (workerAssignEventWithPrismaWorkerIDEqualsUniqueParam) unique() {}
+func (workerAssignEventWithPrismaWorkerIDEqualsUniqueParam) equals() {}
+
+type WorkerAssignEventWithPrismaAssignedStepRunsEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerAssignEventModel()
+	assignedStepRunsField()
+}
+
+type WorkerAssignEventWithPrismaAssignedStepRunsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerAssignEventModel()
+	assignedStepRunsField()
+}
+
+type workerAssignEventWithPrismaAssignedStepRunsSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerAssignEventWithPrismaAssignedStepRunsSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerAssignEventWithPrismaAssignedStepRunsSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerAssignEventWithPrismaAssignedStepRunsSetParam) workerAssignEventModel() {}
+
+func (p workerAssignEventWithPrismaAssignedStepRunsSetParam) assignedStepRunsField() {}
+
+type WorkerAssignEventWithPrismaAssignedStepRunsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerAssignEventModel()
+	assignedStepRunsField()
+}
+
+type workerAssignEventWithPrismaAssignedStepRunsEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerAssignEventWithPrismaAssignedStepRunsEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerAssignEventWithPrismaAssignedStepRunsEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerAssignEventWithPrismaAssignedStepRunsEqualsParam) workerAssignEventModel() {}
+
+func (p workerAssignEventWithPrismaAssignedStepRunsEqualsParam) assignedStepRunsField() {}
+
+func (workerAssignEventWithPrismaAssignedStepRunsSetParam) settable()  {}
+func (workerAssignEventWithPrismaAssignedStepRunsEqualsParam) equals() {}
+
+type workerAssignEventWithPrismaAssignedStepRunsEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerAssignEventWithPrismaAssignedStepRunsEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerAssignEventWithPrismaAssignedStepRunsEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerAssignEventWithPrismaAssignedStepRunsEqualsUniqueParam) workerAssignEventModel() {}
+func (p workerAssignEventWithPrismaAssignedStepRunsEqualsUniqueParam) assignedStepRunsField()  {}
+
+func (workerAssignEventWithPrismaAssignedStepRunsEqualsUniqueParam) unique() {}
+func (workerAssignEventWithPrismaAssignedStepRunsEqualsUniqueParam) equals() {}
 
 type serviceActions struct {
 	// client holds the prisma client
@@ -261434,6 +268080,78 @@ func (r queueItemCreateOne) Tx() QueueItemUniqueTxResult {
 	return v
 }
 
+// Creates a single internalQueueItem.
+func (r internalQueueItemActions) CreateOne(
+	_queue InternalQueueItemWithPrismaQueueSetParam,
+	_isQueued InternalQueueItemWithPrismaIsQueuedSetParam,
+	_tenantID InternalQueueItemWithPrismaTenantIDSetParam,
+
+	optional ...InternalQueueItemSetParam,
+) internalQueueItemCreateOne {
+	var v internalQueueItemCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "InternalQueueItem"
+	v.query.Outputs = internalQueueItemOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _queue.field())
+	fields = append(fields, _isQueued.field())
+	fields = append(fields, _tenantID.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r internalQueueItemCreateOne) With(params ...InternalQueueItemRelationWith) internalQueueItemCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type internalQueueItemCreateOne struct {
+	query builder.Query
+}
+
+func (p internalQueueItemCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p internalQueueItemCreateOne) internalQueueItemModel() {}
+
+func (r internalQueueItemCreateOne) Exec(ctx context.Context) (*InternalQueueItemModel, error) {
+	var v InternalQueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r internalQueueItemCreateOne) Tx() InternalQueueItemUniqueTxResult {
+	v := newInternalQueueItemUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 // Creates a single stepRunEvent.
 func (r stepRunEventActions) CreateOne(
 	_stepRun StepRunEventWithPrismaStepRunSetParam,
@@ -261981,6 +268699,144 @@ func (r workerSemaphoreSlotCreateOne) Exec(ctx context.Context) (*WorkerSemaphor
 
 func (r workerSemaphoreSlotCreateOne) Tx() WorkerSemaphoreSlotUniqueTxResult {
 	v := newWorkerSemaphoreSlotUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+// Creates a single workerSemaphoreCount.
+func (r workerSemaphoreCountActions) CreateOne(
+	_worker WorkerSemaphoreCountWithPrismaWorkerSetParam,
+	_count WorkerSemaphoreCountWithPrismaCountSetParam,
+
+	optional ...WorkerSemaphoreCountSetParam,
+) workerSemaphoreCountCreateOne {
+	var v workerSemaphoreCountCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "WorkerSemaphoreCount"
+	v.query.Outputs = workerSemaphoreCountOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _worker.field())
+	fields = append(fields, _count.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r workerSemaphoreCountCreateOne) With(params ...WorkerSemaphoreCountRelationWith) workerSemaphoreCountCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type workerSemaphoreCountCreateOne struct {
+	query builder.Query
+}
+
+func (p workerSemaphoreCountCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p workerSemaphoreCountCreateOne) workerSemaphoreCountModel() {}
+
+func (r workerSemaphoreCountCreateOne) Exec(ctx context.Context) (*WorkerSemaphoreCountModel, error) {
+	var v WorkerSemaphoreCountModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerSemaphoreCountCreateOne) Tx() WorkerSemaphoreCountUniqueTxResult {
+	v := newWorkerSemaphoreCountUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+// Creates a single workerAssignEvent.
+func (r workerAssignEventActions) CreateOne(
+	_worker WorkerAssignEventWithPrismaWorkerSetParam,
+
+	optional ...WorkerAssignEventSetParam,
+) workerAssignEventCreateOne {
+	var v workerAssignEventCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "WorkerAssignEvent"
+	v.query.Outputs = workerAssignEventOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _worker.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r workerAssignEventCreateOne) With(params ...WorkerAssignEventRelationWith) workerAssignEventCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type workerAssignEventCreateOne struct {
+	query builder.Query
+}
+
+func (p workerAssignEventCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p workerAssignEventCreateOne) workerAssignEventModel() {}
+
+func (r workerAssignEventCreateOne) Exec(ctx context.Context) (*WorkerAssignEventModel, error) {
+	var v WorkerAssignEventModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerAssignEventCreateOne) Tx() WorkerAssignEventUniqueTxResult {
+	v := newWorkerAssignEventUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -377295,6 +384151,656 @@ func (r queueItemDeleteMany) Tx() QueueItemManyTxResult {
 	return v
 }
 
+type internalQueueItemFindUnique struct {
+	query builder.Query
+}
+
+func (r internalQueueItemFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r internalQueueItemFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r internalQueueItemFindUnique) with()                      {}
+func (r internalQueueItemFindUnique) internalQueueItemModel()    {}
+func (r internalQueueItemFindUnique) internalQueueItemRelation() {}
+
+func (r internalQueueItemActions) FindUnique(
+	params InternalQueueItemEqualsUniqueWhereParam,
+) internalQueueItemFindUnique {
+	var v internalQueueItemFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "InternalQueueItem"
+	v.query.Outputs = internalQueueItemOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r internalQueueItemFindUnique) With(params ...InternalQueueItemRelationWith) internalQueueItemFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r internalQueueItemFindUnique) Select(params ...internalQueueItemPrismaFields) internalQueueItemFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r internalQueueItemFindUnique) Omit(params ...internalQueueItemPrismaFields) internalQueueItemFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range internalQueueItemOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r internalQueueItemFindUnique) Exec(ctx context.Context) (
+	*InternalQueueItemModel,
+	error,
+) {
+	var v *InternalQueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r internalQueueItemFindUnique) ExecInner(ctx context.Context) (
+	*InnerInternalQueueItem,
+	error,
+) {
+	var v *InnerInternalQueueItem
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r internalQueueItemFindUnique) Update(params ...InternalQueueItemSetParam) internalQueueItemUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "InternalQueueItem"
+
+	var v internalQueueItemUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type internalQueueItemUpdateUnique struct {
+	query builder.Query
+}
+
+func (r internalQueueItemUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r internalQueueItemUpdateUnique) internalQueueItemModel() {}
+
+func (r internalQueueItemUpdateUnique) Exec(ctx context.Context) (*InternalQueueItemModel, error) {
+	var v InternalQueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r internalQueueItemUpdateUnique) Tx() InternalQueueItemUniqueTxResult {
+	v := newInternalQueueItemUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r internalQueueItemFindUnique) Delete() internalQueueItemDeleteUnique {
+	var v internalQueueItemDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "InternalQueueItem"
+
+	return v
+}
+
+type internalQueueItemDeleteUnique struct {
+	query builder.Query
+}
+
+func (r internalQueueItemDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p internalQueueItemDeleteUnique) internalQueueItemModel() {}
+
+func (r internalQueueItemDeleteUnique) Exec(ctx context.Context) (*InternalQueueItemModel, error) {
+	var v InternalQueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r internalQueueItemDeleteUnique) Tx() InternalQueueItemUniqueTxResult {
+	v := newInternalQueueItemUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type internalQueueItemFindFirst struct {
+	query builder.Query
+}
+
+func (r internalQueueItemFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r internalQueueItemFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r internalQueueItemFindFirst) with()                      {}
+func (r internalQueueItemFindFirst) internalQueueItemModel()    {}
+func (r internalQueueItemFindFirst) internalQueueItemRelation() {}
+
+func (r internalQueueItemActions) FindFirst(
+	params ...InternalQueueItemWhereParam,
+) internalQueueItemFindFirst {
+	var v internalQueueItemFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "InternalQueueItem"
+	v.query.Outputs = internalQueueItemOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r internalQueueItemFindFirst) With(params ...InternalQueueItemRelationWith) internalQueueItemFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r internalQueueItemFindFirst) Select(params ...internalQueueItemPrismaFields) internalQueueItemFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r internalQueueItemFindFirst) Omit(params ...internalQueueItemPrismaFields) internalQueueItemFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range internalQueueItemOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r internalQueueItemFindFirst) OrderBy(params ...InternalQueueItemOrderByParam) internalQueueItemFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r internalQueueItemFindFirst) Skip(count int) internalQueueItemFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r internalQueueItemFindFirst) Take(count int) internalQueueItemFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r internalQueueItemFindFirst) Cursor(cursor InternalQueueItemCursorParam) internalQueueItemFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r internalQueueItemFindFirst) Exec(ctx context.Context) (
+	*InternalQueueItemModel,
+	error,
+) {
+	var v *InternalQueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r internalQueueItemFindFirst) ExecInner(ctx context.Context) (
+	*InnerInternalQueueItem,
+	error,
+) {
+	var v *InnerInternalQueueItem
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type internalQueueItemFindMany struct {
+	query builder.Query
+}
+
+func (r internalQueueItemFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r internalQueueItemFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r internalQueueItemFindMany) with()                      {}
+func (r internalQueueItemFindMany) internalQueueItemModel()    {}
+func (r internalQueueItemFindMany) internalQueueItemRelation() {}
+
+func (r internalQueueItemActions) FindMany(
+	params ...InternalQueueItemWhereParam,
+) internalQueueItemFindMany {
+	var v internalQueueItemFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "InternalQueueItem"
+	v.query.Outputs = internalQueueItemOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r internalQueueItemFindMany) With(params ...InternalQueueItemRelationWith) internalQueueItemFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r internalQueueItemFindMany) Select(params ...internalQueueItemPrismaFields) internalQueueItemFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r internalQueueItemFindMany) Omit(params ...internalQueueItemPrismaFields) internalQueueItemFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range internalQueueItemOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r internalQueueItemFindMany) OrderBy(params ...InternalQueueItemOrderByParam) internalQueueItemFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r internalQueueItemFindMany) Skip(count int) internalQueueItemFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r internalQueueItemFindMany) Take(count int) internalQueueItemFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r internalQueueItemFindMany) Cursor(cursor InternalQueueItemCursorParam) internalQueueItemFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r internalQueueItemFindMany) Exec(ctx context.Context) (
+	[]InternalQueueItemModel,
+	error,
+) {
+	var v []InternalQueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r internalQueueItemFindMany) ExecInner(ctx context.Context) (
+	[]InnerInternalQueueItem,
+	error,
+) {
+	var v []InnerInternalQueueItem
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r internalQueueItemFindMany) Update(params ...InternalQueueItemSetParam) internalQueueItemUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "InternalQueueItem"
+
+	r.query.Outputs = countOutput
+
+	var v internalQueueItemUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type internalQueueItemUpdateMany struct {
+	query builder.Query
+}
+
+func (r internalQueueItemUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r internalQueueItemUpdateMany) internalQueueItemModel() {}
+
+func (r internalQueueItemUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r internalQueueItemUpdateMany) Tx() InternalQueueItemManyTxResult {
+	v := newInternalQueueItemManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r internalQueueItemFindMany) Delete() internalQueueItemDeleteMany {
+	var v internalQueueItemDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "InternalQueueItem"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type internalQueueItemDeleteMany struct {
+	query builder.Query
+}
+
+func (r internalQueueItemDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p internalQueueItemDeleteMany) internalQueueItemModel() {}
+
+func (r internalQueueItemDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r internalQueueItemDeleteMany) Tx() InternalQueueItemManyTxResult {
+	v := newInternalQueueItemManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 type stepRunEventToStepRunFindUnique struct {
 	query builder.Query
 }
@@ -390517,6 +398023,1114 @@ func (r workerToSlotsDeleteMany) Tx() WorkerManyTxResult {
 	return v
 }
 
+type workerToSemaphoreCountFindUnique struct {
+	query builder.Query
+}
+
+func (r workerToSemaphoreCountFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToSemaphoreCountFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToSemaphoreCountFindUnique) with()           {}
+func (r workerToSemaphoreCountFindUnique) workerModel()    {}
+func (r workerToSemaphoreCountFindUnique) workerRelation() {}
+
+func (r workerToSemaphoreCountFindUnique) With(params ...WorkerSemaphoreCountRelationWith) workerToSemaphoreCountFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerToSemaphoreCountFindUnique) Select(params ...workerPrismaFields) workerToSemaphoreCountFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerToSemaphoreCountFindUnique) Omit(params ...workerPrismaFields) workerToSemaphoreCountFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerToSemaphoreCountFindUnique) Exec(ctx context.Context) (
+	*WorkerModel,
+	error,
+) {
+	var v *WorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerToSemaphoreCountFindUnique) ExecInner(ctx context.Context) (
+	*InnerWorker,
+	error,
+) {
+	var v *InnerWorker
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerToSemaphoreCountFindUnique) Update(params ...WorkerSetParam) workerToSemaphoreCountUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Worker"
+
+	var v workerToSemaphoreCountUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workerToSemaphoreCountUpdateUnique struct {
+	query builder.Query
+}
+
+func (r workerToSemaphoreCountUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToSemaphoreCountUpdateUnique) workerModel() {}
+
+func (r workerToSemaphoreCountUpdateUnique) Exec(ctx context.Context) (*WorkerModel, error) {
+	var v WorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerToSemaphoreCountUpdateUnique) Tx() WorkerUniqueTxResult {
+	v := newWorkerUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workerToSemaphoreCountFindUnique) Delete() workerToSemaphoreCountDeleteUnique {
+	var v workerToSemaphoreCountDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Worker"
+
+	return v
+}
+
+type workerToSemaphoreCountDeleteUnique struct {
+	query builder.Query
+}
+
+func (r workerToSemaphoreCountDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workerToSemaphoreCountDeleteUnique) workerModel() {}
+
+func (r workerToSemaphoreCountDeleteUnique) Exec(ctx context.Context) (*WorkerModel, error) {
+	var v WorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerToSemaphoreCountDeleteUnique) Tx() WorkerUniqueTxResult {
+	v := newWorkerUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workerToSemaphoreCountFindFirst struct {
+	query builder.Query
+}
+
+func (r workerToSemaphoreCountFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToSemaphoreCountFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToSemaphoreCountFindFirst) with()           {}
+func (r workerToSemaphoreCountFindFirst) workerModel()    {}
+func (r workerToSemaphoreCountFindFirst) workerRelation() {}
+
+func (r workerToSemaphoreCountFindFirst) With(params ...WorkerSemaphoreCountRelationWith) workerToSemaphoreCountFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerToSemaphoreCountFindFirst) Select(params ...workerPrismaFields) workerToSemaphoreCountFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerToSemaphoreCountFindFirst) Omit(params ...workerPrismaFields) workerToSemaphoreCountFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerToSemaphoreCountFindFirst) OrderBy(params ...WorkerSemaphoreCountOrderByParam) workerToSemaphoreCountFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workerToSemaphoreCountFindFirst) Skip(count int) workerToSemaphoreCountFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerToSemaphoreCountFindFirst) Take(count int) workerToSemaphoreCountFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerToSemaphoreCountFindFirst) Cursor(cursor WorkerCursorParam) workerToSemaphoreCountFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workerToSemaphoreCountFindFirst) Exec(ctx context.Context) (
+	*WorkerModel,
+	error,
+) {
+	var v *WorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerToSemaphoreCountFindFirst) ExecInner(ctx context.Context) (
+	*InnerWorker,
+	error,
+) {
+	var v *InnerWorker
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type workerToSemaphoreCountFindMany struct {
+	query builder.Query
+}
+
+func (r workerToSemaphoreCountFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToSemaphoreCountFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToSemaphoreCountFindMany) with()           {}
+func (r workerToSemaphoreCountFindMany) workerModel()    {}
+func (r workerToSemaphoreCountFindMany) workerRelation() {}
+
+func (r workerToSemaphoreCountFindMany) With(params ...WorkerSemaphoreCountRelationWith) workerToSemaphoreCountFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerToSemaphoreCountFindMany) Select(params ...workerPrismaFields) workerToSemaphoreCountFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerToSemaphoreCountFindMany) Omit(params ...workerPrismaFields) workerToSemaphoreCountFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerToSemaphoreCountFindMany) OrderBy(params ...WorkerSemaphoreCountOrderByParam) workerToSemaphoreCountFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workerToSemaphoreCountFindMany) Skip(count int) workerToSemaphoreCountFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerToSemaphoreCountFindMany) Take(count int) workerToSemaphoreCountFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerToSemaphoreCountFindMany) Cursor(cursor WorkerCursorParam) workerToSemaphoreCountFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workerToSemaphoreCountFindMany) Exec(ctx context.Context) (
+	[]WorkerModel,
+	error,
+) {
+	var v []WorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workerToSemaphoreCountFindMany) ExecInner(ctx context.Context) (
+	[]InnerWorker,
+	error,
+) {
+	var v []InnerWorker
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workerToSemaphoreCountFindMany) Update(params ...WorkerSetParam) workerToSemaphoreCountUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Worker"
+
+	r.query.Outputs = countOutput
+
+	var v workerToSemaphoreCountUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workerToSemaphoreCountUpdateMany struct {
+	query builder.Query
+}
+
+func (r workerToSemaphoreCountUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToSemaphoreCountUpdateMany) workerModel() {}
+
+func (r workerToSemaphoreCountUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerToSemaphoreCountUpdateMany) Tx() WorkerManyTxResult {
+	v := newWorkerManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workerToSemaphoreCountFindMany) Delete() workerToSemaphoreCountDeleteMany {
+	var v workerToSemaphoreCountDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Worker"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type workerToSemaphoreCountDeleteMany struct {
+	query builder.Query
+}
+
+func (r workerToSemaphoreCountDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workerToSemaphoreCountDeleteMany) workerModel() {}
+
+func (r workerToSemaphoreCountDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerToSemaphoreCountDeleteMany) Tx() WorkerManyTxResult {
+	v := newWorkerManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workerToAssignedEventsFindUnique struct {
+	query builder.Query
+}
+
+func (r workerToAssignedEventsFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToAssignedEventsFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToAssignedEventsFindUnique) with()           {}
+func (r workerToAssignedEventsFindUnique) workerModel()    {}
+func (r workerToAssignedEventsFindUnique) workerRelation() {}
+
+func (r workerToAssignedEventsFindUnique) With(params ...WorkerAssignEventRelationWith) workerToAssignedEventsFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerToAssignedEventsFindUnique) Select(params ...workerPrismaFields) workerToAssignedEventsFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerToAssignedEventsFindUnique) Omit(params ...workerPrismaFields) workerToAssignedEventsFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerToAssignedEventsFindUnique) Exec(ctx context.Context) (
+	*WorkerModel,
+	error,
+) {
+	var v *WorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerToAssignedEventsFindUnique) ExecInner(ctx context.Context) (
+	*InnerWorker,
+	error,
+) {
+	var v *InnerWorker
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerToAssignedEventsFindUnique) Update(params ...WorkerSetParam) workerToAssignedEventsUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Worker"
+
+	var v workerToAssignedEventsUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workerToAssignedEventsUpdateUnique struct {
+	query builder.Query
+}
+
+func (r workerToAssignedEventsUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToAssignedEventsUpdateUnique) workerModel() {}
+
+func (r workerToAssignedEventsUpdateUnique) Exec(ctx context.Context) (*WorkerModel, error) {
+	var v WorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerToAssignedEventsUpdateUnique) Tx() WorkerUniqueTxResult {
+	v := newWorkerUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workerToAssignedEventsFindUnique) Delete() workerToAssignedEventsDeleteUnique {
+	var v workerToAssignedEventsDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Worker"
+
+	return v
+}
+
+type workerToAssignedEventsDeleteUnique struct {
+	query builder.Query
+}
+
+func (r workerToAssignedEventsDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workerToAssignedEventsDeleteUnique) workerModel() {}
+
+func (r workerToAssignedEventsDeleteUnique) Exec(ctx context.Context) (*WorkerModel, error) {
+	var v WorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerToAssignedEventsDeleteUnique) Tx() WorkerUniqueTxResult {
+	v := newWorkerUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workerToAssignedEventsFindFirst struct {
+	query builder.Query
+}
+
+func (r workerToAssignedEventsFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToAssignedEventsFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToAssignedEventsFindFirst) with()           {}
+func (r workerToAssignedEventsFindFirst) workerModel()    {}
+func (r workerToAssignedEventsFindFirst) workerRelation() {}
+
+func (r workerToAssignedEventsFindFirst) With(params ...WorkerAssignEventRelationWith) workerToAssignedEventsFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerToAssignedEventsFindFirst) Select(params ...workerPrismaFields) workerToAssignedEventsFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerToAssignedEventsFindFirst) Omit(params ...workerPrismaFields) workerToAssignedEventsFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerToAssignedEventsFindFirst) OrderBy(params ...WorkerAssignEventOrderByParam) workerToAssignedEventsFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workerToAssignedEventsFindFirst) Skip(count int) workerToAssignedEventsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerToAssignedEventsFindFirst) Take(count int) workerToAssignedEventsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerToAssignedEventsFindFirst) Cursor(cursor WorkerCursorParam) workerToAssignedEventsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workerToAssignedEventsFindFirst) Exec(ctx context.Context) (
+	*WorkerModel,
+	error,
+) {
+	var v *WorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerToAssignedEventsFindFirst) ExecInner(ctx context.Context) (
+	*InnerWorker,
+	error,
+) {
+	var v *InnerWorker
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type workerToAssignedEventsFindMany struct {
+	query builder.Query
+}
+
+func (r workerToAssignedEventsFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToAssignedEventsFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToAssignedEventsFindMany) with()           {}
+func (r workerToAssignedEventsFindMany) workerModel()    {}
+func (r workerToAssignedEventsFindMany) workerRelation() {}
+
+func (r workerToAssignedEventsFindMany) With(params ...WorkerAssignEventRelationWith) workerToAssignedEventsFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerToAssignedEventsFindMany) Select(params ...workerPrismaFields) workerToAssignedEventsFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerToAssignedEventsFindMany) Omit(params ...workerPrismaFields) workerToAssignedEventsFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerToAssignedEventsFindMany) OrderBy(params ...WorkerAssignEventOrderByParam) workerToAssignedEventsFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workerToAssignedEventsFindMany) Skip(count int) workerToAssignedEventsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerToAssignedEventsFindMany) Take(count int) workerToAssignedEventsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerToAssignedEventsFindMany) Cursor(cursor WorkerCursorParam) workerToAssignedEventsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workerToAssignedEventsFindMany) Exec(ctx context.Context) (
+	[]WorkerModel,
+	error,
+) {
+	var v []WorkerModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workerToAssignedEventsFindMany) ExecInner(ctx context.Context) (
+	[]InnerWorker,
+	error,
+) {
+	var v []InnerWorker
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workerToAssignedEventsFindMany) Update(params ...WorkerSetParam) workerToAssignedEventsUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Worker"
+
+	r.query.Outputs = countOutput
+
+	var v workerToAssignedEventsUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workerToAssignedEventsUpdateMany struct {
+	query builder.Query
+}
+
+func (r workerToAssignedEventsUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerToAssignedEventsUpdateMany) workerModel() {}
+
+func (r workerToAssignedEventsUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerToAssignedEventsUpdateMany) Tx() WorkerManyTxResult {
+	v := newWorkerManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workerToAssignedEventsFindMany) Delete() workerToAssignedEventsDeleteMany {
+	var v workerToAssignedEventsDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Worker"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type workerToAssignedEventsDeleteMany struct {
+	query builder.Query
+}
+
+func (r workerToAssignedEventsDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workerToAssignedEventsDeleteMany) workerModel() {}
+
+func (r workerToAssignedEventsDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerToAssignedEventsDeleteMany) Tx() WorkerManyTxResult {
+	v := newWorkerManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 type workerToWebhookFindUnique struct {
 	query builder.Query
 }
@@ -395232,6 +403846,2414 @@ func (r workerSemaphoreSlotDeleteMany) Exec(ctx context.Context) (*BatchResult, 
 
 func (r workerSemaphoreSlotDeleteMany) Tx() WorkerSemaphoreSlotManyTxResult {
 	v := newWorkerSemaphoreSlotManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workerSemaphoreCountToWorkerFindUnique struct {
+	query builder.Query
+}
+
+func (r workerSemaphoreCountToWorkerFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerSemaphoreCountToWorkerFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerSemaphoreCountToWorkerFindUnique) with()                         {}
+func (r workerSemaphoreCountToWorkerFindUnique) workerSemaphoreCountModel()    {}
+func (r workerSemaphoreCountToWorkerFindUnique) workerSemaphoreCountRelation() {}
+
+func (r workerSemaphoreCountToWorkerFindUnique) With(params ...WorkerRelationWith) workerSemaphoreCountToWorkerFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerSemaphoreCountToWorkerFindUnique) Select(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountToWorkerFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerSemaphoreCountToWorkerFindUnique) Omit(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountToWorkerFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerSemaphoreCountOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerSemaphoreCountToWorkerFindUnique) Exec(ctx context.Context) (
+	*WorkerSemaphoreCountModel,
+	error,
+) {
+	var v *WorkerSemaphoreCountModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerSemaphoreCountToWorkerFindUnique) ExecInner(ctx context.Context) (
+	*InnerWorkerSemaphoreCount,
+	error,
+) {
+	var v *InnerWorkerSemaphoreCount
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerSemaphoreCountToWorkerFindUnique) Update(params ...WorkerSemaphoreCountSetParam) workerSemaphoreCountToWorkerUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "WorkerSemaphoreCount"
+
+	var v workerSemaphoreCountToWorkerUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workerSemaphoreCountToWorkerUpdateUnique struct {
+	query builder.Query
+}
+
+func (r workerSemaphoreCountToWorkerUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerSemaphoreCountToWorkerUpdateUnique) workerSemaphoreCountModel() {}
+
+func (r workerSemaphoreCountToWorkerUpdateUnique) Exec(ctx context.Context) (*WorkerSemaphoreCountModel, error) {
+	var v WorkerSemaphoreCountModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerSemaphoreCountToWorkerUpdateUnique) Tx() WorkerSemaphoreCountUniqueTxResult {
+	v := newWorkerSemaphoreCountUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workerSemaphoreCountToWorkerFindUnique) Delete() workerSemaphoreCountToWorkerDeleteUnique {
+	var v workerSemaphoreCountToWorkerDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "WorkerSemaphoreCount"
+
+	return v
+}
+
+type workerSemaphoreCountToWorkerDeleteUnique struct {
+	query builder.Query
+}
+
+func (r workerSemaphoreCountToWorkerDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workerSemaphoreCountToWorkerDeleteUnique) workerSemaphoreCountModel() {}
+
+func (r workerSemaphoreCountToWorkerDeleteUnique) Exec(ctx context.Context) (*WorkerSemaphoreCountModel, error) {
+	var v WorkerSemaphoreCountModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerSemaphoreCountToWorkerDeleteUnique) Tx() WorkerSemaphoreCountUniqueTxResult {
+	v := newWorkerSemaphoreCountUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workerSemaphoreCountToWorkerFindFirst struct {
+	query builder.Query
+}
+
+func (r workerSemaphoreCountToWorkerFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerSemaphoreCountToWorkerFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerSemaphoreCountToWorkerFindFirst) with()                         {}
+func (r workerSemaphoreCountToWorkerFindFirst) workerSemaphoreCountModel()    {}
+func (r workerSemaphoreCountToWorkerFindFirst) workerSemaphoreCountRelation() {}
+
+func (r workerSemaphoreCountToWorkerFindFirst) With(params ...WorkerRelationWith) workerSemaphoreCountToWorkerFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerSemaphoreCountToWorkerFindFirst) Select(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountToWorkerFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerSemaphoreCountToWorkerFindFirst) Omit(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountToWorkerFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerSemaphoreCountOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerSemaphoreCountToWorkerFindFirst) OrderBy(params ...WorkerOrderByParam) workerSemaphoreCountToWorkerFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workerSemaphoreCountToWorkerFindFirst) Skip(count int) workerSemaphoreCountToWorkerFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerSemaphoreCountToWorkerFindFirst) Take(count int) workerSemaphoreCountToWorkerFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerSemaphoreCountToWorkerFindFirst) Cursor(cursor WorkerSemaphoreCountCursorParam) workerSemaphoreCountToWorkerFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workerSemaphoreCountToWorkerFindFirst) Exec(ctx context.Context) (
+	*WorkerSemaphoreCountModel,
+	error,
+) {
+	var v *WorkerSemaphoreCountModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerSemaphoreCountToWorkerFindFirst) ExecInner(ctx context.Context) (
+	*InnerWorkerSemaphoreCount,
+	error,
+) {
+	var v *InnerWorkerSemaphoreCount
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type workerSemaphoreCountToWorkerFindMany struct {
+	query builder.Query
+}
+
+func (r workerSemaphoreCountToWorkerFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerSemaphoreCountToWorkerFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerSemaphoreCountToWorkerFindMany) with()                         {}
+func (r workerSemaphoreCountToWorkerFindMany) workerSemaphoreCountModel()    {}
+func (r workerSemaphoreCountToWorkerFindMany) workerSemaphoreCountRelation() {}
+
+func (r workerSemaphoreCountToWorkerFindMany) With(params ...WorkerRelationWith) workerSemaphoreCountToWorkerFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerSemaphoreCountToWorkerFindMany) Select(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountToWorkerFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerSemaphoreCountToWorkerFindMany) Omit(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountToWorkerFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerSemaphoreCountOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerSemaphoreCountToWorkerFindMany) OrderBy(params ...WorkerOrderByParam) workerSemaphoreCountToWorkerFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workerSemaphoreCountToWorkerFindMany) Skip(count int) workerSemaphoreCountToWorkerFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerSemaphoreCountToWorkerFindMany) Take(count int) workerSemaphoreCountToWorkerFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerSemaphoreCountToWorkerFindMany) Cursor(cursor WorkerSemaphoreCountCursorParam) workerSemaphoreCountToWorkerFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workerSemaphoreCountToWorkerFindMany) Exec(ctx context.Context) (
+	[]WorkerSemaphoreCountModel,
+	error,
+) {
+	var v []WorkerSemaphoreCountModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workerSemaphoreCountToWorkerFindMany) ExecInner(ctx context.Context) (
+	[]InnerWorkerSemaphoreCount,
+	error,
+) {
+	var v []InnerWorkerSemaphoreCount
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workerSemaphoreCountToWorkerFindMany) Update(params ...WorkerSemaphoreCountSetParam) workerSemaphoreCountToWorkerUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "WorkerSemaphoreCount"
+
+	r.query.Outputs = countOutput
+
+	var v workerSemaphoreCountToWorkerUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workerSemaphoreCountToWorkerUpdateMany struct {
+	query builder.Query
+}
+
+func (r workerSemaphoreCountToWorkerUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerSemaphoreCountToWorkerUpdateMany) workerSemaphoreCountModel() {}
+
+func (r workerSemaphoreCountToWorkerUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerSemaphoreCountToWorkerUpdateMany) Tx() WorkerSemaphoreCountManyTxResult {
+	v := newWorkerSemaphoreCountManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workerSemaphoreCountToWorkerFindMany) Delete() workerSemaphoreCountToWorkerDeleteMany {
+	var v workerSemaphoreCountToWorkerDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "WorkerSemaphoreCount"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type workerSemaphoreCountToWorkerDeleteMany struct {
+	query builder.Query
+}
+
+func (r workerSemaphoreCountToWorkerDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workerSemaphoreCountToWorkerDeleteMany) workerSemaphoreCountModel() {}
+
+func (r workerSemaphoreCountToWorkerDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerSemaphoreCountToWorkerDeleteMany) Tx() WorkerSemaphoreCountManyTxResult {
+	v := newWorkerSemaphoreCountManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workerSemaphoreCountFindUnique struct {
+	query builder.Query
+}
+
+func (r workerSemaphoreCountFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerSemaphoreCountFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerSemaphoreCountFindUnique) with()                         {}
+func (r workerSemaphoreCountFindUnique) workerSemaphoreCountModel()    {}
+func (r workerSemaphoreCountFindUnique) workerSemaphoreCountRelation() {}
+
+func (r workerSemaphoreCountActions) FindUnique(
+	params WorkerSemaphoreCountEqualsUniqueWhereParam,
+) workerSemaphoreCountFindUnique {
+	var v workerSemaphoreCountFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "WorkerSemaphoreCount"
+	v.query.Outputs = workerSemaphoreCountOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r workerSemaphoreCountFindUnique) With(params ...WorkerSemaphoreCountRelationWith) workerSemaphoreCountFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerSemaphoreCountFindUnique) Select(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerSemaphoreCountFindUnique) Omit(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerSemaphoreCountOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerSemaphoreCountFindUnique) Exec(ctx context.Context) (
+	*WorkerSemaphoreCountModel,
+	error,
+) {
+	var v *WorkerSemaphoreCountModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerSemaphoreCountFindUnique) ExecInner(ctx context.Context) (
+	*InnerWorkerSemaphoreCount,
+	error,
+) {
+	var v *InnerWorkerSemaphoreCount
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerSemaphoreCountFindUnique) Update(params ...WorkerSemaphoreCountSetParam) workerSemaphoreCountUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "WorkerSemaphoreCount"
+
+	var v workerSemaphoreCountUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workerSemaphoreCountUpdateUnique struct {
+	query builder.Query
+}
+
+func (r workerSemaphoreCountUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerSemaphoreCountUpdateUnique) workerSemaphoreCountModel() {}
+
+func (r workerSemaphoreCountUpdateUnique) Exec(ctx context.Context) (*WorkerSemaphoreCountModel, error) {
+	var v WorkerSemaphoreCountModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerSemaphoreCountUpdateUnique) Tx() WorkerSemaphoreCountUniqueTxResult {
+	v := newWorkerSemaphoreCountUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workerSemaphoreCountFindUnique) Delete() workerSemaphoreCountDeleteUnique {
+	var v workerSemaphoreCountDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "WorkerSemaphoreCount"
+
+	return v
+}
+
+type workerSemaphoreCountDeleteUnique struct {
+	query builder.Query
+}
+
+func (r workerSemaphoreCountDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workerSemaphoreCountDeleteUnique) workerSemaphoreCountModel() {}
+
+func (r workerSemaphoreCountDeleteUnique) Exec(ctx context.Context) (*WorkerSemaphoreCountModel, error) {
+	var v WorkerSemaphoreCountModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerSemaphoreCountDeleteUnique) Tx() WorkerSemaphoreCountUniqueTxResult {
+	v := newWorkerSemaphoreCountUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workerSemaphoreCountFindFirst struct {
+	query builder.Query
+}
+
+func (r workerSemaphoreCountFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerSemaphoreCountFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerSemaphoreCountFindFirst) with()                         {}
+func (r workerSemaphoreCountFindFirst) workerSemaphoreCountModel()    {}
+func (r workerSemaphoreCountFindFirst) workerSemaphoreCountRelation() {}
+
+func (r workerSemaphoreCountActions) FindFirst(
+	params ...WorkerSemaphoreCountWhereParam,
+) workerSemaphoreCountFindFirst {
+	var v workerSemaphoreCountFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "WorkerSemaphoreCount"
+	v.query.Outputs = workerSemaphoreCountOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r workerSemaphoreCountFindFirst) With(params ...WorkerSemaphoreCountRelationWith) workerSemaphoreCountFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerSemaphoreCountFindFirst) Select(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerSemaphoreCountFindFirst) Omit(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerSemaphoreCountOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerSemaphoreCountFindFirst) OrderBy(params ...WorkerSemaphoreCountOrderByParam) workerSemaphoreCountFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workerSemaphoreCountFindFirst) Skip(count int) workerSemaphoreCountFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerSemaphoreCountFindFirst) Take(count int) workerSemaphoreCountFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerSemaphoreCountFindFirst) Cursor(cursor WorkerSemaphoreCountCursorParam) workerSemaphoreCountFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workerSemaphoreCountFindFirst) Exec(ctx context.Context) (
+	*WorkerSemaphoreCountModel,
+	error,
+) {
+	var v *WorkerSemaphoreCountModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerSemaphoreCountFindFirst) ExecInner(ctx context.Context) (
+	*InnerWorkerSemaphoreCount,
+	error,
+) {
+	var v *InnerWorkerSemaphoreCount
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type workerSemaphoreCountFindMany struct {
+	query builder.Query
+}
+
+func (r workerSemaphoreCountFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerSemaphoreCountFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerSemaphoreCountFindMany) with()                         {}
+func (r workerSemaphoreCountFindMany) workerSemaphoreCountModel()    {}
+func (r workerSemaphoreCountFindMany) workerSemaphoreCountRelation() {}
+
+func (r workerSemaphoreCountActions) FindMany(
+	params ...WorkerSemaphoreCountWhereParam,
+) workerSemaphoreCountFindMany {
+	var v workerSemaphoreCountFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "WorkerSemaphoreCount"
+	v.query.Outputs = workerSemaphoreCountOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r workerSemaphoreCountFindMany) With(params ...WorkerSemaphoreCountRelationWith) workerSemaphoreCountFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerSemaphoreCountFindMany) Select(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerSemaphoreCountFindMany) Omit(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerSemaphoreCountOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerSemaphoreCountFindMany) OrderBy(params ...WorkerSemaphoreCountOrderByParam) workerSemaphoreCountFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workerSemaphoreCountFindMany) Skip(count int) workerSemaphoreCountFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerSemaphoreCountFindMany) Take(count int) workerSemaphoreCountFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerSemaphoreCountFindMany) Cursor(cursor WorkerSemaphoreCountCursorParam) workerSemaphoreCountFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workerSemaphoreCountFindMany) Exec(ctx context.Context) (
+	[]WorkerSemaphoreCountModel,
+	error,
+) {
+	var v []WorkerSemaphoreCountModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workerSemaphoreCountFindMany) ExecInner(ctx context.Context) (
+	[]InnerWorkerSemaphoreCount,
+	error,
+) {
+	var v []InnerWorkerSemaphoreCount
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workerSemaphoreCountFindMany) Update(params ...WorkerSemaphoreCountSetParam) workerSemaphoreCountUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "WorkerSemaphoreCount"
+
+	r.query.Outputs = countOutput
+
+	var v workerSemaphoreCountUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workerSemaphoreCountUpdateMany struct {
+	query builder.Query
+}
+
+func (r workerSemaphoreCountUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerSemaphoreCountUpdateMany) workerSemaphoreCountModel() {}
+
+func (r workerSemaphoreCountUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerSemaphoreCountUpdateMany) Tx() WorkerSemaphoreCountManyTxResult {
+	v := newWorkerSemaphoreCountManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workerSemaphoreCountFindMany) Delete() workerSemaphoreCountDeleteMany {
+	var v workerSemaphoreCountDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "WorkerSemaphoreCount"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type workerSemaphoreCountDeleteMany struct {
+	query builder.Query
+}
+
+func (r workerSemaphoreCountDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workerSemaphoreCountDeleteMany) workerSemaphoreCountModel() {}
+
+func (r workerSemaphoreCountDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerSemaphoreCountDeleteMany) Tx() WorkerSemaphoreCountManyTxResult {
+	v := newWorkerSemaphoreCountManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workerAssignEventToWorkerFindUnique struct {
+	query builder.Query
+}
+
+func (r workerAssignEventToWorkerFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerAssignEventToWorkerFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerAssignEventToWorkerFindUnique) with()                      {}
+func (r workerAssignEventToWorkerFindUnique) workerAssignEventModel()    {}
+func (r workerAssignEventToWorkerFindUnique) workerAssignEventRelation() {}
+
+func (r workerAssignEventToWorkerFindUnique) With(params ...WorkerRelationWith) workerAssignEventToWorkerFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerAssignEventToWorkerFindUnique) Select(params ...workerAssignEventPrismaFields) workerAssignEventToWorkerFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerAssignEventToWorkerFindUnique) Omit(params ...workerAssignEventPrismaFields) workerAssignEventToWorkerFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerAssignEventOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerAssignEventToWorkerFindUnique) Exec(ctx context.Context) (
+	*WorkerAssignEventModel,
+	error,
+) {
+	var v *WorkerAssignEventModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerAssignEventToWorkerFindUnique) ExecInner(ctx context.Context) (
+	*InnerWorkerAssignEvent,
+	error,
+) {
+	var v *InnerWorkerAssignEvent
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerAssignEventToWorkerFindUnique) Update(params ...WorkerAssignEventSetParam) workerAssignEventToWorkerUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "WorkerAssignEvent"
+
+	var v workerAssignEventToWorkerUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workerAssignEventToWorkerUpdateUnique struct {
+	query builder.Query
+}
+
+func (r workerAssignEventToWorkerUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerAssignEventToWorkerUpdateUnique) workerAssignEventModel() {}
+
+func (r workerAssignEventToWorkerUpdateUnique) Exec(ctx context.Context) (*WorkerAssignEventModel, error) {
+	var v WorkerAssignEventModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerAssignEventToWorkerUpdateUnique) Tx() WorkerAssignEventUniqueTxResult {
+	v := newWorkerAssignEventUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workerAssignEventToWorkerFindUnique) Delete() workerAssignEventToWorkerDeleteUnique {
+	var v workerAssignEventToWorkerDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "WorkerAssignEvent"
+
+	return v
+}
+
+type workerAssignEventToWorkerDeleteUnique struct {
+	query builder.Query
+}
+
+func (r workerAssignEventToWorkerDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workerAssignEventToWorkerDeleteUnique) workerAssignEventModel() {}
+
+func (r workerAssignEventToWorkerDeleteUnique) Exec(ctx context.Context) (*WorkerAssignEventModel, error) {
+	var v WorkerAssignEventModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerAssignEventToWorkerDeleteUnique) Tx() WorkerAssignEventUniqueTxResult {
+	v := newWorkerAssignEventUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workerAssignEventToWorkerFindFirst struct {
+	query builder.Query
+}
+
+func (r workerAssignEventToWorkerFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerAssignEventToWorkerFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerAssignEventToWorkerFindFirst) with()                      {}
+func (r workerAssignEventToWorkerFindFirst) workerAssignEventModel()    {}
+func (r workerAssignEventToWorkerFindFirst) workerAssignEventRelation() {}
+
+func (r workerAssignEventToWorkerFindFirst) With(params ...WorkerRelationWith) workerAssignEventToWorkerFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerAssignEventToWorkerFindFirst) Select(params ...workerAssignEventPrismaFields) workerAssignEventToWorkerFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerAssignEventToWorkerFindFirst) Omit(params ...workerAssignEventPrismaFields) workerAssignEventToWorkerFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerAssignEventOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerAssignEventToWorkerFindFirst) OrderBy(params ...WorkerOrderByParam) workerAssignEventToWorkerFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workerAssignEventToWorkerFindFirst) Skip(count int) workerAssignEventToWorkerFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerAssignEventToWorkerFindFirst) Take(count int) workerAssignEventToWorkerFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerAssignEventToWorkerFindFirst) Cursor(cursor WorkerAssignEventCursorParam) workerAssignEventToWorkerFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workerAssignEventToWorkerFindFirst) Exec(ctx context.Context) (
+	*WorkerAssignEventModel,
+	error,
+) {
+	var v *WorkerAssignEventModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerAssignEventToWorkerFindFirst) ExecInner(ctx context.Context) (
+	*InnerWorkerAssignEvent,
+	error,
+) {
+	var v *InnerWorkerAssignEvent
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type workerAssignEventToWorkerFindMany struct {
+	query builder.Query
+}
+
+func (r workerAssignEventToWorkerFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerAssignEventToWorkerFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerAssignEventToWorkerFindMany) with()                      {}
+func (r workerAssignEventToWorkerFindMany) workerAssignEventModel()    {}
+func (r workerAssignEventToWorkerFindMany) workerAssignEventRelation() {}
+
+func (r workerAssignEventToWorkerFindMany) With(params ...WorkerRelationWith) workerAssignEventToWorkerFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerAssignEventToWorkerFindMany) Select(params ...workerAssignEventPrismaFields) workerAssignEventToWorkerFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerAssignEventToWorkerFindMany) Omit(params ...workerAssignEventPrismaFields) workerAssignEventToWorkerFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerAssignEventOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerAssignEventToWorkerFindMany) OrderBy(params ...WorkerOrderByParam) workerAssignEventToWorkerFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workerAssignEventToWorkerFindMany) Skip(count int) workerAssignEventToWorkerFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerAssignEventToWorkerFindMany) Take(count int) workerAssignEventToWorkerFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerAssignEventToWorkerFindMany) Cursor(cursor WorkerAssignEventCursorParam) workerAssignEventToWorkerFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workerAssignEventToWorkerFindMany) Exec(ctx context.Context) (
+	[]WorkerAssignEventModel,
+	error,
+) {
+	var v []WorkerAssignEventModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workerAssignEventToWorkerFindMany) ExecInner(ctx context.Context) (
+	[]InnerWorkerAssignEvent,
+	error,
+) {
+	var v []InnerWorkerAssignEvent
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workerAssignEventToWorkerFindMany) Update(params ...WorkerAssignEventSetParam) workerAssignEventToWorkerUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "WorkerAssignEvent"
+
+	r.query.Outputs = countOutput
+
+	var v workerAssignEventToWorkerUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workerAssignEventToWorkerUpdateMany struct {
+	query builder.Query
+}
+
+func (r workerAssignEventToWorkerUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerAssignEventToWorkerUpdateMany) workerAssignEventModel() {}
+
+func (r workerAssignEventToWorkerUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerAssignEventToWorkerUpdateMany) Tx() WorkerAssignEventManyTxResult {
+	v := newWorkerAssignEventManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workerAssignEventToWorkerFindMany) Delete() workerAssignEventToWorkerDeleteMany {
+	var v workerAssignEventToWorkerDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "WorkerAssignEvent"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type workerAssignEventToWorkerDeleteMany struct {
+	query builder.Query
+}
+
+func (r workerAssignEventToWorkerDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workerAssignEventToWorkerDeleteMany) workerAssignEventModel() {}
+
+func (r workerAssignEventToWorkerDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerAssignEventToWorkerDeleteMany) Tx() WorkerAssignEventManyTxResult {
+	v := newWorkerAssignEventManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workerAssignEventFindUnique struct {
+	query builder.Query
+}
+
+func (r workerAssignEventFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerAssignEventFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerAssignEventFindUnique) with()                      {}
+func (r workerAssignEventFindUnique) workerAssignEventModel()    {}
+func (r workerAssignEventFindUnique) workerAssignEventRelation() {}
+
+func (r workerAssignEventActions) FindUnique(
+	params WorkerAssignEventEqualsUniqueWhereParam,
+) workerAssignEventFindUnique {
+	var v workerAssignEventFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "WorkerAssignEvent"
+	v.query.Outputs = workerAssignEventOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r workerAssignEventFindUnique) With(params ...WorkerAssignEventRelationWith) workerAssignEventFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerAssignEventFindUnique) Select(params ...workerAssignEventPrismaFields) workerAssignEventFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerAssignEventFindUnique) Omit(params ...workerAssignEventPrismaFields) workerAssignEventFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerAssignEventOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerAssignEventFindUnique) Exec(ctx context.Context) (
+	*WorkerAssignEventModel,
+	error,
+) {
+	var v *WorkerAssignEventModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerAssignEventFindUnique) ExecInner(ctx context.Context) (
+	*InnerWorkerAssignEvent,
+	error,
+) {
+	var v *InnerWorkerAssignEvent
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerAssignEventFindUnique) Update(params ...WorkerAssignEventSetParam) workerAssignEventUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "WorkerAssignEvent"
+
+	var v workerAssignEventUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workerAssignEventUpdateUnique struct {
+	query builder.Query
+}
+
+func (r workerAssignEventUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerAssignEventUpdateUnique) workerAssignEventModel() {}
+
+func (r workerAssignEventUpdateUnique) Exec(ctx context.Context) (*WorkerAssignEventModel, error) {
+	var v WorkerAssignEventModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerAssignEventUpdateUnique) Tx() WorkerAssignEventUniqueTxResult {
+	v := newWorkerAssignEventUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workerAssignEventFindUnique) Delete() workerAssignEventDeleteUnique {
+	var v workerAssignEventDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "WorkerAssignEvent"
+
+	return v
+}
+
+type workerAssignEventDeleteUnique struct {
+	query builder.Query
+}
+
+func (r workerAssignEventDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workerAssignEventDeleteUnique) workerAssignEventModel() {}
+
+func (r workerAssignEventDeleteUnique) Exec(ctx context.Context) (*WorkerAssignEventModel, error) {
+	var v WorkerAssignEventModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerAssignEventDeleteUnique) Tx() WorkerAssignEventUniqueTxResult {
+	v := newWorkerAssignEventUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workerAssignEventFindFirst struct {
+	query builder.Query
+}
+
+func (r workerAssignEventFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerAssignEventFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerAssignEventFindFirst) with()                      {}
+func (r workerAssignEventFindFirst) workerAssignEventModel()    {}
+func (r workerAssignEventFindFirst) workerAssignEventRelation() {}
+
+func (r workerAssignEventActions) FindFirst(
+	params ...WorkerAssignEventWhereParam,
+) workerAssignEventFindFirst {
+	var v workerAssignEventFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "WorkerAssignEvent"
+	v.query.Outputs = workerAssignEventOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r workerAssignEventFindFirst) With(params ...WorkerAssignEventRelationWith) workerAssignEventFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerAssignEventFindFirst) Select(params ...workerAssignEventPrismaFields) workerAssignEventFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerAssignEventFindFirst) Omit(params ...workerAssignEventPrismaFields) workerAssignEventFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerAssignEventOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerAssignEventFindFirst) OrderBy(params ...WorkerAssignEventOrderByParam) workerAssignEventFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workerAssignEventFindFirst) Skip(count int) workerAssignEventFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerAssignEventFindFirst) Take(count int) workerAssignEventFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerAssignEventFindFirst) Cursor(cursor WorkerAssignEventCursorParam) workerAssignEventFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workerAssignEventFindFirst) Exec(ctx context.Context) (
+	*WorkerAssignEventModel,
+	error,
+) {
+	var v *WorkerAssignEventModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r workerAssignEventFindFirst) ExecInner(ctx context.Context) (
+	*InnerWorkerAssignEvent,
+	error,
+) {
+	var v *InnerWorkerAssignEvent
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type workerAssignEventFindMany struct {
+	query builder.Query
+}
+
+func (r workerAssignEventFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerAssignEventFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerAssignEventFindMany) with()                      {}
+func (r workerAssignEventFindMany) workerAssignEventModel()    {}
+func (r workerAssignEventFindMany) workerAssignEventRelation() {}
+
+func (r workerAssignEventActions) FindMany(
+	params ...WorkerAssignEventWhereParam,
+) workerAssignEventFindMany {
+	var v workerAssignEventFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "WorkerAssignEvent"
+	v.query.Outputs = workerAssignEventOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r workerAssignEventFindMany) With(params ...WorkerAssignEventRelationWith) workerAssignEventFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r workerAssignEventFindMany) Select(params ...workerAssignEventPrismaFields) workerAssignEventFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerAssignEventFindMany) Omit(params ...workerAssignEventPrismaFields) workerAssignEventFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range workerAssignEventOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r workerAssignEventFindMany) OrderBy(params ...WorkerAssignEventOrderByParam) workerAssignEventFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r workerAssignEventFindMany) Skip(count int) workerAssignEventFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerAssignEventFindMany) Take(count int) workerAssignEventFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r workerAssignEventFindMany) Cursor(cursor WorkerAssignEventCursorParam) workerAssignEventFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r workerAssignEventFindMany) Exec(ctx context.Context) (
+	[]WorkerAssignEventModel,
+	error,
+) {
+	var v []WorkerAssignEventModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workerAssignEventFindMany) ExecInner(ctx context.Context) (
+	[]InnerWorkerAssignEvent,
+	error,
+) {
+	var v []InnerWorkerAssignEvent
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r workerAssignEventFindMany) Update(params ...WorkerAssignEventSetParam) workerAssignEventUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "WorkerAssignEvent"
+
+	r.query.Outputs = countOutput
+
+	var v workerAssignEventUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type workerAssignEventUpdateMany struct {
+	query builder.Query
+}
+
+func (r workerAssignEventUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerAssignEventUpdateMany) workerAssignEventModel() {}
+
+func (r workerAssignEventUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerAssignEventUpdateMany) Tx() WorkerAssignEventManyTxResult {
+	v := newWorkerAssignEventManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r workerAssignEventFindMany) Delete() workerAssignEventDeleteMany {
+	var v workerAssignEventDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "WorkerAssignEvent"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type workerAssignEventDeleteMany struct {
+	query builder.Query
+}
+
+func (r workerAssignEventDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p workerAssignEventDeleteMany) workerAssignEventModel() {}
+
+func (r workerAssignEventDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerAssignEventDeleteMany) Tx() WorkerAssignEventManyTxResult {
+	v := newWorkerAssignEventManyTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -407947,6 +418969,54 @@ func (r QueueItemManyTxResult) Result() (v *BatchResult) {
 	return v
 }
 
+func newInternalQueueItemUniqueTxResult() InternalQueueItemUniqueTxResult {
+	return InternalQueueItemUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type InternalQueueItemUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p InternalQueueItemUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p InternalQueueItemUniqueTxResult) IsTx() {}
+
+func (r InternalQueueItemUniqueTxResult) Result() (v *InternalQueueItemModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newInternalQueueItemManyTxResult() InternalQueueItemManyTxResult {
+	return InternalQueueItemManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type InternalQueueItemManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p InternalQueueItemManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p InternalQueueItemManyTxResult) IsTx() {}
+
+func (r InternalQueueItemManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
 func newStepRunEventUniqueTxResult() StepRunEventUniqueTxResult {
 	return StepRunEventUniqueTxResult{
 		result: &transaction.Result{},
@@ -408325,6 +419395,102 @@ func (p WorkerSemaphoreSlotManyTxResult) ExtractQuery() builder.Query {
 func (p WorkerSemaphoreSlotManyTxResult) IsTx() {}
 
 func (r WorkerSemaphoreSlotManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newWorkerSemaphoreCountUniqueTxResult() WorkerSemaphoreCountUniqueTxResult {
+	return WorkerSemaphoreCountUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type WorkerSemaphoreCountUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p WorkerSemaphoreCountUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p WorkerSemaphoreCountUniqueTxResult) IsTx() {}
+
+func (r WorkerSemaphoreCountUniqueTxResult) Result() (v *WorkerSemaphoreCountModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newWorkerSemaphoreCountManyTxResult() WorkerSemaphoreCountManyTxResult {
+	return WorkerSemaphoreCountManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type WorkerSemaphoreCountManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p WorkerSemaphoreCountManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p WorkerSemaphoreCountManyTxResult) IsTx() {}
+
+func (r WorkerSemaphoreCountManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newWorkerAssignEventUniqueTxResult() WorkerAssignEventUniqueTxResult {
+	return WorkerAssignEventUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type WorkerAssignEventUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p WorkerAssignEventUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p WorkerAssignEventUniqueTxResult) IsTx() {}
+
+func (r WorkerAssignEventUniqueTxResult) Result() (v *WorkerAssignEventModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newWorkerAssignEventManyTxResult() WorkerAssignEventManyTxResult {
+	return WorkerAssignEventManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type WorkerAssignEventManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p WorkerAssignEventManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p WorkerAssignEventManyTxResult) IsTx() {}
+
+func (r WorkerAssignEventManyTxResult) Result() (v *BatchResult) {
 	if err := r.result.Get(r.query.TxResult, &v); err != nil {
 		panic(err)
 	}
@@ -413350,6 +424516,120 @@ func (r queueItemUpsertOne) Tx() QueueItemUniqueTxResult {
 	return v
 }
 
+type internalQueueItemUpsertOne struct {
+	query builder.Query
+}
+
+func (r internalQueueItemUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r internalQueueItemUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r internalQueueItemUpsertOne) with()                      {}
+func (r internalQueueItemUpsertOne) internalQueueItemModel()    {}
+func (r internalQueueItemUpsertOne) internalQueueItemRelation() {}
+
+func (r internalQueueItemActions) UpsertOne(
+	params InternalQueueItemEqualsUniqueWhereParam,
+) internalQueueItemUpsertOne {
+	var v internalQueueItemUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "InternalQueueItem"
+	v.query.Outputs = internalQueueItemOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r internalQueueItemUpsertOne) Create(
+
+	_queue InternalQueueItemWithPrismaQueueSetParam,
+	_isQueued InternalQueueItemWithPrismaIsQueuedSetParam,
+	_tenantID InternalQueueItemWithPrismaTenantIDSetParam,
+
+	optional ...InternalQueueItemSetParam,
+) internalQueueItemUpsertOne {
+	var v internalQueueItemUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _queue.field())
+	fields = append(fields, _isQueued.field())
+	fields = append(fields, _tenantID.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r internalQueueItemUpsertOne) Update(
+	params ...InternalQueueItemSetParam,
+) internalQueueItemUpsertOne {
+	var v internalQueueItemUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r internalQueueItemUpsertOne) Exec(ctx context.Context) (*InternalQueueItemModel, error) {
+	var v InternalQueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r internalQueueItemUpsertOne) Tx() InternalQueueItemUniqueTxResult {
+	v := newInternalQueueItemUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 type stepRunEventUpsertOne struct {
 	query builder.Query
 }
@@ -414233,6 +425513,228 @@ func (r workerSemaphoreSlotUpsertOne) Exec(ctx context.Context) (*WorkerSemaphor
 
 func (r workerSemaphoreSlotUpsertOne) Tx() WorkerSemaphoreSlotUniqueTxResult {
 	v := newWorkerSemaphoreSlotUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workerSemaphoreCountUpsertOne struct {
+	query builder.Query
+}
+
+func (r workerSemaphoreCountUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerSemaphoreCountUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerSemaphoreCountUpsertOne) with()                         {}
+func (r workerSemaphoreCountUpsertOne) workerSemaphoreCountModel()    {}
+func (r workerSemaphoreCountUpsertOne) workerSemaphoreCountRelation() {}
+
+func (r workerSemaphoreCountActions) UpsertOne(
+	params WorkerSemaphoreCountEqualsUniqueWhereParam,
+) workerSemaphoreCountUpsertOne {
+	var v workerSemaphoreCountUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "WorkerSemaphoreCount"
+	v.query.Outputs = workerSemaphoreCountOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r workerSemaphoreCountUpsertOne) Create(
+
+	_worker WorkerSemaphoreCountWithPrismaWorkerSetParam,
+	_count WorkerSemaphoreCountWithPrismaCountSetParam,
+
+	optional ...WorkerSemaphoreCountSetParam,
+) workerSemaphoreCountUpsertOne {
+	var v workerSemaphoreCountUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _worker.field())
+	fields = append(fields, _count.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r workerSemaphoreCountUpsertOne) Update(
+	params ...WorkerSemaphoreCountSetParam,
+) workerSemaphoreCountUpsertOne {
+	var v workerSemaphoreCountUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r workerSemaphoreCountUpsertOne) Exec(ctx context.Context) (*WorkerSemaphoreCountModel, error) {
+	var v WorkerSemaphoreCountModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerSemaphoreCountUpsertOne) Tx() WorkerSemaphoreCountUniqueTxResult {
+	v := newWorkerSemaphoreCountUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type workerAssignEventUpsertOne struct {
+	query builder.Query
+}
+
+func (r workerAssignEventUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r workerAssignEventUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r workerAssignEventUpsertOne) with()                      {}
+func (r workerAssignEventUpsertOne) workerAssignEventModel()    {}
+func (r workerAssignEventUpsertOne) workerAssignEventRelation() {}
+
+func (r workerAssignEventActions) UpsertOne(
+	params WorkerAssignEventEqualsUniqueWhereParam,
+) workerAssignEventUpsertOne {
+	var v workerAssignEventUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "WorkerAssignEvent"
+	v.query.Outputs = workerAssignEventOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r workerAssignEventUpsertOne) Create(
+
+	_worker WorkerAssignEventWithPrismaWorkerSetParam,
+
+	optional ...WorkerAssignEventSetParam,
+) workerAssignEventUpsertOne {
+	var v workerAssignEventUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _worker.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r workerAssignEventUpsertOne) Update(
+	params ...WorkerAssignEventSetParam,
+) workerAssignEventUpsertOne {
+	var v workerAssignEventUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r workerAssignEventUpsertOne) Exec(ctx context.Context) (*WorkerAssignEventModel, error) {
+	var v WorkerAssignEventModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r workerAssignEventUpsertOne) Tx() WorkerAssignEventUniqueTxResult {
+	v := newWorkerAssignEventUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
