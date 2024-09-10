@@ -1450,6 +1450,26 @@ model InternalQueueItem {
   @@index([isQueued, tenantId, queue, priority(sort: Desc), id])
 }
 
+model TimeoutQueueItem {
+  id BigInt @id @default(autoincrement()) @db.BigInt
+
+  // the parent step run
+  stepRunId String @db.Uuid
+
+  retryCount Int
+
+  // the time the step run times out due to a scheduling timeout (no workers available)
+  timeoutAt DateTime
+
+  // the parent tenant
+  tenantId String @db.Uuid
+
+  isQueued Boolean
+
+  @@unique([stepRunId, retryCount])
+  @@index([tenantId, isQueued, timeoutAt])
+}
+
 enum StepRunEventReason {
   REQUEUED_NO_WORKER
   REQUEUED_RATE_LIMIT
@@ -1977,6 +1997,7 @@ func newClient() *PrismaClient {
 	c.Queue = queueActions{client: c}
 	c.QueueItem = queueItemActions{client: c}
 	c.InternalQueueItem = internalQueueItemActions{client: c}
+	c.TimeoutQueueItem = timeoutQueueItemActions{client: c}
 	c.StepRunEvent = stepRunEventActions{client: c}
 	c.StepRunResultArchive = stepRunResultArchiveActions{client: c}
 	c.Dispatcher = dispatcherActions{client: c}
@@ -2103,6 +2124,8 @@ type PrismaClient struct {
 	QueueItem queueItemActions
 	// InternalQueueItem provides access to CRUD methods.
 	InternalQueueItem internalQueueItemActions
+	// TimeoutQueueItem provides access to CRUD methods.
+	TimeoutQueueItem timeoutQueueItemActions
 	// StepRunEvent provides access to CRUD methods.
 	StepRunEvent stepRunEventActions
 	// StepRunResultArchive provides access to CRUD methods.
@@ -2920,6 +2943,17 @@ const (
 	InternalQueueItemScalarFieldEnumTenantID  InternalQueueItemScalarFieldEnum = "tenantId"
 	InternalQueueItemScalarFieldEnumPriority  InternalQueueItemScalarFieldEnum = "priority"
 	InternalQueueItemScalarFieldEnumUniqueKey InternalQueueItemScalarFieldEnum = "uniqueKey"
+)
+
+type TimeoutQueueItemScalarFieldEnum string
+
+const (
+	TimeoutQueueItemScalarFieldEnumID         TimeoutQueueItemScalarFieldEnum = "id"
+	TimeoutQueueItemScalarFieldEnumStepRunID  TimeoutQueueItemScalarFieldEnum = "stepRunId"
+	TimeoutQueueItemScalarFieldEnumRetryCount TimeoutQueueItemScalarFieldEnum = "retryCount"
+	TimeoutQueueItemScalarFieldEnumTimeoutAt  TimeoutQueueItemScalarFieldEnum = "timeoutAt"
+	TimeoutQueueItemScalarFieldEnumTenantID   TimeoutQueueItemScalarFieldEnum = "tenantId"
+	TimeoutQueueItemScalarFieldEnumIsQueued   TimeoutQueueItemScalarFieldEnum = "isQueued"
 )
 
 type StepRunEventScalarFieldEnum string
@@ -4328,6 +4362,20 @@ const internalQueueItemFieldPriority internalQueueItemPrismaFields = "priority"
 
 const internalQueueItemFieldUniqueKey internalQueueItemPrismaFields = "uniqueKey"
 
+type timeoutQueueItemPrismaFields = prismaFields
+
+const timeoutQueueItemFieldID timeoutQueueItemPrismaFields = "id"
+
+const timeoutQueueItemFieldStepRunID timeoutQueueItemPrismaFields = "stepRunId"
+
+const timeoutQueueItemFieldRetryCount timeoutQueueItemPrismaFields = "retryCount"
+
+const timeoutQueueItemFieldTimeoutAt timeoutQueueItemPrismaFields = "timeoutAt"
+
+const timeoutQueueItemFieldTenantID timeoutQueueItemPrismaFields = "tenantId"
+
+const timeoutQueueItemFieldIsQueued timeoutQueueItemPrismaFields = "isQueued"
+
 type stepRunEventPrismaFields = prismaFields
 
 const stepRunEventFieldID stepRunEventPrismaFields = "id"
@@ -4846,6 +4894,10 @@ func NewMock() (*PrismaClient, *Mock, func(t *testing.T)) {
 		mock: m,
 	}
 
+	m.TimeoutQueueItem = timeoutQueueItemMock{
+		mock: m,
+	}
+
 	m.StepRunEvent = stepRunEventMock{
 		mock: m,
 	}
@@ -5007,6 +5059,8 @@ type Mock struct {
 	QueueItem queueItemMock
 
 	InternalQueueItem internalQueueItemMock
+
+	TimeoutQueueItem timeoutQueueItemMock
 
 	StepRunEvent stepRunEventMock
 
@@ -6803,6 +6857,48 @@ func (m *internalQueueItemMockExec) ReturnsMany(v []InternalQueueItemModel) {
 }
 
 func (m *internalQueueItemMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
+type timeoutQueueItemMock struct {
+	mock *Mock
+}
+
+type TimeoutQueueItemMockExpectParam interface {
+	ExtractQuery() builder.Query
+	timeoutQueueItemModel()
+}
+
+func (m *timeoutQueueItemMock) Expect(query TimeoutQueueItemMockExpectParam) *timeoutQueueItemMockExec {
+	return &timeoutQueueItemMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type timeoutQueueItemMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *timeoutQueueItemMockExec) Returns(v TimeoutQueueItemModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *timeoutQueueItemMockExec) ReturnsMany(v []TimeoutQueueItemModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *timeoutQueueItemMockExec) Errors(err error) {
 	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
 		Query:   m.query,
 		WantErr: err,
@@ -11214,6 +11310,36 @@ func (r InternalQueueItemModel) UniqueKey() (value String, ok bool) {
 		return value, false
 	}
 	return *r.InnerInternalQueueItem.UniqueKey, true
+}
+
+// TimeoutQueueItemModel represents the TimeoutQueueItem model and is a wrapper for accessing fields and methods
+type TimeoutQueueItemModel struct {
+	InnerTimeoutQueueItem
+	RelationsTimeoutQueueItem
+}
+
+// InnerTimeoutQueueItem holds the actual data
+type InnerTimeoutQueueItem struct {
+	ID         BigInt   `json:"id"`
+	StepRunID  string   `json:"stepRunId"`
+	RetryCount int      `json:"retryCount"`
+	TimeoutAt  DateTime `json:"timeoutAt"`
+	TenantID   string   `json:"tenantId"`
+	IsQueued   bool     `json:"isQueued"`
+}
+
+// RawTimeoutQueueItemModel is a struct for TimeoutQueueItem when used in raw queries
+type RawTimeoutQueueItemModel struct {
+	ID         RawBigInt   `json:"id"`
+	StepRunID  RawString   `json:"stepRunId"`
+	RetryCount RawInt      `json:"retryCount"`
+	TimeoutAt  RawDateTime `json:"timeoutAt"`
+	TenantID   RawString   `json:"tenantId"`
+	IsQueued   RawBoolean  `json:"isQueued"`
+}
+
+// RelationsTimeoutQueueItem holds the relation data separately
+type RelationsTimeoutQueueItem struct {
 }
 
 // StepRunEventModel represents the StepRunEvent model and is a wrapper for accessing fields and methods
@@ -158015,6 +158141,1887 @@ func (r internalQueueItemQueryUniqueKeyString) Field() internalQueueItemPrismaFi
 	return internalQueueItemFieldUniqueKey
 }
 
+// TimeoutQueueItem acts as a namespaces to access query methods for the TimeoutQueueItem model
+var TimeoutQueueItem = timeoutQueueItemQuery{}
+
+// timeoutQueueItemQuery exposes query functions for the timeoutQueueItem model
+type timeoutQueueItemQuery struct {
+
+	// ID
+	//
+	// @required
+	ID timeoutQueueItemQueryIDBigInt
+
+	// StepRunID
+	//
+	// @required
+	StepRunID timeoutQueueItemQueryStepRunIDString
+
+	// RetryCount
+	//
+	// @required
+	RetryCount timeoutQueueItemQueryRetryCountInt
+
+	// TimeoutAt
+	//
+	// @required
+	TimeoutAt timeoutQueueItemQueryTimeoutAtDateTime
+
+	// TenantID
+	//
+	// @required
+	TenantID timeoutQueueItemQueryTenantIDString
+
+	// IsQueued
+	//
+	// @required
+	IsQueued timeoutQueueItemQueryIsQueuedBoolean
+}
+
+func (timeoutQueueItemQuery) Not(params ...TimeoutQueueItemWhereParam) timeoutQueueItemDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (timeoutQueueItemQuery) Or(params ...TimeoutQueueItemWhereParam) timeoutQueueItemDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (timeoutQueueItemQuery) And(params ...TimeoutQueueItemWhereParam) timeoutQueueItemDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (timeoutQueueItemQuery) StepRunIDRetryCount(
+	_stepRunID TimeoutQueueItemWithPrismaStepRunIDWhereParam,
+
+	_retryCount TimeoutQueueItemWithPrismaRetryCountWhereParam,
+) TimeoutQueueItemEqualsUniqueWhereParam {
+	var fields []builder.Field
+
+	fields = append(fields, _stepRunID.field())
+	fields = append(fields, _retryCount.field())
+
+	return timeoutQueueItemEqualsUniqueParam{
+		data: builder.Field{
+			Name:   "stepRunId_retryCount",
+			Fields: builder.TransformEquals(fields),
+		},
+	}
+}
+
+// base struct
+type timeoutQueueItemQueryIDBigInt struct{}
+
+// Set the required value of ID
+func (r timeoutQueueItemQueryIDBigInt) Set(value BigInt) timeoutQueueItemSetParam {
+
+	return timeoutQueueItemSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r timeoutQueueItemQueryIDBigInt) SetIfPresent(value *BigInt) timeoutQueueItemSetParam {
+	if value == nil {
+		return timeoutQueueItemSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the required value of ID
+func (r timeoutQueueItemQueryIDBigInt) Increment(value BigInt) timeoutQueueItemSetParam {
+	return timeoutQueueItemSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryIDBigInt) IncrementIfPresent(value *BigInt) timeoutQueueItemSetParam {
+	if value == nil {
+		return timeoutQueueItemSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the required value of ID
+func (r timeoutQueueItemQueryIDBigInt) Decrement(value BigInt) timeoutQueueItemSetParam {
+	return timeoutQueueItemSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryIDBigInt) DecrementIfPresent(value *BigInt) timeoutQueueItemSetParam {
+	if value == nil {
+		return timeoutQueueItemSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the required value of ID
+func (r timeoutQueueItemQueryIDBigInt) Multiply(value BigInt) timeoutQueueItemSetParam {
+	return timeoutQueueItemSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryIDBigInt) MultiplyIfPresent(value *BigInt) timeoutQueueItemSetParam {
+	if value == nil {
+		return timeoutQueueItemSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the required value of ID
+func (r timeoutQueueItemQueryIDBigInt) Divide(value BigInt) timeoutQueueItemSetParam {
+	return timeoutQueueItemSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryIDBigInt) DivideIfPresent(value *BigInt) timeoutQueueItemSetParam {
+	if value == nil {
+		return timeoutQueueItemSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r timeoutQueueItemQueryIDBigInt) Equals(value BigInt) timeoutQueueItemWithPrismaIDEqualsUniqueParam {
+
+	return timeoutQueueItemWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryIDBigInt) EqualsIfPresent(value *BigInt) timeoutQueueItemWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return timeoutQueueItemWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r timeoutQueueItemQueryIDBigInt) Order(direction SortOrder) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryIDBigInt) Cursor(cursor BigInt) timeoutQueueItemCursorParam {
+	return timeoutQueueItemCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryIDBigInt) In(value []BigInt) timeoutQueueItemParamUnique {
+	return timeoutQueueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryIDBigInt) InIfPresent(value []BigInt) timeoutQueueItemParamUnique {
+	if value == nil {
+		return timeoutQueueItemParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r timeoutQueueItemQueryIDBigInt) NotIn(value []BigInt) timeoutQueueItemParamUnique {
+	return timeoutQueueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryIDBigInt) NotInIfPresent(value []BigInt) timeoutQueueItemParamUnique {
+	if value == nil {
+		return timeoutQueueItemParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r timeoutQueueItemQueryIDBigInt) Lt(value BigInt) timeoutQueueItemParamUnique {
+	return timeoutQueueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryIDBigInt) LtIfPresent(value *BigInt) timeoutQueueItemParamUnique {
+	if value == nil {
+		return timeoutQueueItemParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r timeoutQueueItemQueryIDBigInt) Lte(value BigInt) timeoutQueueItemParamUnique {
+	return timeoutQueueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryIDBigInt) LteIfPresent(value *BigInt) timeoutQueueItemParamUnique {
+	if value == nil {
+		return timeoutQueueItemParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r timeoutQueueItemQueryIDBigInt) Gt(value BigInt) timeoutQueueItemParamUnique {
+	return timeoutQueueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryIDBigInt) GtIfPresent(value *BigInt) timeoutQueueItemParamUnique {
+	if value == nil {
+		return timeoutQueueItemParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r timeoutQueueItemQueryIDBigInt) Gte(value BigInt) timeoutQueueItemParamUnique {
+	return timeoutQueueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryIDBigInt) GteIfPresent(value *BigInt) timeoutQueueItemParamUnique {
+	if value == nil {
+		return timeoutQueueItemParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r timeoutQueueItemQueryIDBigInt) Not(value BigInt) timeoutQueueItemParamUnique {
+	return timeoutQueueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryIDBigInt) NotIfPresent(value *BigInt) timeoutQueueItemParamUnique {
+	if value == nil {
+		return timeoutQueueItemParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+func (r timeoutQueueItemQueryIDBigInt) Field() timeoutQueueItemPrismaFields {
+	return timeoutQueueItemFieldID
+}
+
+// base struct
+type timeoutQueueItemQueryStepRunIDString struct{}
+
+// Set the required value of StepRunID
+func (r timeoutQueueItemQueryStepRunIDString) Set(value string) timeoutQueueItemWithPrismaStepRunIDSetParam {
+
+	return timeoutQueueItemWithPrismaStepRunIDSetParam{
+		data: builder.Field{
+			Name:  "stepRunId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of StepRunID dynamically
+func (r timeoutQueueItemQueryStepRunIDString) SetIfPresent(value *String) timeoutQueueItemWithPrismaStepRunIDSetParam {
+	if value == nil {
+		return timeoutQueueItemWithPrismaStepRunIDSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) Equals(value string) timeoutQueueItemWithPrismaStepRunIDEqualsParam {
+
+	return timeoutQueueItemWithPrismaStepRunIDEqualsParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) EqualsIfPresent(value *string) timeoutQueueItemWithPrismaStepRunIDEqualsParam {
+	if value == nil {
+		return timeoutQueueItemWithPrismaStepRunIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) Order(direction SortOrder) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name:  "stepRunId",
+			Value: direction,
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) Cursor(cursor string) timeoutQueueItemCursorParam {
+	return timeoutQueueItemCursorParam{
+		data: builder.Field{
+			Name:  "stepRunId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) In(value []string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) InIfPresent(value []string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) NotIn(value []string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) NotInIfPresent(value []string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) Lt(value string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) LtIfPresent(value *string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) Lte(value string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) LteIfPresent(value *string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) Gt(value string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) GtIfPresent(value *string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) Gte(value string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) GteIfPresent(value *string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) Contains(value string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) ContainsIfPresent(value *string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) StartsWith(value string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) StartsWithIfPresent(value *string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) EndsWith(value string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) EndsWithIfPresent(value *string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) Mode(value QueryMode) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) ModeIfPresent(value *QueryMode) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) Not(value string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) NotIfPresent(value *string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r timeoutQueueItemQueryStepRunIDString) HasPrefix(value string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r timeoutQueueItemQueryStepRunIDString) HasPrefixIfPresent(value *string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r timeoutQueueItemQueryStepRunIDString) HasSuffix(value string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r timeoutQueueItemQueryStepRunIDString) HasSuffixIfPresent(value *string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r timeoutQueueItemQueryStepRunIDString) Field() timeoutQueueItemPrismaFields {
+	return timeoutQueueItemFieldStepRunID
+}
+
+// base struct
+type timeoutQueueItemQueryRetryCountInt struct{}
+
+// Set the required value of RetryCount
+func (r timeoutQueueItemQueryRetryCountInt) Set(value int) timeoutQueueItemWithPrismaRetryCountSetParam {
+
+	return timeoutQueueItemWithPrismaRetryCountSetParam{
+		data: builder.Field{
+			Name:  "retryCount",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of RetryCount dynamically
+func (r timeoutQueueItemQueryRetryCountInt) SetIfPresent(value *Int) timeoutQueueItemWithPrismaRetryCountSetParam {
+	if value == nil {
+		return timeoutQueueItemWithPrismaRetryCountSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the required value of RetryCount
+func (r timeoutQueueItemQueryRetryCountInt) Increment(value int) timeoutQueueItemWithPrismaRetryCountSetParam {
+	return timeoutQueueItemWithPrismaRetryCountSetParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryRetryCountInt) IncrementIfPresent(value *int) timeoutQueueItemWithPrismaRetryCountSetParam {
+	if value == nil {
+		return timeoutQueueItemWithPrismaRetryCountSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the required value of RetryCount
+func (r timeoutQueueItemQueryRetryCountInt) Decrement(value int) timeoutQueueItemWithPrismaRetryCountSetParam {
+	return timeoutQueueItemWithPrismaRetryCountSetParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryRetryCountInt) DecrementIfPresent(value *int) timeoutQueueItemWithPrismaRetryCountSetParam {
+	if value == nil {
+		return timeoutQueueItemWithPrismaRetryCountSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the required value of RetryCount
+func (r timeoutQueueItemQueryRetryCountInt) Multiply(value int) timeoutQueueItemWithPrismaRetryCountSetParam {
+	return timeoutQueueItemWithPrismaRetryCountSetParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryRetryCountInt) MultiplyIfPresent(value *int) timeoutQueueItemWithPrismaRetryCountSetParam {
+	if value == nil {
+		return timeoutQueueItemWithPrismaRetryCountSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the required value of RetryCount
+func (r timeoutQueueItemQueryRetryCountInt) Divide(value int) timeoutQueueItemWithPrismaRetryCountSetParam {
+	return timeoutQueueItemWithPrismaRetryCountSetParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryRetryCountInt) DivideIfPresent(value *int) timeoutQueueItemWithPrismaRetryCountSetParam {
+	if value == nil {
+		return timeoutQueueItemWithPrismaRetryCountSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r timeoutQueueItemQueryRetryCountInt) Equals(value int) timeoutQueueItemWithPrismaRetryCountEqualsParam {
+
+	return timeoutQueueItemWithPrismaRetryCountEqualsParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryRetryCountInt) EqualsIfPresent(value *int) timeoutQueueItemWithPrismaRetryCountEqualsParam {
+	if value == nil {
+		return timeoutQueueItemWithPrismaRetryCountEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r timeoutQueueItemQueryRetryCountInt) Order(direction SortOrder) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name:  "retryCount",
+			Value: direction,
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryRetryCountInt) Cursor(cursor int) timeoutQueueItemCursorParam {
+	return timeoutQueueItemCursorParam{
+		data: builder.Field{
+			Name:  "retryCount",
+			Value: cursor,
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryRetryCountInt) In(value []int) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryRetryCountInt) InIfPresent(value []int) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r timeoutQueueItemQueryRetryCountInt) NotIn(value []int) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryRetryCountInt) NotInIfPresent(value []int) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r timeoutQueueItemQueryRetryCountInt) Lt(value int) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryRetryCountInt) LtIfPresent(value *int) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r timeoutQueueItemQueryRetryCountInt) Lte(value int) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryRetryCountInt) LteIfPresent(value *int) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r timeoutQueueItemQueryRetryCountInt) Gt(value int) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryRetryCountInt) GtIfPresent(value *int) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r timeoutQueueItemQueryRetryCountInt) Gte(value int) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryRetryCountInt) GteIfPresent(value *int) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r timeoutQueueItemQueryRetryCountInt) Not(value int) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryRetryCountInt) NotIfPresent(value *int) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r timeoutQueueItemQueryRetryCountInt) LT(value int) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r timeoutQueueItemQueryRetryCountInt) LTIfPresent(value *int) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.LT(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r timeoutQueueItemQueryRetryCountInt) LTE(value int) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r timeoutQueueItemQueryRetryCountInt) LTEIfPresent(value *int) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.LTE(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r timeoutQueueItemQueryRetryCountInt) GT(value int) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r timeoutQueueItemQueryRetryCountInt) GTIfPresent(value *int) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.GT(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r timeoutQueueItemQueryRetryCountInt) GTE(value int) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r timeoutQueueItemQueryRetryCountInt) GTEIfPresent(value *int) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.GTE(*value)
+}
+
+func (r timeoutQueueItemQueryRetryCountInt) Field() timeoutQueueItemPrismaFields {
+	return timeoutQueueItemFieldRetryCount
+}
+
+// base struct
+type timeoutQueueItemQueryTimeoutAtDateTime struct{}
+
+// Set the required value of TimeoutAt
+func (r timeoutQueueItemQueryTimeoutAtDateTime) Set(value DateTime) timeoutQueueItemWithPrismaTimeoutAtSetParam {
+
+	return timeoutQueueItemWithPrismaTimeoutAtSetParam{
+		data: builder.Field{
+			Name:  "timeoutAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of TimeoutAt dynamically
+func (r timeoutQueueItemQueryTimeoutAtDateTime) SetIfPresent(value *DateTime) timeoutQueueItemWithPrismaTimeoutAtSetParam {
+	if value == nil {
+		return timeoutQueueItemWithPrismaTimeoutAtSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r timeoutQueueItemQueryTimeoutAtDateTime) Equals(value DateTime) timeoutQueueItemWithPrismaTimeoutAtEqualsParam {
+
+	return timeoutQueueItemWithPrismaTimeoutAtEqualsParam{
+		data: builder.Field{
+			Name: "timeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTimeoutAtDateTime) EqualsIfPresent(value *DateTime) timeoutQueueItemWithPrismaTimeoutAtEqualsParam {
+	if value == nil {
+		return timeoutQueueItemWithPrismaTimeoutAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r timeoutQueueItemQueryTimeoutAtDateTime) Order(direction SortOrder) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name:  "timeoutAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTimeoutAtDateTime) Cursor(cursor DateTime) timeoutQueueItemCursorParam {
+	return timeoutQueueItemCursorParam{
+		data: builder.Field{
+			Name:  "timeoutAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTimeoutAtDateTime) In(value []DateTime) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "timeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTimeoutAtDateTime) InIfPresent(value []DateTime) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r timeoutQueueItemQueryTimeoutAtDateTime) NotIn(value []DateTime) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "timeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTimeoutAtDateTime) NotInIfPresent(value []DateTime) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r timeoutQueueItemQueryTimeoutAtDateTime) Lt(value DateTime) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "timeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTimeoutAtDateTime) LtIfPresent(value *DateTime) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r timeoutQueueItemQueryTimeoutAtDateTime) Lte(value DateTime) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "timeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTimeoutAtDateTime) LteIfPresent(value *DateTime) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r timeoutQueueItemQueryTimeoutAtDateTime) Gt(value DateTime) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "timeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTimeoutAtDateTime) GtIfPresent(value *DateTime) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r timeoutQueueItemQueryTimeoutAtDateTime) Gte(value DateTime) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "timeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTimeoutAtDateTime) GteIfPresent(value *DateTime) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r timeoutQueueItemQueryTimeoutAtDateTime) Not(value DateTime) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "timeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTimeoutAtDateTime) NotIfPresent(value *DateTime) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r timeoutQueueItemQueryTimeoutAtDateTime) Before(value DateTime) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "timeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r timeoutQueueItemQueryTimeoutAtDateTime) BeforeIfPresent(value *DateTime) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r timeoutQueueItemQueryTimeoutAtDateTime) After(value DateTime) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "timeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r timeoutQueueItemQueryTimeoutAtDateTime) AfterIfPresent(value *DateTime) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r timeoutQueueItemQueryTimeoutAtDateTime) BeforeEquals(value DateTime) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "timeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r timeoutQueueItemQueryTimeoutAtDateTime) BeforeEqualsIfPresent(value *DateTime) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r timeoutQueueItemQueryTimeoutAtDateTime) AfterEquals(value DateTime) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "timeoutAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r timeoutQueueItemQueryTimeoutAtDateTime) AfterEqualsIfPresent(value *DateTime) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r timeoutQueueItemQueryTimeoutAtDateTime) Field() timeoutQueueItemPrismaFields {
+	return timeoutQueueItemFieldTimeoutAt
+}
+
+// base struct
+type timeoutQueueItemQueryTenantIDString struct{}
+
+// Set the required value of TenantID
+func (r timeoutQueueItemQueryTenantIDString) Set(value string) timeoutQueueItemWithPrismaTenantIDSetParam {
+
+	return timeoutQueueItemWithPrismaTenantIDSetParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of TenantID dynamically
+func (r timeoutQueueItemQueryTenantIDString) SetIfPresent(value *String) timeoutQueueItemWithPrismaTenantIDSetParam {
+	if value == nil {
+		return timeoutQueueItemWithPrismaTenantIDSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r timeoutQueueItemQueryTenantIDString) Equals(value string) timeoutQueueItemWithPrismaTenantIDEqualsParam {
+
+	return timeoutQueueItemWithPrismaTenantIDEqualsParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTenantIDString) EqualsIfPresent(value *string) timeoutQueueItemWithPrismaTenantIDEqualsParam {
+	if value == nil {
+		return timeoutQueueItemWithPrismaTenantIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r timeoutQueueItemQueryTenantIDString) Order(direction SortOrder) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: direction,
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTenantIDString) Cursor(cursor string) timeoutQueueItemCursorParam {
+	return timeoutQueueItemCursorParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTenantIDString) In(value []string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTenantIDString) InIfPresent(value []string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r timeoutQueueItemQueryTenantIDString) NotIn(value []string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTenantIDString) NotInIfPresent(value []string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r timeoutQueueItemQueryTenantIDString) Lt(value string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTenantIDString) LtIfPresent(value *string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r timeoutQueueItemQueryTenantIDString) Lte(value string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTenantIDString) LteIfPresent(value *string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r timeoutQueueItemQueryTenantIDString) Gt(value string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTenantIDString) GtIfPresent(value *string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r timeoutQueueItemQueryTenantIDString) Gte(value string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTenantIDString) GteIfPresent(value *string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r timeoutQueueItemQueryTenantIDString) Contains(value string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTenantIDString) ContainsIfPresent(value *string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r timeoutQueueItemQueryTenantIDString) StartsWith(value string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTenantIDString) StartsWithIfPresent(value *string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r timeoutQueueItemQueryTenantIDString) EndsWith(value string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTenantIDString) EndsWithIfPresent(value *string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r timeoutQueueItemQueryTenantIDString) Mode(value QueryMode) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTenantIDString) ModeIfPresent(value *QueryMode) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r timeoutQueueItemQueryTenantIDString) Not(value string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryTenantIDString) NotIfPresent(value *string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r timeoutQueueItemQueryTenantIDString) HasPrefix(value string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r timeoutQueueItemQueryTenantIDString) HasPrefixIfPresent(value *string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r timeoutQueueItemQueryTenantIDString) HasSuffix(value string) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r timeoutQueueItemQueryTenantIDString) HasSuffixIfPresent(value *string) timeoutQueueItemDefaultParam {
+	if value == nil {
+		return timeoutQueueItemDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r timeoutQueueItemQueryTenantIDString) Field() timeoutQueueItemPrismaFields {
+	return timeoutQueueItemFieldTenantID
+}
+
+// base struct
+type timeoutQueueItemQueryIsQueuedBoolean struct{}
+
+// Set the required value of IsQueued
+func (r timeoutQueueItemQueryIsQueuedBoolean) Set(value bool) timeoutQueueItemWithPrismaIsQueuedSetParam {
+
+	return timeoutQueueItemWithPrismaIsQueuedSetParam{
+		data: builder.Field{
+			Name:  "isQueued",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of IsQueued dynamically
+func (r timeoutQueueItemQueryIsQueuedBoolean) SetIfPresent(value *Boolean) timeoutQueueItemWithPrismaIsQueuedSetParam {
+	if value == nil {
+		return timeoutQueueItemWithPrismaIsQueuedSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r timeoutQueueItemQueryIsQueuedBoolean) Equals(value bool) timeoutQueueItemWithPrismaIsQueuedEqualsParam {
+
+	return timeoutQueueItemWithPrismaIsQueuedEqualsParam{
+		data: builder.Field{
+			Name: "isQueued",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryIsQueuedBoolean) EqualsIfPresent(value *bool) timeoutQueueItemWithPrismaIsQueuedEqualsParam {
+	if value == nil {
+		return timeoutQueueItemWithPrismaIsQueuedEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r timeoutQueueItemQueryIsQueuedBoolean) Order(direction SortOrder) timeoutQueueItemDefaultParam {
+	return timeoutQueueItemDefaultParam{
+		data: builder.Field{
+			Name:  "isQueued",
+			Value: direction,
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryIsQueuedBoolean) Cursor(cursor bool) timeoutQueueItemCursorParam {
+	return timeoutQueueItemCursorParam{
+		data: builder.Field{
+			Name:  "isQueued",
+			Value: cursor,
+		},
+	}
+}
+
+func (r timeoutQueueItemQueryIsQueuedBoolean) Field() timeoutQueueItemPrismaFields {
+	return timeoutQueueItemFieldIsQueued
+}
+
 // StepRunEvent acts as a namespaces to access query methods for the StepRunEvent model
 var StepRunEvent = stepRunEventQuery{}
 
@@ -250100,6 +252107,652 @@ func (p internalQueueItemWithPrismaUniqueKeyEqualsUniqueParam) uniqueKeyField() 
 func (internalQueueItemWithPrismaUniqueKeyEqualsUniqueParam) unique() {}
 func (internalQueueItemWithPrismaUniqueKeyEqualsUniqueParam) equals() {}
 
+type timeoutQueueItemActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var timeoutQueueItemOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "stepRunId"},
+	{Name: "retryCount"},
+	{Name: "timeoutAt"},
+	{Name: "tenantId"},
+	{Name: "isQueued"},
+}
+
+type TimeoutQueueItemRelationWith interface {
+	getQuery() builder.Query
+	with()
+	timeoutQueueItemRelation()
+}
+
+type TimeoutQueueItemWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	timeoutQueueItemModel()
+}
+
+type timeoutQueueItemDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p timeoutQueueItemDefaultParam) timeoutQueueItemModel() {}
+
+type TimeoutQueueItemOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	timeoutQueueItemModel()
+}
+
+type timeoutQueueItemOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p timeoutQueueItemOrderByParam) timeoutQueueItemModel() {}
+
+type TimeoutQueueItemCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	timeoutQueueItemModel()
+	isCursor()
+}
+
+type timeoutQueueItemCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemCursorParam) isCursor() {}
+
+func (p timeoutQueueItemCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p timeoutQueueItemCursorParam) timeoutQueueItemModel() {}
+
+type TimeoutQueueItemParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	timeoutQueueItemModel()
+}
+
+type timeoutQueueItemParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemParamUnique) timeoutQueueItemModel() {}
+
+func (timeoutQueueItemParamUnique) unique() {}
+
+func (p timeoutQueueItemParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type TimeoutQueueItemEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	timeoutQueueItemModel()
+}
+
+type timeoutQueueItemEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemEqualsParam) timeoutQueueItemModel() {}
+
+func (timeoutQueueItemEqualsParam) equals() {}
+
+func (p timeoutQueueItemEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type TimeoutQueueItemEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	timeoutQueueItemModel()
+}
+
+type timeoutQueueItemEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemEqualsUniqueParam) timeoutQueueItemModel() {}
+
+func (timeoutQueueItemEqualsUniqueParam) unique() {}
+func (timeoutQueueItemEqualsUniqueParam) equals() {}
+
+func (p timeoutQueueItemEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type TimeoutQueueItemSetParam interface {
+	field() builder.Field
+	settable()
+	timeoutQueueItemModel()
+}
+
+type timeoutQueueItemSetParam struct {
+	data builder.Field
+}
+
+func (timeoutQueueItemSetParam) settable() {}
+
+func (p timeoutQueueItemSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemSetParam) timeoutQueueItemModel() {}
+
+type TimeoutQueueItemWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	timeoutQueueItemModel()
+	idField()
+}
+
+type TimeoutQueueItemWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	timeoutQueueItemModel()
+	idField()
+}
+
+type timeoutQueueItemWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p timeoutQueueItemWithPrismaIDSetParam) timeoutQueueItemModel() {}
+
+func (p timeoutQueueItemWithPrismaIDSetParam) idField() {}
+
+type TimeoutQueueItemWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	timeoutQueueItemModel()
+	idField()
+}
+
+type timeoutQueueItemWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p timeoutQueueItemWithPrismaIDEqualsParam) timeoutQueueItemModel() {}
+
+func (p timeoutQueueItemWithPrismaIDEqualsParam) idField() {}
+
+func (timeoutQueueItemWithPrismaIDSetParam) settable()  {}
+func (timeoutQueueItemWithPrismaIDEqualsParam) equals() {}
+
+type timeoutQueueItemWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p timeoutQueueItemWithPrismaIDEqualsUniqueParam) timeoutQueueItemModel() {}
+func (p timeoutQueueItemWithPrismaIDEqualsUniqueParam) idField()               {}
+
+func (timeoutQueueItemWithPrismaIDEqualsUniqueParam) unique() {}
+func (timeoutQueueItemWithPrismaIDEqualsUniqueParam) equals() {}
+
+type TimeoutQueueItemWithPrismaStepRunIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	timeoutQueueItemModel()
+	stepRunIDField()
+}
+
+type TimeoutQueueItemWithPrismaStepRunIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	timeoutQueueItemModel()
+	stepRunIDField()
+}
+
+type timeoutQueueItemWithPrismaStepRunIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemWithPrismaStepRunIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemWithPrismaStepRunIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p timeoutQueueItemWithPrismaStepRunIDSetParam) timeoutQueueItemModel() {}
+
+func (p timeoutQueueItemWithPrismaStepRunIDSetParam) stepRunIDField() {}
+
+type TimeoutQueueItemWithPrismaStepRunIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	timeoutQueueItemModel()
+	stepRunIDField()
+}
+
+type timeoutQueueItemWithPrismaStepRunIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemWithPrismaStepRunIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemWithPrismaStepRunIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p timeoutQueueItemWithPrismaStepRunIDEqualsParam) timeoutQueueItemModel() {}
+
+func (p timeoutQueueItemWithPrismaStepRunIDEqualsParam) stepRunIDField() {}
+
+func (timeoutQueueItemWithPrismaStepRunIDSetParam) settable()  {}
+func (timeoutQueueItemWithPrismaStepRunIDEqualsParam) equals() {}
+
+type timeoutQueueItemWithPrismaStepRunIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemWithPrismaStepRunIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemWithPrismaStepRunIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p timeoutQueueItemWithPrismaStepRunIDEqualsUniqueParam) timeoutQueueItemModel() {}
+func (p timeoutQueueItemWithPrismaStepRunIDEqualsUniqueParam) stepRunIDField()        {}
+
+func (timeoutQueueItemWithPrismaStepRunIDEqualsUniqueParam) unique() {}
+func (timeoutQueueItemWithPrismaStepRunIDEqualsUniqueParam) equals() {}
+
+type TimeoutQueueItemWithPrismaRetryCountEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	timeoutQueueItemModel()
+	retryCountField()
+}
+
+type TimeoutQueueItemWithPrismaRetryCountSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	timeoutQueueItemModel()
+	retryCountField()
+}
+
+type timeoutQueueItemWithPrismaRetryCountSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemWithPrismaRetryCountSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemWithPrismaRetryCountSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p timeoutQueueItemWithPrismaRetryCountSetParam) timeoutQueueItemModel() {}
+
+func (p timeoutQueueItemWithPrismaRetryCountSetParam) retryCountField() {}
+
+type TimeoutQueueItemWithPrismaRetryCountWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	timeoutQueueItemModel()
+	retryCountField()
+}
+
+type timeoutQueueItemWithPrismaRetryCountEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemWithPrismaRetryCountEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemWithPrismaRetryCountEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p timeoutQueueItemWithPrismaRetryCountEqualsParam) timeoutQueueItemModel() {}
+
+func (p timeoutQueueItemWithPrismaRetryCountEqualsParam) retryCountField() {}
+
+func (timeoutQueueItemWithPrismaRetryCountSetParam) settable()  {}
+func (timeoutQueueItemWithPrismaRetryCountEqualsParam) equals() {}
+
+type timeoutQueueItemWithPrismaRetryCountEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemWithPrismaRetryCountEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemWithPrismaRetryCountEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p timeoutQueueItemWithPrismaRetryCountEqualsUniqueParam) timeoutQueueItemModel() {}
+func (p timeoutQueueItemWithPrismaRetryCountEqualsUniqueParam) retryCountField()       {}
+
+func (timeoutQueueItemWithPrismaRetryCountEqualsUniqueParam) unique() {}
+func (timeoutQueueItemWithPrismaRetryCountEqualsUniqueParam) equals() {}
+
+type TimeoutQueueItemWithPrismaTimeoutAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	timeoutQueueItemModel()
+	timeoutAtField()
+}
+
+type TimeoutQueueItemWithPrismaTimeoutAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	timeoutQueueItemModel()
+	timeoutAtField()
+}
+
+type timeoutQueueItemWithPrismaTimeoutAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemWithPrismaTimeoutAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemWithPrismaTimeoutAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p timeoutQueueItemWithPrismaTimeoutAtSetParam) timeoutQueueItemModel() {}
+
+func (p timeoutQueueItemWithPrismaTimeoutAtSetParam) timeoutAtField() {}
+
+type TimeoutQueueItemWithPrismaTimeoutAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	timeoutQueueItemModel()
+	timeoutAtField()
+}
+
+type timeoutQueueItemWithPrismaTimeoutAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemWithPrismaTimeoutAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemWithPrismaTimeoutAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p timeoutQueueItemWithPrismaTimeoutAtEqualsParam) timeoutQueueItemModel() {}
+
+func (p timeoutQueueItemWithPrismaTimeoutAtEqualsParam) timeoutAtField() {}
+
+func (timeoutQueueItemWithPrismaTimeoutAtSetParam) settable()  {}
+func (timeoutQueueItemWithPrismaTimeoutAtEqualsParam) equals() {}
+
+type timeoutQueueItemWithPrismaTimeoutAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemWithPrismaTimeoutAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemWithPrismaTimeoutAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p timeoutQueueItemWithPrismaTimeoutAtEqualsUniqueParam) timeoutQueueItemModel() {}
+func (p timeoutQueueItemWithPrismaTimeoutAtEqualsUniqueParam) timeoutAtField()        {}
+
+func (timeoutQueueItemWithPrismaTimeoutAtEqualsUniqueParam) unique() {}
+func (timeoutQueueItemWithPrismaTimeoutAtEqualsUniqueParam) equals() {}
+
+type TimeoutQueueItemWithPrismaTenantIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	timeoutQueueItemModel()
+	tenantIDField()
+}
+
+type TimeoutQueueItemWithPrismaTenantIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	timeoutQueueItemModel()
+	tenantIDField()
+}
+
+type timeoutQueueItemWithPrismaTenantIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemWithPrismaTenantIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemWithPrismaTenantIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p timeoutQueueItemWithPrismaTenantIDSetParam) timeoutQueueItemModel() {}
+
+func (p timeoutQueueItemWithPrismaTenantIDSetParam) tenantIDField() {}
+
+type TimeoutQueueItemWithPrismaTenantIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	timeoutQueueItemModel()
+	tenantIDField()
+}
+
+type timeoutQueueItemWithPrismaTenantIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemWithPrismaTenantIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemWithPrismaTenantIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p timeoutQueueItemWithPrismaTenantIDEqualsParam) timeoutQueueItemModel() {}
+
+func (p timeoutQueueItemWithPrismaTenantIDEqualsParam) tenantIDField() {}
+
+func (timeoutQueueItemWithPrismaTenantIDSetParam) settable()  {}
+func (timeoutQueueItemWithPrismaTenantIDEqualsParam) equals() {}
+
+type timeoutQueueItemWithPrismaTenantIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemWithPrismaTenantIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemWithPrismaTenantIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p timeoutQueueItemWithPrismaTenantIDEqualsUniqueParam) timeoutQueueItemModel() {}
+func (p timeoutQueueItemWithPrismaTenantIDEqualsUniqueParam) tenantIDField()         {}
+
+func (timeoutQueueItemWithPrismaTenantIDEqualsUniqueParam) unique() {}
+func (timeoutQueueItemWithPrismaTenantIDEqualsUniqueParam) equals() {}
+
+type TimeoutQueueItemWithPrismaIsQueuedEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	timeoutQueueItemModel()
+	isQueuedField()
+}
+
+type TimeoutQueueItemWithPrismaIsQueuedSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	timeoutQueueItemModel()
+	isQueuedField()
+}
+
+type timeoutQueueItemWithPrismaIsQueuedSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemWithPrismaIsQueuedSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemWithPrismaIsQueuedSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p timeoutQueueItemWithPrismaIsQueuedSetParam) timeoutQueueItemModel() {}
+
+func (p timeoutQueueItemWithPrismaIsQueuedSetParam) isQueuedField() {}
+
+type TimeoutQueueItemWithPrismaIsQueuedWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	timeoutQueueItemModel()
+	isQueuedField()
+}
+
+type timeoutQueueItemWithPrismaIsQueuedEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemWithPrismaIsQueuedEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemWithPrismaIsQueuedEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p timeoutQueueItemWithPrismaIsQueuedEqualsParam) timeoutQueueItemModel() {}
+
+func (p timeoutQueueItemWithPrismaIsQueuedEqualsParam) isQueuedField() {}
+
+func (timeoutQueueItemWithPrismaIsQueuedSetParam) settable()  {}
+func (timeoutQueueItemWithPrismaIsQueuedEqualsParam) equals() {}
+
+type timeoutQueueItemWithPrismaIsQueuedEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p timeoutQueueItemWithPrismaIsQueuedEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p timeoutQueueItemWithPrismaIsQueuedEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p timeoutQueueItemWithPrismaIsQueuedEqualsUniqueParam) timeoutQueueItemModel() {}
+func (p timeoutQueueItemWithPrismaIsQueuedEqualsUniqueParam) isQueuedField()         {}
+
+func (timeoutQueueItemWithPrismaIsQueuedEqualsUniqueParam) unique() {}
+func (timeoutQueueItemWithPrismaIsQueuedEqualsUniqueParam) equals() {}
+
 type stepRunEventActions struct {
 	// client holds the prisma client
 	client *PrismaClient
@@ -268147,6 +270800,82 @@ func (r internalQueueItemCreateOne) Exec(ctx context.Context) (*InternalQueueIte
 
 func (r internalQueueItemCreateOne) Tx() InternalQueueItemUniqueTxResult {
 	v := newInternalQueueItemUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+// Creates a single timeoutQueueItem.
+func (r timeoutQueueItemActions) CreateOne(
+	_stepRunID TimeoutQueueItemWithPrismaStepRunIDSetParam,
+	_retryCount TimeoutQueueItemWithPrismaRetryCountSetParam,
+	_timeoutAt TimeoutQueueItemWithPrismaTimeoutAtSetParam,
+	_tenantID TimeoutQueueItemWithPrismaTenantIDSetParam,
+	_isQueued TimeoutQueueItemWithPrismaIsQueuedSetParam,
+
+	optional ...TimeoutQueueItemSetParam,
+) timeoutQueueItemCreateOne {
+	var v timeoutQueueItemCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "TimeoutQueueItem"
+	v.query.Outputs = timeoutQueueItemOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _stepRunID.field())
+	fields = append(fields, _retryCount.field())
+	fields = append(fields, _timeoutAt.field())
+	fields = append(fields, _tenantID.field())
+	fields = append(fields, _isQueued.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r timeoutQueueItemCreateOne) With(params ...TimeoutQueueItemRelationWith) timeoutQueueItemCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type timeoutQueueItemCreateOne struct {
+	query builder.Query
+}
+
+func (p timeoutQueueItemCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p timeoutQueueItemCreateOne) timeoutQueueItemModel() {}
+
+func (r timeoutQueueItemCreateOne) Exec(ctx context.Context) (*TimeoutQueueItemModel, error) {
+	var v TimeoutQueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r timeoutQueueItemCreateOne) Tx() TimeoutQueueItemUniqueTxResult {
+	v := newTimeoutQueueItemUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -384801,6 +387530,656 @@ func (r internalQueueItemDeleteMany) Tx() InternalQueueItemManyTxResult {
 	return v
 }
 
+type timeoutQueueItemFindUnique struct {
+	query builder.Query
+}
+
+func (r timeoutQueueItemFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r timeoutQueueItemFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r timeoutQueueItemFindUnique) with()                     {}
+func (r timeoutQueueItemFindUnique) timeoutQueueItemModel()    {}
+func (r timeoutQueueItemFindUnique) timeoutQueueItemRelation() {}
+
+func (r timeoutQueueItemActions) FindUnique(
+	params TimeoutQueueItemEqualsUniqueWhereParam,
+) timeoutQueueItemFindUnique {
+	var v timeoutQueueItemFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "TimeoutQueueItem"
+	v.query.Outputs = timeoutQueueItemOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r timeoutQueueItemFindUnique) With(params ...TimeoutQueueItemRelationWith) timeoutQueueItemFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r timeoutQueueItemFindUnique) Select(params ...timeoutQueueItemPrismaFields) timeoutQueueItemFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r timeoutQueueItemFindUnique) Omit(params ...timeoutQueueItemPrismaFields) timeoutQueueItemFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range timeoutQueueItemOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r timeoutQueueItemFindUnique) Exec(ctx context.Context) (
+	*TimeoutQueueItemModel,
+	error,
+) {
+	var v *TimeoutQueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r timeoutQueueItemFindUnique) ExecInner(ctx context.Context) (
+	*InnerTimeoutQueueItem,
+	error,
+) {
+	var v *InnerTimeoutQueueItem
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r timeoutQueueItemFindUnique) Update(params ...TimeoutQueueItemSetParam) timeoutQueueItemUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "TimeoutQueueItem"
+
+	var v timeoutQueueItemUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type timeoutQueueItemUpdateUnique struct {
+	query builder.Query
+}
+
+func (r timeoutQueueItemUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r timeoutQueueItemUpdateUnique) timeoutQueueItemModel() {}
+
+func (r timeoutQueueItemUpdateUnique) Exec(ctx context.Context) (*TimeoutQueueItemModel, error) {
+	var v TimeoutQueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r timeoutQueueItemUpdateUnique) Tx() TimeoutQueueItemUniqueTxResult {
+	v := newTimeoutQueueItemUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r timeoutQueueItemFindUnique) Delete() timeoutQueueItemDeleteUnique {
+	var v timeoutQueueItemDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "TimeoutQueueItem"
+
+	return v
+}
+
+type timeoutQueueItemDeleteUnique struct {
+	query builder.Query
+}
+
+func (r timeoutQueueItemDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p timeoutQueueItemDeleteUnique) timeoutQueueItemModel() {}
+
+func (r timeoutQueueItemDeleteUnique) Exec(ctx context.Context) (*TimeoutQueueItemModel, error) {
+	var v TimeoutQueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r timeoutQueueItemDeleteUnique) Tx() TimeoutQueueItemUniqueTxResult {
+	v := newTimeoutQueueItemUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type timeoutQueueItemFindFirst struct {
+	query builder.Query
+}
+
+func (r timeoutQueueItemFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r timeoutQueueItemFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r timeoutQueueItemFindFirst) with()                     {}
+func (r timeoutQueueItemFindFirst) timeoutQueueItemModel()    {}
+func (r timeoutQueueItemFindFirst) timeoutQueueItemRelation() {}
+
+func (r timeoutQueueItemActions) FindFirst(
+	params ...TimeoutQueueItemWhereParam,
+) timeoutQueueItemFindFirst {
+	var v timeoutQueueItemFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "TimeoutQueueItem"
+	v.query.Outputs = timeoutQueueItemOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r timeoutQueueItemFindFirst) With(params ...TimeoutQueueItemRelationWith) timeoutQueueItemFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r timeoutQueueItemFindFirst) Select(params ...timeoutQueueItemPrismaFields) timeoutQueueItemFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r timeoutQueueItemFindFirst) Omit(params ...timeoutQueueItemPrismaFields) timeoutQueueItemFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range timeoutQueueItemOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r timeoutQueueItemFindFirst) OrderBy(params ...TimeoutQueueItemOrderByParam) timeoutQueueItemFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r timeoutQueueItemFindFirst) Skip(count int) timeoutQueueItemFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r timeoutQueueItemFindFirst) Take(count int) timeoutQueueItemFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r timeoutQueueItemFindFirst) Cursor(cursor TimeoutQueueItemCursorParam) timeoutQueueItemFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r timeoutQueueItemFindFirst) Exec(ctx context.Context) (
+	*TimeoutQueueItemModel,
+	error,
+) {
+	var v *TimeoutQueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r timeoutQueueItemFindFirst) ExecInner(ctx context.Context) (
+	*InnerTimeoutQueueItem,
+	error,
+) {
+	var v *InnerTimeoutQueueItem
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type timeoutQueueItemFindMany struct {
+	query builder.Query
+}
+
+func (r timeoutQueueItemFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r timeoutQueueItemFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r timeoutQueueItemFindMany) with()                     {}
+func (r timeoutQueueItemFindMany) timeoutQueueItemModel()    {}
+func (r timeoutQueueItemFindMany) timeoutQueueItemRelation() {}
+
+func (r timeoutQueueItemActions) FindMany(
+	params ...TimeoutQueueItemWhereParam,
+) timeoutQueueItemFindMany {
+	var v timeoutQueueItemFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "TimeoutQueueItem"
+	v.query.Outputs = timeoutQueueItemOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r timeoutQueueItemFindMany) With(params ...TimeoutQueueItemRelationWith) timeoutQueueItemFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r timeoutQueueItemFindMany) Select(params ...timeoutQueueItemPrismaFields) timeoutQueueItemFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r timeoutQueueItemFindMany) Omit(params ...timeoutQueueItemPrismaFields) timeoutQueueItemFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range timeoutQueueItemOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r timeoutQueueItemFindMany) OrderBy(params ...TimeoutQueueItemOrderByParam) timeoutQueueItemFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r timeoutQueueItemFindMany) Skip(count int) timeoutQueueItemFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r timeoutQueueItemFindMany) Take(count int) timeoutQueueItemFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r timeoutQueueItemFindMany) Cursor(cursor TimeoutQueueItemCursorParam) timeoutQueueItemFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r timeoutQueueItemFindMany) Exec(ctx context.Context) (
+	[]TimeoutQueueItemModel,
+	error,
+) {
+	var v []TimeoutQueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r timeoutQueueItemFindMany) ExecInner(ctx context.Context) (
+	[]InnerTimeoutQueueItem,
+	error,
+) {
+	var v []InnerTimeoutQueueItem
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r timeoutQueueItemFindMany) Update(params ...TimeoutQueueItemSetParam) timeoutQueueItemUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "TimeoutQueueItem"
+
+	r.query.Outputs = countOutput
+
+	var v timeoutQueueItemUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type timeoutQueueItemUpdateMany struct {
+	query builder.Query
+}
+
+func (r timeoutQueueItemUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r timeoutQueueItemUpdateMany) timeoutQueueItemModel() {}
+
+func (r timeoutQueueItemUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r timeoutQueueItemUpdateMany) Tx() TimeoutQueueItemManyTxResult {
+	v := newTimeoutQueueItemManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r timeoutQueueItemFindMany) Delete() timeoutQueueItemDeleteMany {
+	var v timeoutQueueItemDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "TimeoutQueueItem"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type timeoutQueueItemDeleteMany struct {
+	query builder.Query
+}
+
+func (r timeoutQueueItemDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p timeoutQueueItemDeleteMany) timeoutQueueItemModel() {}
+
+func (r timeoutQueueItemDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r timeoutQueueItemDeleteMany) Tx() TimeoutQueueItemManyTxResult {
+	v := newTimeoutQueueItemManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 type stepRunEventToStepRunFindUnique struct {
 	query builder.Query
 }
@@ -419017,6 +422396,54 @@ func (r InternalQueueItemManyTxResult) Result() (v *BatchResult) {
 	return v
 }
 
+func newTimeoutQueueItemUniqueTxResult() TimeoutQueueItemUniqueTxResult {
+	return TimeoutQueueItemUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type TimeoutQueueItemUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p TimeoutQueueItemUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p TimeoutQueueItemUniqueTxResult) IsTx() {}
+
+func (r TimeoutQueueItemUniqueTxResult) Result() (v *TimeoutQueueItemModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newTimeoutQueueItemManyTxResult() TimeoutQueueItemManyTxResult {
+	return TimeoutQueueItemManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type TimeoutQueueItemManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p TimeoutQueueItemManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p TimeoutQueueItemManyTxResult) IsTx() {}
+
+func (r TimeoutQueueItemManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
 func newStepRunEventUniqueTxResult() StepRunEventUniqueTxResult {
 	return StepRunEventUniqueTxResult{
 		result: &transaction.Result{},
@@ -424625,6 +428052,124 @@ func (r internalQueueItemUpsertOne) Exec(ctx context.Context) (*InternalQueueIte
 
 func (r internalQueueItemUpsertOne) Tx() InternalQueueItemUniqueTxResult {
 	v := newInternalQueueItemUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type timeoutQueueItemUpsertOne struct {
+	query builder.Query
+}
+
+func (r timeoutQueueItemUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r timeoutQueueItemUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r timeoutQueueItemUpsertOne) with()                     {}
+func (r timeoutQueueItemUpsertOne) timeoutQueueItemModel()    {}
+func (r timeoutQueueItemUpsertOne) timeoutQueueItemRelation() {}
+
+func (r timeoutQueueItemActions) UpsertOne(
+	params TimeoutQueueItemEqualsUniqueWhereParam,
+) timeoutQueueItemUpsertOne {
+	var v timeoutQueueItemUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "TimeoutQueueItem"
+	v.query.Outputs = timeoutQueueItemOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r timeoutQueueItemUpsertOne) Create(
+
+	_stepRunID TimeoutQueueItemWithPrismaStepRunIDSetParam,
+	_retryCount TimeoutQueueItemWithPrismaRetryCountSetParam,
+	_timeoutAt TimeoutQueueItemWithPrismaTimeoutAtSetParam,
+	_tenantID TimeoutQueueItemWithPrismaTenantIDSetParam,
+	_isQueued TimeoutQueueItemWithPrismaIsQueuedSetParam,
+
+	optional ...TimeoutQueueItemSetParam,
+) timeoutQueueItemUpsertOne {
+	var v timeoutQueueItemUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _stepRunID.field())
+	fields = append(fields, _retryCount.field())
+	fields = append(fields, _timeoutAt.field())
+	fields = append(fields, _tenantID.field())
+	fields = append(fields, _isQueued.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r timeoutQueueItemUpsertOne) Update(
+	params ...TimeoutQueueItemSetParam,
+) timeoutQueueItemUpsertOne {
+	var v timeoutQueueItemUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r timeoutQueueItemUpsertOne) Exec(ctx context.Context) (*TimeoutQueueItemModel, error) {
+	var v TimeoutQueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r timeoutQueueItemUpsertOne) Tx() TimeoutQueueItemUniqueTxResult {
+	v := newTimeoutQueueItemUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
