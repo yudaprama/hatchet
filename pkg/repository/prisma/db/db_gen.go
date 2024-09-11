@@ -1365,8 +1365,6 @@ model StepRun {
   // if the semaphore was released prior to terminal state
   semaphoreReleased Boolean @default(false)
 
-  semaphoreSlot WorkerSemaphoreSlot?
-
   archivedResults StepRunResultArchive[]
 
   streamEvents StreamEvent[]
@@ -1468,6 +1466,20 @@ model TimeoutQueueItem {
 
   @@unique([stepRunId, retryCount])
   @@index([tenantId, isQueued, timeoutAt])
+}
+
+model SemaphoreQueueItem {
+  id BigInt @id @default(autoincrement()) @db.BigInt
+
+  // the parent step run
+  stepRunId String @db.Uuid
+  workerId  String @db.Uuid
+
+  // the parent tenant
+  tenantId String @db.Uuid
+
+  @@unique([stepRunId, workerId])
+  @@index([tenantId, workerId])
 }
 
 enum StepRunEventReason {
@@ -1674,51 +1686,10 @@ model Worker {
   // the runs which retrieve the group keys
   groupKeyRuns GetGroupKeyRun[]
 
-  slots WorkerSemaphoreSlot[]
-
-  semaphoreCount WorkerSemaphoreCount?
   assignedEvents WorkerAssignEvent[]
 
   webhook   WebhookWorker? @relation(fields: [webhookId], references: [id], onDelete: SetNull, onUpdate: Cascade)
   webhookId String?        @unique @db.Uuid
-
-  // DEPRECATED in v_0_30_1, replaced with slots and will be removed in a future release
-  semaphore WorkerSemaphore? // FIXME remove this in a few releases from v_0_30_1
-}
-
-// DEPRECATED in v_0_30_1, replaced with slots and will be removed in a future release
-// FIXME remove in a future release
-model WorkerSemaphore {
-  // the parent worker
-  worker   Worker @relation(fields: [workerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  workerId String @unique @db.Uuid
-  // keeps track of maxRuns - runningRuns on the worker
-  slots    Int
-}
-
-model WorkerSemaphoreSlot {
-  id String @id @unique @default(uuid()) @db.Uuid
-
-  // the parent semaphore
-  worker   Worker @relation(fields: [workerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  workerId String @db.Uuid
-
-  // the parent step run
-  stepRun   StepRun? @relation(fields: [stepRunId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  stepRunId String?  @unique @db.Uuid
-
-  @@index([workerId])
-}
-
-model WorkerSemaphoreCount {
-  // the parent semaphore
-  worker   Worker @relation(fields: [workerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  workerId String @id @unique @db.Uuid
-
-  // the count of the semaphore
-  count Int
-
-  @@index([workerId])
 }
 
 model WorkerAssignEvent {
@@ -1998,15 +1969,13 @@ func newClient() *PrismaClient {
 	c.QueueItem = queueItemActions{client: c}
 	c.InternalQueueItem = internalQueueItemActions{client: c}
 	c.TimeoutQueueItem = timeoutQueueItemActions{client: c}
+	c.SemaphoreQueueItem = semaphoreQueueItemActions{client: c}
 	c.StepRunEvent = stepRunEventActions{client: c}
 	c.StepRunResultArchive = stepRunResultArchiveActions{client: c}
 	c.Dispatcher = dispatcherActions{client: c}
 	c.Ticker = tickerActions{client: c}
 	c.WorkerLabel = workerLabelActions{client: c}
 	c.Worker = workerActions{client: c}
-	c.WorkerSemaphore = workerSemaphoreActions{client: c}
-	c.WorkerSemaphoreSlot = workerSemaphoreSlotActions{client: c}
-	c.WorkerSemaphoreCount = workerSemaphoreCountActions{client: c}
 	c.WorkerAssignEvent = workerAssignEventActions{client: c}
 	c.Service = serviceActions{client: c}
 	c.TenantVcsProvider = tenantVcsProviderActions{client: c}
@@ -2126,6 +2095,8 @@ type PrismaClient struct {
 	InternalQueueItem internalQueueItemActions
 	// TimeoutQueueItem provides access to CRUD methods.
 	TimeoutQueueItem timeoutQueueItemActions
+	// SemaphoreQueueItem provides access to CRUD methods.
+	SemaphoreQueueItem semaphoreQueueItemActions
 	// StepRunEvent provides access to CRUD methods.
 	StepRunEvent stepRunEventActions
 	// StepRunResultArchive provides access to CRUD methods.
@@ -2138,12 +2109,6 @@ type PrismaClient struct {
 	WorkerLabel workerLabelActions
 	// Worker provides access to CRUD methods.
 	Worker workerActions
-	// WorkerSemaphore provides access to CRUD methods.
-	WorkerSemaphore workerSemaphoreActions
-	// WorkerSemaphoreSlot provides access to CRUD methods.
-	WorkerSemaphoreSlot workerSemaphoreSlotActions
-	// WorkerSemaphoreCount provides access to CRUD methods.
-	WorkerSemaphoreCount workerSemaphoreCountActions
 	// WorkerAssignEvent provides access to CRUD methods.
 	WorkerAssignEvent workerAssignEventActions
 	// Service provides access to CRUD methods.
@@ -2956,6 +2921,15 @@ const (
 	TimeoutQueueItemScalarFieldEnumIsQueued   TimeoutQueueItemScalarFieldEnum = "isQueued"
 )
 
+type SemaphoreQueueItemScalarFieldEnum string
+
+const (
+	SemaphoreQueueItemScalarFieldEnumID        SemaphoreQueueItemScalarFieldEnum = "id"
+	SemaphoreQueueItemScalarFieldEnumStepRunID SemaphoreQueueItemScalarFieldEnum = "stepRunId"
+	SemaphoreQueueItemScalarFieldEnumWorkerID  SemaphoreQueueItemScalarFieldEnum = "workerId"
+	SemaphoreQueueItemScalarFieldEnumTenantID  SemaphoreQueueItemScalarFieldEnum = "tenantId"
+)
+
 type StepRunEventScalarFieldEnum string
 
 const (
@@ -3040,28 +3014,6 @@ const (
 	WorkerScalarFieldEnumDispatcherID            WorkerScalarFieldEnum = "dispatcherId"
 	WorkerScalarFieldEnumMaxRuns                 WorkerScalarFieldEnum = "maxRuns"
 	WorkerScalarFieldEnumWebhookID               WorkerScalarFieldEnum = "webhookId"
-)
-
-type WorkerSemaphoreScalarFieldEnum string
-
-const (
-	WorkerSemaphoreScalarFieldEnumWorkerID WorkerSemaphoreScalarFieldEnum = "workerId"
-	WorkerSemaphoreScalarFieldEnumSlots    WorkerSemaphoreScalarFieldEnum = "slots"
-)
-
-type WorkerSemaphoreSlotScalarFieldEnum string
-
-const (
-	WorkerSemaphoreSlotScalarFieldEnumID        WorkerSemaphoreSlotScalarFieldEnum = "id"
-	WorkerSemaphoreSlotScalarFieldEnumWorkerID  WorkerSemaphoreSlotScalarFieldEnum = "workerId"
-	WorkerSemaphoreSlotScalarFieldEnumStepRunID WorkerSemaphoreSlotScalarFieldEnum = "stepRunId"
-)
-
-type WorkerSemaphoreCountScalarFieldEnum string
-
-const (
-	WorkerSemaphoreCountScalarFieldEnumWorkerID WorkerSemaphoreCountScalarFieldEnum = "workerId"
-	WorkerSemaphoreCountScalarFieldEnumCount    WorkerSemaphoreCountScalarFieldEnum = "count"
 )
 
 type WorkerAssignEventScalarFieldEnum string
@@ -4298,8 +4250,6 @@ const stepRunFieldGitRepoBranch stepRunPrismaFields = "gitRepoBranch"
 
 const stepRunFieldSemaphoreReleased stepRunPrismaFields = "semaphoreReleased"
 
-const stepRunFieldSemaphoreSlot stepRunPrismaFields = "semaphoreSlot"
-
 const stepRunFieldArchivedResults stepRunPrismaFields = "archivedResults"
 
 const stepRunFieldStreamEvents stepRunPrismaFields = "streamEvents"
@@ -4375,6 +4325,16 @@ const timeoutQueueItemFieldTimeoutAt timeoutQueueItemPrismaFields = "timeoutAt"
 const timeoutQueueItemFieldTenantID timeoutQueueItemPrismaFields = "tenantId"
 
 const timeoutQueueItemFieldIsQueued timeoutQueueItemPrismaFields = "isQueued"
+
+type semaphoreQueueItemPrismaFields = prismaFields
+
+const semaphoreQueueItemFieldID semaphoreQueueItemPrismaFields = "id"
+
+const semaphoreQueueItemFieldStepRunID semaphoreQueueItemPrismaFields = "stepRunId"
+
+const semaphoreQueueItemFieldWorkerID semaphoreQueueItemPrismaFields = "workerId"
+
+const semaphoreQueueItemFieldTenantID semaphoreQueueItemPrismaFields = "tenantId"
 
 type stepRunEventPrismaFields = prismaFields
 
@@ -4532,45 +4492,11 @@ const workerFieldStepRuns workerPrismaFields = "stepRuns"
 
 const workerFieldGroupKeyRuns workerPrismaFields = "groupKeyRuns"
 
-const workerFieldSlots workerPrismaFields = "slots"
-
-const workerFieldSemaphoreCount workerPrismaFields = "semaphoreCount"
-
 const workerFieldAssignedEvents workerPrismaFields = "assignedEvents"
 
 const workerFieldWebhook workerPrismaFields = "webhook"
 
 const workerFieldWebhookID workerPrismaFields = "webhookId"
-
-const workerFieldSemaphore workerPrismaFields = "semaphore"
-
-type workerSemaphorePrismaFields = prismaFields
-
-const workerSemaphoreFieldWorker workerSemaphorePrismaFields = "worker"
-
-const workerSemaphoreFieldWorkerID workerSemaphorePrismaFields = "workerId"
-
-const workerSemaphoreFieldSlots workerSemaphorePrismaFields = "slots"
-
-type workerSemaphoreSlotPrismaFields = prismaFields
-
-const workerSemaphoreSlotFieldID workerSemaphoreSlotPrismaFields = "id"
-
-const workerSemaphoreSlotFieldWorker workerSemaphoreSlotPrismaFields = "worker"
-
-const workerSemaphoreSlotFieldWorkerID workerSemaphoreSlotPrismaFields = "workerId"
-
-const workerSemaphoreSlotFieldStepRun workerSemaphoreSlotPrismaFields = "stepRun"
-
-const workerSemaphoreSlotFieldStepRunID workerSemaphoreSlotPrismaFields = "stepRunId"
-
-type workerSemaphoreCountPrismaFields = prismaFields
-
-const workerSemaphoreCountFieldWorker workerSemaphoreCountPrismaFields = "worker"
-
-const workerSemaphoreCountFieldWorkerID workerSemaphoreCountPrismaFields = "workerId"
-
-const workerSemaphoreCountFieldCount workerSemaphoreCountPrismaFields = "count"
 
 type workerAssignEventPrismaFields = prismaFields
 
@@ -4898,6 +4824,10 @@ func NewMock() (*PrismaClient, *Mock, func(t *testing.T)) {
 		mock: m,
 	}
 
+	m.SemaphoreQueueItem = semaphoreQueueItemMock{
+		mock: m,
+	}
+
 	m.StepRunEvent = stepRunEventMock{
 		mock: m,
 	}
@@ -4919,18 +4849,6 @@ func NewMock() (*PrismaClient, *Mock, func(t *testing.T)) {
 	}
 
 	m.Worker = workerMock{
-		mock: m,
-	}
-
-	m.WorkerSemaphore = workerSemaphoreMock{
-		mock: m,
-	}
-
-	m.WorkerSemaphoreSlot = workerSemaphoreSlotMock{
-		mock: m,
-	}
-
-	m.WorkerSemaphoreCount = workerSemaphoreCountMock{
 		mock: m,
 	}
 
@@ -5062,6 +4980,8 @@ type Mock struct {
 
 	TimeoutQueueItem timeoutQueueItemMock
 
+	SemaphoreQueueItem semaphoreQueueItemMock
+
 	StepRunEvent stepRunEventMock
 
 	StepRunResultArchive stepRunResultArchiveMock
@@ -5073,12 +4993,6 @@ type Mock struct {
 	WorkerLabel workerLabelMock
 
 	Worker workerMock
-
-	WorkerSemaphore workerSemaphoreMock
-
-	WorkerSemaphoreSlot workerSemaphoreSlotMock
-
-	WorkerSemaphoreCount workerSemaphoreCountMock
 
 	WorkerAssignEvent workerAssignEventMock
 
@@ -6905,6 +6819,48 @@ func (m *timeoutQueueItemMockExec) Errors(err error) {
 	})
 }
 
+type semaphoreQueueItemMock struct {
+	mock *Mock
+}
+
+type SemaphoreQueueItemMockExpectParam interface {
+	ExtractQuery() builder.Query
+	semaphoreQueueItemModel()
+}
+
+func (m *semaphoreQueueItemMock) Expect(query SemaphoreQueueItemMockExpectParam) *semaphoreQueueItemMockExec {
+	return &semaphoreQueueItemMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type semaphoreQueueItemMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *semaphoreQueueItemMockExec) Returns(v SemaphoreQueueItemModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *semaphoreQueueItemMockExec) ReturnsMany(v []SemaphoreQueueItemModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *semaphoreQueueItemMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
 type stepRunEventMock struct {
 	mock *Mock
 }
@@ -7151,132 +7107,6 @@ func (m *workerMockExec) ReturnsMany(v []WorkerModel) {
 }
 
 func (m *workerMockExec) Errors(err error) {
-	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
-		Query:   m.query,
-		WantErr: err,
-	})
-}
-
-type workerSemaphoreMock struct {
-	mock *Mock
-}
-
-type WorkerSemaphoreMockExpectParam interface {
-	ExtractQuery() builder.Query
-	workerSemaphoreModel()
-}
-
-func (m *workerSemaphoreMock) Expect(query WorkerSemaphoreMockExpectParam) *workerSemaphoreMockExec {
-	return &workerSemaphoreMockExec{
-		mock:  m.mock,
-		query: query.ExtractQuery(),
-	}
-}
-
-type workerSemaphoreMockExec struct {
-	mock  *Mock
-	query builder.Query
-}
-
-func (m *workerSemaphoreMockExec) Returns(v WorkerSemaphoreModel) {
-	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
-		Query: m.query,
-		Want:  &v,
-	})
-}
-
-func (m *workerSemaphoreMockExec) ReturnsMany(v []WorkerSemaphoreModel) {
-	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
-		Query: m.query,
-		Want:  &v,
-	})
-}
-
-func (m *workerSemaphoreMockExec) Errors(err error) {
-	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
-		Query:   m.query,
-		WantErr: err,
-	})
-}
-
-type workerSemaphoreSlotMock struct {
-	mock *Mock
-}
-
-type WorkerSemaphoreSlotMockExpectParam interface {
-	ExtractQuery() builder.Query
-	workerSemaphoreSlotModel()
-}
-
-func (m *workerSemaphoreSlotMock) Expect(query WorkerSemaphoreSlotMockExpectParam) *workerSemaphoreSlotMockExec {
-	return &workerSemaphoreSlotMockExec{
-		mock:  m.mock,
-		query: query.ExtractQuery(),
-	}
-}
-
-type workerSemaphoreSlotMockExec struct {
-	mock  *Mock
-	query builder.Query
-}
-
-func (m *workerSemaphoreSlotMockExec) Returns(v WorkerSemaphoreSlotModel) {
-	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
-		Query: m.query,
-		Want:  &v,
-	})
-}
-
-func (m *workerSemaphoreSlotMockExec) ReturnsMany(v []WorkerSemaphoreSlotModel) {
-	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
-		Query: m.query,
-		Want:  &v,
-	})
-}
-
-func (m *workerSemaphoreSlotMockExec) Errors(err error) {
-	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
-		Query:   m.query,
-		WantErr: err,
-	})
-}
-
-type workerSemaphoreCountMock struct {
-	mock *Mock
-}
-
-type WorkerSemaphoreCountMockExpectParam interface {
-	ExtractQuery() builder.Query
-	workerSemaphoreCountModel()
-}
-
-func (m *workerSemaphoreCountMock) Expect(query WorkerSemaphoreCountMockExpectParam) *workerSemaphoreCountMockExec {
-	return &workerSemaphoreCountMockExec{
-		mock:  m.mock,
-		query: query.ExtractQuery(),
-	}
-}
-
-type workerSemaphoreCountMockExec struct {
-	mock  *Mock
-	query builder.Query
-}
-
-func (m *workerSemaphoreCountMockExec) Returns(v WorkerSemaphoreCountModel) {
-	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
-		Query: m.query,
-		Want:  &v,
-	})
-}
-
-func (m *workerSemaphoreCountMockExec) ReturnsMany(v []WorkerSemaphoreCountModel) {
-	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
-		Query: m.query,
-		Want:  &v,
-	})
-}
-
-func (m *workerSemaphoreCountMockExec) Errors(err error) {
 	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
 		Query:   m.query,
 		WantErr: err,
@@ -10918,7 +10748,6 @@ type RelationsStepRun struct {
 	Parents           []StepRunModel                     `json:"parents,omitempty"`
 	Worker            *WorkerModel                       `json:"worker,omitempty"`
 	Ticker            *TickerModel                       `json:"ticker,omitempty"`
-	SemaphoreSlot     *WorkerSemaphoreSlotModel          `json:"semaphoreSlot,omitempty"`
 	ArchivedResults   []StepRunResultArchiveModel        `json:"archivedResults,omitempty"`
 	StreamEvents      []StreamEventModel                 `json:"streamEvents,omitempty"`
 	Logs              []LogLineModel                     `json:"logs,omitempty"`
@@ -11100,13 +10929,6 @@ func (r StepRunModel) GitRepoBranch() (value String, ok bool) {
 		return value, false
 	}
 	return *r.InnerStepRun.GitRepoBranch, true
-}
-
-func (r StepRunModel) SemaphoreSlot() (value *WorkerSemaphoreSlotModel, ok bool) {
-	if r.RelationsStepRun.SemaphoreSlot == nil {
-		return value, false
-	}
-	return r.RelationsStepRun.SemaphoreSlot, true
 }
 
 func (r StepRunModel) ArchivedResults() (value []StepRunResultArchiveModel) {
@@ -11340,6 +11162,32 @@ type RawTimeoutQueueItemModel struct {
 
 // RelationsTimeoutQueueItem holds the relation data separately
 type RelationsTimeoutQueueItem struct {
+}
+
+// SemaphoreQueueItemModel represents the SemaphoreQueueItem model and is a wrapper for accessing fields and methods
+type SemaphoreQueueItemModel struct {
+	InnerSemaphoreQueueItem
+	RelationsSemaphoreQueueItem
+}
+
+// InnerSemaphoreQueueItem holds the actual data
+type InnerSemaphoreQueueItem struct {
+	ID        BigInt `json:"id"`
+	StepRunID string `json:"stepRunId"`
+	WorkerID  string `json:"workerId"`
+	TenantID  string `json:"tenantId"`
+}
+
+// RawSemaphoreQueueItemModel is a struct for SemaphoreQueueItem when used in raw queries
+type RawSemaphoreQueueItemModel struct {
+	ID        RawBigInt `json:"id"`
+	StepRunID RawString `json:"stepRunId"`
+	WorkerID  RawString `json:"workerId"`
+	TenantID  RawString `json:"tenantId"`
+}
+
+// RelationsSemaphoreQueueItem holds the relation data separately
+type RelationsSemaphoreQueueItem struct {
 }
 
 // StepRunEventModel represents the StepRunEvent model and is a wrapper for accessing fields and methods
@@ -11752,18 +11600,15 @@ type RawWorkerModel struct {
 
 // RelationsWorker holds the relation data separately
 type RelationsWorker struct {
-	Labels         []WorkerLabelModel         `json:"labels,omitempty"`
-	Tenant         *TenantModel               `json:"tenant,omitempty"`
-	Dispatcher     *DispatcherModel           `json:"dispatcher,omitempty"`
-	Services       []ServiceModel             `json:"services,omitempty"`
-	Actions        []ActionModel              `json:"actions,omitempty"`
-	StepRuns       []StepRunModel             `json:"stepRuns,omitempty"`
-	GroupKeyRuns   []GetGroupKeyRunModel      `json:"groupKeyRuns,omitempty"`
-	Slots          []WorkerSemaphoreSlotModel `json:"slots,omitempty"`
-	SemaphoreCount *WorkerSemaphoreCountModel `json:"semaphoreCount,omitempty"`
-	AssignedEvents []WorkerAssignEventModel   `json:"assignedEvents,omitempty"`
-	Webhook        *WebhookWorkerModel        `json:"webhook,omitempty"`
-	Semaphore      *WorkerSemaphoreModel      `json:"semaphore,omitempty"`
+	Labels         []WorkerLabelModel       `json:"labels,omitempty"`
+	Tenant         *TenantModel             `json:"tenant,omitempty"`
+	Dispatcher     *DispatcherModel         `json:"dispatcher,omitempty"`
+	Services       []ServiceModel           `json:"services,omitempty"`
+	Actions        []ActionModel            `json:"actions,omitempty"`
+	StepRuns       []StepRunModel           `json:"stepRuns,omitempty"`
+	GroupKeyRuns   []GetGroupKeyRunModel    `json:"groupKeyRuns,omitempty"`
+	AssignedEvents []WorkerAssignEventModel `json:"assignedEvents,omitempty"`
+	Webhook        *WebhookWorkerModel      `json:"webhook,omitempty"`
 }
 
 func (r WorkerModel) DeletedAt() (value DateTime, ok bool) {
@@ -11843,20 +11688,6 @@ func (r WorkerModel) GroupKeyRuns() (value []GetGroupKeyRunModel) {
 	return r.RelationsWorker.GroupKeyRuns
 }
 
-func (r WorkerModel) Slots() (value []WorkerSemaphoreSlotModel) {
-	if r.RelationsWorker.Slots == nil {
-		panic("attempted to access slots but did not fetch it using the .With() syntax")
-	}
-	return r.RelationsWorker.Slots
-}
-
-func (r WorkerModel) SemaphoreCount() (value *WorkerSemaphoreCountModel, ok bool) {
-	if r.RelationsWorker.SemaphoreCount == nil {
-		return value, false
-	}
-	return r.RelationsWorker.SemaphoreCount, true
-}
-
 func (r WorkerModel) AssignedEvents() (value []WorkerAssignEventModel) {
 	if r.RelationsWorker.AssignedEvents == nil {
 		panic("attempted to access assignedEvents but did not fetch it using the .With() syntax")
@@ -11876,120 +11707,6 @@ func (r WorkerModel) WebhookID() (value String, ok bool) {
 		return value, false
 	}
 	return *r.InnerWorker.WebhookID, true
-}
-
-func (r WorkerModel) Semaphore() (value *WorkerSemaphoreModel, ok bool) {
-	if r.RelationsWorker.Semaphore == nil {
-		return value, false
-	}
-	return r.RelationsWorker.Semaphore, true
-}
-
-// WorkerSemaphoreModel represents the WorkerSemaphore model and is a wrapper for accessing fields and methods
-type WorkerSemaphoreModel struct {
-	InnerWorkerSemaphore
-	RelationsWorkerSemaphore
-}
-
-// InnerWorkerSemaphore holds the actual data
-type InnerWorkerSemaphore struct {
-	WorkerID string `json:"workerId"`
-	Slots    int    `json:"slots"`
-}
-
-// RawWorkerSemaphoreModel is a struct for WorkerSemaphore when used in raw queries
-type RawWorkerSemaphoreModel struct {
-	WorkerID RawString `json:"workerId"`
-	Slots    RawInt    `json:"slots"`
-}
-
-// RelationsWorkerSemaphore holds the relation data separately
-type RelationsWorkerSemaphore struct {
-	Worker *WorkerModel `json:"worker,omitempty"`
-}
-
-func (r WorkerSemaphoreModel) Worker() (value *WorkerModel) {
-	if r.RelationsWorkerSemaphore.Worker == nil {
-		panic("attempted to access worker but did not fetch it using the .With() syntax")
-	}
-	return r.RelationsWorkerSemaphore.Worker
-}
-
-// WorkerSemaphoreSlotModel represents the WorkerSemaphoreSlot model and is a wrapper for accessing fields and methods
-type WorkerSemaphoreSlotModel struct {
-	InnerWorkerSemaphoreSlot
-	RelationsWorkerSemaphoreSlot
-}
-
-// InnerWorkerSemaphoreSlot holds the actual data
-type InnerWorkerSemaphoreSlot struct {
-	ID        string  `json:"id"`
-	WorkerID  string  `json:"workerId"`
-	StepRunID *string `json:"stepRunId,omitempty"`
-}
-
-// RawWorkerSemaphoreSlotModel is a struct for WorkerSemaphoreSlot when used in raw queries
-type RawWorkerSemaphoreSlotModel struct {
-	ID        RawString  `json:"id"`
-	WorkerID  RawString  `json:"workerId"`
-	StepRunID *RawString `json:"stepRunId,omitempty"`
-}
-
-// RelationsWorkerSemaphoreSlot holds the relation data separately
-type RelationsWorkerSemaphoreSlot struct {
-	Worker  *WorkerModel  `json:"worker,omitempty"`
-	StepRun *StepRunModel `json:"stepRun,omitempty"`
-}
-
-func (r WorkerSemaphoreSlotModel) Worker() (value *WorkerModel) {
-	if r.RelationsWorkerSemaphoreSlot.Worker == nil {
-		panic("attempted to access worker but did not fetch it using the .With() syntax")
-	}
-	return r.RelationsWorkerSemaphoreSlot.Worker
-}
-
-func (r WorkerSemaphoreSlotModel) StepRun() (value *StepRunModel, ok bool) {
-	if r.RelationsWorkerSemaphoreSlot.StepRun == nil {
-		return value, false
-	}
-	return r.RelationsWorkerSemaphoreSlot.StepRun, true
-}
-
-func (r WorkerSemaphoreSlotModel) StepRunID() (value String, ok bool) {
-	if r.InnerWorkerSemaphoreSlot.StepRunID == nil {
-		return value, false
-	}
-	return *r.InnerWorkerSemaphoreSlot.StepRunID, true
-}
-
-// WorkerSemaphoreCountModel represents the WorkerSemaphoreCount model and is a wrapper for accessing fields and methods
-type WorkerSemaphoreCountModel struct {
-	InnerWorkerSemaphoreCount
-	RelationsWorkerSemaphoreCount
-}
-
-// InnerWorkerSemaphoreCount holds the actual data
-type InnerWorkerSemaphoreCount struct {
-	WorkerID string `json:"workerId"`
-	Count    int    `json:"count"`
-}
-
-// RawWorkerSemaphoreCountModel is a struct for WorkerSemaphoreCount when used in raw queries
-type RawWorkerSemaphoreCountModel struct {
-	WorkerID RawString `json:"workerId"`
-	Count    RawInt    `json:"count"`
-}
-
-// RelationsWorkerSemaphoreCount holds the relation data separately
-type RelationsWorkerSemaphoreCount struct {
-	Worker *WorkerModel `json:"worker,omitempty"`
-}
-
-func (r WorkerSemaphoreCountModel) Worker() (value *WorkerModel) {
-	if r.RelationsWorkerSemaphoreCount.Worker == nil {
-		panic("attempted to access worker but did not fetch it using the .With() syntax")
-	}
-	return r.RelationsWorkerSemaphoreCount.Worker
 }
 
 // WorkerAssignEventModel represents the WorkerAssignEvent model and is a wrapper for accessing fields and methods
@@ -138884,8 +138601,6 @@ type stepRunQuery struct {
 	// @required
 	SemaphoreReleased stepRunQuerySemaphoreReleasedBoolean
 
-	SemaphoreSlot stepRunQuerySemaphoreSlotRelations
-
 	ArchivedResults stepRunQueryArchivedResultsRelations
 
 	StreamEvents stepRunQueryStreamEventsRelations
@@ -149741,94 +149456,6 @@ func (r stepRunQuerySemaphoreReleasedBoolean) Field() stepRunPrismaFields {
 }
 
 // base struct
-type stepRunQuerySemaphoreSlotWorkerSemaphoreSlot struct{}
-
-type stepRunQuerySemaphoreSlotRelations struct{}
-
-// StepRun -> SemaphoreSlot
-//
-// @relation
-// @optional
-func (stepRunQuerySemaphoreSlotRelations) Where(
-	params ...WorkerSemaphoreSlotWhereParam,
-) stepRunDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return stepRunDefaultParam{
-		data: builder.Field{
-			Name: "semaphoreSlot",
-			Fields: []builder.Field{
-				{
-					Name:   "is",
-					Fields: fields,
-				},
-			},
-		},
-	}
-}
-
-func (stepRunQuerySemaphoreSlotRelations) Fetch() stepRunToSemaphoreSlotFindUnique {
-	var v stepRunToSemaphoreSlotFindUnique
-
-	v.query.Operation = "query"
-	v.query.Method = "semaphoreSlot"
-	v.query.Outputs = workerSemaphoreSlotOutput
-
-	return v
-}
-
-func (r stepRunQuerySemaphoreSlotRelations) Link(
-	params WorkerSemaphoreSlotWhereParam,
-) stepRunSetParam {
-	var fields []builder.Field
-
-	f := params.field()
-	if f.Fields == nil && f.Value == nil {
-		return stepRunSetParam{}
-	}
-
-	fields = append(fields, f)
-
-	return stepRunSetParam{
-		data: builder.Field{
-			Name: "semaphoreSlot",
-			Fields: []builder.Field{
-				{
-					Name:   "connect",
-					Fields: builder.TransformEquals(fields),
-				},
-			},
-		},
-	}
-}
-
-func (r stepRunQuerySemaphoreSlotRelations) Unlink() stepRunSetParam {
-	var v stepRunSetParam
-
-	v = stepRunSetParam{
-		data: builder.Field{
-			Name: "semaphoreSlot",
-			Fields: []builder.Field{
-				{
-					Name:  "disconnect",
-					Value: true,
-				},
-			},
-		},
-	}
-
-	return v
-}
-
-func (r stepRunQuerySemaphoreSlotWorkerSemaphoreSlot) Field() stepRunPrismaFields {
-	return stepRunFieldSemaphoreSlot
-}
-
-// base struct
 type stepRunQueryArchivedResultsStepRunResultArchive struct{}
 
 type stepRunQueryArchivedResultsRelations struct{}
@@ -160020,6 +159647,1446 @@ func (r timeoutQueueItemQueryIsQueuedBoolean) Cursor(cursor bool) timeoutQueueIt
 
 func (r timeoutQueueItemQueryIsQueuedBoolean) Field() timeoutQueueItemPrismaFields {
 	return timeoutQueueItemFieldIsQueued
+}
+
+// SemaphoreQueueItem acts as a namespaces to access query methods for the SemaphoreQueueItem model
+var SemaphoreQueueItem = semaphoreQueueItemQuery{}
+
+// semaphoreQueueItemQuery exposes query functions for the semaphoreQueueItem model
+type semaphoreQueueItemQuery struct {
+
+	// ID
+	//
+	// @required
+	ID semaphoreQueueItemQueryIDBigInt
+
+	// StepRunID
+	//
+	// @required
+	StepRunID semaphoreQueueItemQueryStepRunIDString
+
+	// WorkerID
+	//
+	// @required
+	WorkerID semaphoreQueueItemQueryWorkerIDString
+
+	// TenantID
+	//
+	// @required
+	TenantID semaphoreQueueItemQueryTenantIDString
+}
+
+func (semaphoreQueueItemQuery) Not(params ...SemaphoreQueueItemWhereParam) semaphoreQueueItemDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (semaphoreQueueItemQuery) Or(params ...SemaphoreQueueItemWhereParam) semaphoreQueueItemDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (semaphoreQueueItemQuery) And(params ...SemaphoreQueueItemWhereParam) semaphoreQueueItemDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (semaphoreQueueItemQuery) StepRunIDWorkerID(
+	_stepRunID SemaphoreQueueItemWithPrismaStepRunIDWhereParam,
+
+	_workerID SemaphoreQueueItemWithPrismaWorkerIDWhereParam,
+) SemaphoreQueueItemEqualsUniqueWhereParam {
+	var fields []builder.Field
+
+	fields = append(fields, _stepRunID.field())
+	fields = append(fields, _workerID.field())
+
+	return semaphoreQueueItemEqualsUniqueParam{
+		data: builder.Field{
+			Name:   "stepRunId_workerId",
+			Fields: builder.TransformEquals(fields),
+		},
+	}
+}
+
+// base struct
+type semaphoreQueueItemQueryIDBigInt struct{}
+
+// Set the required value of ID
+func (r semaphoreQueueItemQueryIDBigInt) Set(value BigInt) semaphoreQueueItemSetParam {
+
+	return semaphoreQueueItemSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r semaphoreQueueItemQueryIDBigInt) SetIfPresent(value *BigInt) semaphoreQueueItemSetParam {
+	if value == nil {
+		return semaphoreQueueItemSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the required value of ID
+func (r semaphoreQueueItemQueryIDBigInt) Increment(value BigInt) semaphoreQueueItemSetParam {
+	return semaphoreQueueItemSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryIDBigInt) IncrementIfPresent(value *BigInt) semaphoreQueueItemSetParam {
+	if value == nil {
+		return semaphoreQueueItemSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the required value of ID
+func (r semaphoreQueueItemQueryIDBigInt) Decrement(value BigInt) semaphoreQueueItemSetParam {
+	return semaphoreQueueItemSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryIDBigInt) DecrementIfPresent(value *BigInt) semaphoreQueueItemSetParam {
+	if value == nil {
+		return semaphoreQueueItemSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the required value of ID
+func (r semaphoreQueueItemQueryIDBigInt) Multiply(value BigInt) semaphoreQueueItemSetParam {
+	return semaphoreQueueItemSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryIDBigInt) MultiplyIfPresent(value *BigInt) semaphoreQueueItemSetParam {
+	if value == nil {
+		return semaphoreQueueItemSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the required value of ID
+func (r semaphoreQueueItemQueryIDBigInt) Divide(value BigInt) semaphoreQueueItemSetParam {
+	return semaphoreQueueItemSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryIDBigInt) DivideIfPresent(value *BigInt) semaphoreQueueItemSetParam {
+	if value == nil {
+		return semaphoreQueueItemSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r semaphoreQueueItemQueryIDBigInt) Equals(value BigInt) semaphoreQueueItemWithPrismaIDEqualsUniqueParam {
+
+	return semaphoreQueueItemWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryIDBigInt) EqualsIfPresent(value *BigInt) semaphoreQueueItemWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return semaphoreQueueItemWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r semaphoreQueueItemQueryIDBigInt) Order(direction SortOrder) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryIDBigInt) Cursor(cursor BigInt) semaphoreQueueItemCursorParam {
+	return semaphoreQueueItemCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryIDBigInt) In(value []BigInt) semaphoreQueueItemParamUnique {
+	return semaphoreQueueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryIDBigInt) InIfPresent(value []BigInt) semaphoreQueueItemParamUnique {
+	if value == nil {
+		return semaphoreQueueItemParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r semaphoreQueueItemQueryIDBigInt) NotIn(value []BigInt) semaphoreQueueItemParamUnique {
+	return semaphoreQueueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryIDBigInt) NotInIfPresent(value []BigInt) semaphoreQueueItemParamUnique {
+	if value == nil {
+		return semaphoreQueueItemParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r semaphoreQueueItemQueryIDBigInt) Lt(value BigInt) semaphoreQueueItemParamUnique {
+	return semaphoreQueueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryIDBigInt) LtIfPresent(value *BigInt) semaphoreQueueItemParamUnique {
+	if value == nil {
+		return semaphoreQueueItemParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r semaphoreQueueItemQueryIDBigInt) Lte(value BigInt) semaphoreQueueItemParamUnique {
+	return semaphoreQueueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryIDBigInt) LteIfPresent(value *BigInt) semaphoreQueueItemParamUnique {
+	if value == nil {
+		return semaphoreQueueItemParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r semaphoreQueueItemQueryIDBigInt) Gt(value BigInt) semaphoreQueueItemParamUnique {
+	return semaphoreQueueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryIDBigInt) GtIfPresent(value *BigInt) semaphoreQueueItemParamUnique {
+	if value == nil {
+		return semaphoreQueueItemParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r semaphoreQueueItemQueryIDBigInt) Gte(value BigInt) semaphoreQueueItemParamUnique {
+	return semaphoreQueueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryIDBigInt) GteIfPresent(value *BigInt) semaphoreQueueItemParamUnique {
+	if value == nil {
+		return semaphoreQueueItemParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r semaphoreQueueItemQueryIDBigInt) Not(value BigInt) semaphoreQueueItemParamUnique {
+	return semaphoreQueueItemParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryIDBigInt) NotIfPresent(value *BigInt) semaphoreQueueItemParamUnique {
+	if value == nil {
+		return semaphoreQueueItemParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+func (r semaphoreQueueItemQueryIDBigInt) Field() semaphoreQueueItemPrismaFields {
+	return semaphoreQueueItemFieldID
+}
+
+// base struct
+type semaphoreQueueItemQueryStepRunIDString struct{}
+
+// Set the required value of StepRunID
+func (r semaphoreQueueItemQueryStepRunIDString) Set(value string) semaphoreQueueItemWithPrismaStepRunIDSetParam {
+
+	return semaphoreQueueItemWithPrismaStepRunIDSetParam{
+		data: builder.Field{
+			Name:  "stepRunId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of StepRunID dynamically
+func (r semaphoreQueueItemQueryStepRunIDString) SetIfPresent(value *String) semaphoreQueueItemWithPrismaStepRunIDSetParam {
+	if value == nil {
+		return semaphoreQueueItemWithPrismaStepRunIDSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) Equals(value string) semaphoreQueueItemWithPrismaStepRunIDEqualsParam {
+
+	return semaphoreQueueItemWithPrismaStepRunIDEqualsParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) EqualsIfPresent(value *string) semaphoreQueueItemWithPrismaStepRunIDEqualsParam {
+	if value == nil {
+		return semaphoreQueueItemWithPrismaStepRunIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) Order(direction SortOrder) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name:  "stepRunId",
+			Value: direction,
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) Cursor(cursor string) semaphoreQueueItemCursorParam {
+	return semaphoreQueueItemCursorParam{
+		data: builder.Field{
+			Name:  "stepRunId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) In(value []string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) InIfPresent(value []string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) NotIn(value []string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) NotInIfPresent(value []string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) Lt(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) LtIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) Lte(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) LteIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) Gt(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) GtIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) Gte(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) GteIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) Contains(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) ContainsIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) StartsWith(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) StartsWithIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) EndsWith(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) EndsWithIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) Mode(value QueryMode) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) ModeIfPresent(value *QueryMode) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) Not(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) NotIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r semaphoreQueueItemQueryStepRunIDString) HasPrefix(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r semaphoreQueueItemQueryStepRunIDString) HasPrefixIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r semaphoreQueueItemQueryStepRunIDString) HasSuffix(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r semaphoreQueueItemQueryStepRunIDString) HasSuffixIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r semaphoreQueueItemQueryStepRunIDString) Field() semaphoreQueueItemPrismaFields {
+	return semaphoreQueueItemFieldStepRunID
+}
+
+// base struct
+type semaphoreQueueItemQueryWorkerIDString struct{}
+
+// Set the required value of WorkerID
+func (r semaphoreQueueItemQueryWorkerIDString) Set(value string) semaphoreQueueItemWithPrismaWorkerIDSetParam {
+
+	return semaphoreQueueItemWithPrismaWorkerIDSetParam{
+		data: builder.Field{
+			Name:  "workerId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of WorkerID dynamically
+func (r semaphoreQueueItemQueryWorkerIDString) SetIfPresent(value *String) semaphoreQueueItemWithPrismaWorkerIDSetParam {
+	if value == nil {
+		return semaphoreQueueItemWithPrismaWorkerIDSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) Equals(value string) semaphoreQueueItemWithPrismaWorkerIDEqualsParam {
+
+	return semaphoreQueueItemWithPrismaWorkerIDEqualsParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) EqualsIfPresent(value *string) semaphoreQueueItemWithPrismaWorkerIDEqualsParam {
+	if value == nil {
+		return semaphoreQueueItemWithPrismaWorkerIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) Order(direction SortOrder) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name:  "workerId",
+			Value: direction,
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) Cursor(cursor string) semaphoreQueueItemCursorParam {
+	return semaphoreQueueItemCursorParam{
+		data: builder.Field{
+			Name:  "workerId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) In(value []string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) InIfPresent(value []string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) NotIn(value []string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) NotInIfPresent(value []string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) Lt(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) LtIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) Lte(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) LteIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) Gt(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) GtIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) Gte(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) GteIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) Contains(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) ContainsIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) StartsWith(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) StartsWithIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) EndsWith(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) EndsWithIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) Mode(value QueryMode) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) ModeIfPresent(value *QueryMode) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) Not(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) NotIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r semaphoreQueueItemQueryWorkerIDString) HasPrefix(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r semaphoreQueueItemQueryWorkerIDString) HasPrefixIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r semaphoreQueueItemQueryWorkerIDString) HasSuffix(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "workerId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r semaphoreQueueItemQueryWorkerIDString) HasSuffixIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r semaphoreQueueItemQueryWorkerIDString) Field() semaphoreQueueItemPrismaFields {
+	return semaphoreQueueItemFieldWorkerID
+}
+
+// base struct
+type semaphoreQueueItemQueryTenantIDString struct{}
+
+// Set the required value of TenantID
+func (r semaphoreQueueItemQueryTenantIDString) Set(value string) semaphoreQueueItemWithPrismaTenantIDSetParam {
+
+	return semaphoreQueueItemWithPrismaTenantIDSetParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of TenantID dynamically
+func (r semaphoreQueueItemQueryTenantIDString) SetIfPresent(value *String) semaphoreQueueItemWithPrismaTenantIDSetParam {
+	if value == nil {
+		return semaphoreQueueItemWithPrismaTenantIDSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) Equals(value string) semaphoreQueueItemWithPrismaTenantIDEqualsParam {
+
+	return semaphoreQueueItemWithPrismaTenantIDEqualsParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) EqualsIfPresent(value *string) semaphoreQueueItemWithPrismaTenantIDEqualsParam {
+	if value == nil {
+		return semaphoreQueueItemWithPrismaTenantIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) Order(direction SortOrder) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: direction,
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) Cursor(cursor string) semaphoreQueueItemCursorParam {
+	return semaphoreQueueItemCursorParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) In(value []string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) InIfPresent(value []string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) NotIn(value []string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) NotInIfPresent(value []string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) Lt(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) LtIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) Lte(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) LteIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) Gt(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) GtIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) Gte(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) GteIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) Contains(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) ContainsIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) StartsWith(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) StartsWithIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) EndsWith(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) EndsWithIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) Mode(value QueryMode) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) ModeIfPresent(value *QueryMode) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) Not(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) NotIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r semaphoreQueueItemQueryTenantIDString) HasPrefix(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r semaphoreQueueItemQueryTenantIDString) HasPrefixIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r semaphoreQueueItemQueryTenantIDString) HasSuffix(value string) semaphoreQueueItemDefaultParam {
+	return semaphoreQueueItemDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r semaphoreQueueItemQueryTenantIDString) HasSuffixIfPresent(value *string) semaphoreQueueItemDefaultParam {
+	if value == nil {
+		return semaphoreQueueItemDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r semaphoreQueueItemQueryTenantIDString) Field() semaphoreQueueItemPrismaFields {
+	return semaphoreQueueItemFieldTenantID
 }
 
 // StepRunEvent acts as a namespaces to access query methods for the StepRunEvent model
@@ -175661,10 +176728,6 @@ type workerQuery struct {
 
 	GroupKeyRuns workerQueryGroupKeyRunsRelations
 
-	Slots workerQuerySlotsRelations
-
-	SemaphoreCount workerQuerySemaphoreCountRelations
-
 	AssignedEvents workerQueryAssignedEventsRelations
 
 	Webhook workerQueryWebhookRelations
@@ -175674,8 +176737,6 @@ type workerQuery struct {
 	// @optional
 	// @unique
 	WebhookID workerQueryWebhookIDString
-
-	Semaphore workerQuerySemaphoreRelations
 }
 
 func (workerQuery) Not(params ...WorkerWhereParam) workerDefaultParam {
@@ -180555,266 +181616,6 @@ func (r workerQueryGroupKeyRunsGetGroupKeyRun) Field() workerPrismaFields {
 }
 
 // base struct
-type workerQuerySlotsWorkerSemaphoreSlot struct{}
-
-type workerQuerySlotsRelations struct{}
-
-// Worker -> Slots
-//
-// @relation
-// @required
-func (workerQuerySlotsRelations) Some(
-	params ...WorkerSemaphoreSlotWhereParam,
-) workerDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return workerDefaultParam{
-		data: builder.Field{
-			Name: "slots",
-			Fields: []builder.Field{
-				{
-					Name:   "some",
-					Fields: fields,
-				},
-			},
-		},
-	}
-}
-
-// Worker -> Slots
-//
-// @relation
-// @required
-func (workerQuerySlotsRelations) Every(
-	params ...WorkerSemaphoreSlotWhereParam,
-) workerDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return workerDefaultParam{
-		data: builder.Field{
-			Name: "slots",
-			Fields: []builder.Field{
-				{
-					Name:   "every",
-					Fields: fields,
-				},
-			},
-		},
-	}
-}
-
-// Worker -> Slots
-//
-// @relation
-// @required
-func (workerQuerySlotsRelations) None(
-	params ...WorkerSemaphoreSlotWhereParam,
-) workerDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return workerDefaultParam{
-		data: builder.Field{
-			Name: "slots",
-			Fields: []builder.Field{
-				{
-					Name:   "none",
-					Fields: fields,
-				},
-			},
-		},
-	}
-}
-
-func (workerQuerySlotsRelations) Fetch(
-
-	params ...WorkerSemaphoreSlotWhereParam,
-
-) workerToSlotsFindMany {
-	var v workerToSlotsFindMany
-
-	v.query.Operation = "query"
-	v.query.Method = "slots"
-	v.query.Outputs = workerSemaphoreSlotOutput
-
-	var where []builder.Field
-	for _, q := range params {
-		if query := q.getQuery(); query.Operation != "" {
-			v.query.Outputs = append(v.query.Outputs, builder.Output{
-				Name:    query.Method,
-				Inputs:  query.Inputs,
-				Outputs: query.Outputs,
-			})
-		} else {
-			where = append(where, q.field())
-		}
-	}
-
-	if len(where) > 0 {
-		v.query.Inputs = append(v.query.Inputs, builder.Input{
-			Name:   "where",
-			Fields: where,
-		})
-	}
-
-	return v
-}
-
-func (r workerQuerySlotsRelations) Link(
-	params ...WorkerSemaphoreSlotWhereParam,
-) workerSetParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return workerSetParam{
-		data: builder.Field{
-			Name: "slots",
-			Fields: []builder.Field{
-				{
-					Name:   "connect",
-					Fields: builder.TransformEquals(fields),
-
-					List:     true,
-					WrapList: true,
-				},
-			},
-		},
-	}
-}
-
-func (r workerQuerySlotsRelations) Unlink(
-	params ...WorkerSemaphoreSlotWhereParam,
-) workerSetParam {
-	var v workerSetParam
-
-	var fields []builder.Field
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-	v = workerSetParam{
-		data: builder.Field{
-			Name: "slots",
-			Fields: []builder.Field{
-				{
-					Name:     "disconnect",
-					List:     true,
-					WrapList: true,
-					Fields:   builder.TransformEquals(fields),
-				},
-			},
-		},
-	}
-
-	return v
-}
-
-func (r workerQuerySlotsWorkerSemaphoreSlot) Field() workerPrismaFields {
-	return workerFieldSlots
-}
-
-// base struct
-type workerQuerySemaphoreCountWorkerSemaphoreCount struct{}
-
-type workerQuerySemaphoreCountRelations struct{}
-
-// Worker -> SemaphoreCount
-//
-// @relation
-// @optional
-func (workerQuerySemaphoreCountRelations) Where(
-	params ...WorkerSemaphoreCountWhereParam,
-) workerDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return workerDefaultParam{
-		data: builder.Field{
-			Name: "semaphoreCount",
-			Fields: []builder.Field{
-				{
-					Name:   "is",
-					Fields: fields,
-				},
-			},
-		},
-	}
-}
-
-func (workerQuerySemaphoreCountRelations) Fetch() workerToSemaphoreCountFindUnique {
-	var v workerToSemaphoreCountFindUnique
-
-	v.query.Operation = "query"
-	v.query.Method = "semaphoreCount"
-	v.query.Outputs = workerSemaphoreCountOutput
-
-	return v
-}
-
-func (r workerQuerySemaphoreCountRelations) Link(
-	params WorkerSemaphoreCountWhereParam,
-) workerSetParam {
-	var fields []builder.Field
-
-	f := params.field()
-	if f.Fields == nil && f.Value == nil {
-		return workerSetParam{}
-	}
-
-	fields = append(fields, f)
-
-	return workerSetParam{
-		data: builder.Field{
-			Name: "semaphoreCount",
-			Fields: []builder.Field{
-				{
-					Name:   "connect",
-					Fields: builder.TransformEquals(fields),
-				},
-			},
-		},
-	}
-}
-
-func (r workerQuerySemaphoreCountRelations) Unlink() workerSetParam {
-	var v workerSetParam
-
-	v = workerSetParam{
-		data: builder.Field{
-			Name: "semaphoreCount",
-			Fields: []builder.Field{
-				{
-					Name:  "disconnect",
-					Value: true,
-				},
-			},
-		},
-	}
-
-	return v
-}
-
-func (r workerQuerySemaphoreCountWorkerSemaphoreCount) Field() workerPrismaFields {
-	return workerFieldSemaphoreCount
-}
-
-// base struct
 type workerQueryAssignedEventsWorkerAssignEvent struct{}
 
 type workerQueryAssignedEventsRelations struct{}
@@ -181464,3241 +182265,6 @@ func (r workerQueryWebhookIDString) HasSuffixIfPresent(value *string) workerPara
 
 func (r workerQueryWebhookIDString) Field() workerPrismaFields {
 	return workerFieldWebhookID
-}
-
-// base struct
-type workerQuerySemaphoreWorkerSemaphore struct{}
-
-type workerQuerySemaphoreRelations struct{}
-
-// Worker -> Semaphore
-//
-// @relation
-// @optional
-func (workerQuerySemaphoreRelations) Where(
-	params ...WorkerSemaphoreWhereParam,
-) workerDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return workerDefaultParam{
-		data: builder.Field{
-			Name: "semaphore",
-			Fields: []builder.Field{
-				{
-					Name:   "is",
-					Fields: fields,
-				},
-			},
-		},
-	}
-}
-
-func (workerQuerySemaphoreRelations) Fetch() workerToSemaphoreFindUnique {
-	var v workerToSemaphoreFindUnique
-
-	v.query.Operation = "query"
-	v.query.Method = "semaphore"
-	v.query.Outputs = workerSemaphoreOutput
-
-	return v
-}
-
-func (r workerQuerySemaphoreRelations) Link(
-	params WorkerSemaphoreWhereParam,
-) workerSetParam {
-	var fields []builder.Field
-
-	f := params.field()
-	if f.Fields == nil && f.Value == nil {
-		return workerSetParam{}
-	}
-
-	fields = append(fields, f)
-
-	return workerSetParam{
-		data: builder.Field{
-			Name: "semaphore",
-			Fields: []builder.Field{
-				{
-					Name:   "connect",
-					Fields: builder.TransformEquals(fields),
-				},
-			},
-		},
-	}
-}
-
-func (r workerQuerySemaphoreRelations) Unlink() workerSetParam {
-	var v workerSetParam
-
-	v = workerSetParam{
-		data: builder.Field{
-			Name: "semaphore",
-			Fields: []builder.Field{
-				{
-					Name:  "disconnect",
-					Value: true,
-				},
-			},
-		},
-	}
-
-	return v
-}
-
-func (r workerQuerySemaphoreWorkerSemaphore) Field() workerPrismaFields {
-	return workerFieldSemaphore
-}
-
-// WorkerSemaphore acts as a namespaces to access query methods for the WorkerSemaphore model
-var WorkerSemaphore = workerSemaphoreQuery{}
-
-// workerSemaphoreQuery exposes query functions for the workerSemaphore model
-type workerSemaphoreQuery struct {
-	Worker workerSemaphoreQueryWorkerRelations
-
-	// WorkerID
-	//
-	// @required
-	// @unique
-	WorkerID workerSemaphoreQueryWorkerIDString
-
-	// Slots
-	//
-	// @required
-	Slots workerSemaphoreQuerySlotsInt
-}
-
-func (workerSemaphoreQuery) Not(params ...WorkerSemaphoreWhereParam) workerSemaphoreDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return workerSemaphoreDefaultParam{
-		data: builder.Field{
-			Name:     "NOT",
-			List:     true,
-			WrapList: true,
-			Fields:   fields,
-		},
-	}
-}
-
-func (workerSemaphoreQuery) Or(params ...WorkerSemaphoreWhereParam) workerSemaphoreDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return workerSemaphoreDefaultParam{
-		data: builder.Field{
-			Name:     "OR",
-			List:     true,
-			WrapList: true,
-			Fields:   fields,
-		},
-	}
-}
-
-func (workerSemaphoreQuery) And(params ...WorkerSemaphoreWhereParam) workerSemaphoreDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return workerSemaphoreDefaultParam{
-		data: builder.Field{
-			Name:     "AND",
-			List:     true,
-			WrapList: true,
-			Fields:   fields,
-		},
-	}
-}
-
-// base struct
-type workerSemaphoreQueryWorkerWorker struct{}
-
-type workerSemaphoreQueryWorkerRelations struct{}
-
-// WorkerSemaphore -> Worker
-//
-// @relation
-// @required
-func (workerSemaphoreQueryWorkerRelations) Where(
-	params ...WorkerWhereParam,
-) workerSemaphoreDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return workerSemaphoreDefaultParam{
-		data: builder.Field{
-			Name: "worker",
-			Fields: []builder.Field{
-				{
-					Name:   "is",
-					Fields: fields,
-				},
-			},
-		},
-	}
-}
-
-func (workerSemaphoreQueryWorkerRelations) Fetch() workerSemaphoreToWorkerFindUnique {
-	var v workerSemaphoreToWorkerFindUnique
-
-	v.query.Operation = "query"
-	v.query.Method = "worker"
-	v.query.Outputs = workerOutput
-
-	return v
-}
-
-func (r workerSemaphoreQueryWorkerRelations) Link(
-	params WorkerWhereParam,
-) workerSemaphoreWithPrismaWorkerSetParam {
-	var fields []builder.Field
-
-	f := params.field()
-	if f.Fields == nil && f.Value == nil {
-		return workerSemaphoreWithPrismaWorkerSetParam{}
-	}
-
-	fields = append(fields, f)
-
-	return workerSemaphoreWithPrismaWorkerSetParam{
-		data: builder.Field{
-			Name: "worker",
-			Fields: []builder.Field{
-				{
-					Name:   "connect",
-					Fields: builder.TransformEquals(fields),
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQueryWorkerRelations) Unlink() workerSemaphoreWithPrismaWorkerSetParam {
-	var v workerSemaphoreWithPrismaWorkerSetParam
-
-	v = workerSemaphoreWithPrismaWorkerSetParam{
-		data: builder.Field{
-			Name: "worker",
-			Fields: []builder.Field{
-				{
-					Name:  "disconnect",
-					Value: true,
-				},
-			},
-		},
-	}
-
-	return v
-}
-
-func (r workerSemaphoreQueryWorkerWorker) Field() workerSemaphorePrismaFields {
-	return workerSemaphoreFieldWorker
-}
-
-// base struct
-type workerSemaphoreQueryWorkerIDString struct{}
-
-// Set the required value of WorkerID
-func (r workerSemaphoreQueryWorkerIDString) Set(value string) workerSemaphoreSetParam {
-
-	return workerSemaphoreSetParam{
-		data: builder.Field{
-			Name:  "workerId",
-			Value: value,
-		},
-	}
-
-}
-
-// Set the optional value of WorkerID dynamically
-func (r workerSemaphoreQueryWorkerIDString) SetIfPresent(value *String) workerSemaphoreSetParam {
-	if value == nil {
-		return workerSemaphoreSetParam{}
-	}
-
-	return r.Set(*value)
-}
-
-func (r workerSemaphoreQueryWorkerIDString) Equals(value string) workerSemaphoreWithPrismaWorkerIDEqualsUniqueParam {
-
-	return workerSemaphoreWithPrismaWorkerIDEqualsUniqueParam{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "equals",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQueryWorkerIDString) EqualsIfPresent(value *string) workerSemaphoreWithPrismaWorkerIDEqualsUniqueParam {
-	if value == nil {
-		return workerSemaphoreWithPrismaWorkerIDEqualsUniqueParam{}
-	}
-	return r.Equals(*value)
-}
-
-func (r workerSemaphoreQueryWorkerIDString) Order(direction SortOrder) workerSemaphoreDefaultParam {
-	return workerSemaphoreDefaultParam{
-		data: builder.Field{
-			Name:  "workerId",
-			Value: direction,
-		},
-	}
-}
-
-func (r workerSemaphoreQueryWorkerIDString) Cursor(cursor string) workerSemaphoreCursorParam {
-	return workerSemaphoreCursorParam{
-		data: builder.Field{
-			Name:  "workerId",
-			Value: cursor,
-		},
-	}
-}
-
-func (r workerSemaphoreQueryWorkerIDString) In(value []string) workerSemaphoreParamUnique {
-	return workerSemaphoreParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "in",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQueryWorkerIDString) InIfPresent(value []string) workerSemaphoreParamUnique {
-	if value == nil {
-		return workerSemaphoreParamUnique{}
-	}
-	return r.In(value)
-}
-
-func (r workerSemaphoreQueryWorkerIDString) NotIn(value []string) workerSemaphoreParamUnique {
-	return workerSemaphoreParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "notIn",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQueryWorkerIDString) NotInIfPresent(value []string) workerSemaphoreParamUnique {
-	if value == nil {
-		return workerSemaphoreParamUnique{}
-	}
-	return r.NotIn(value)
-}
-
-func (r workerSemaphoreQueryWorkerIDString) Lt(value string) workerSemaphoreParamUnique {
-	return workerSemaphoreParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "lt",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQueryWorkerIDString) LtIfPresent(value *string) workerSemaphoreParamUnique {
-	if value == nil {
-		return workerSemaphoreParamUnique{}
-	}
-	return r.Lt(*value)
-}
-
-func (r workerSemaphoreQueryWorkerIDString) Lte(value string) workerSemaphoreParamUnique {
-	return workerSemaphoreParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "lte",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQueryWorkerIDString) LteIfPresent(value *string) workerSemaphoreParamUnique {
-	if value == nil {
-		return workerSemaphoreParamUnique{}
-	}
-	return r.Lte(*value)
-}
-
-func (r workerSemaphoreQueryWorkerIDString) Gt(value string) workerSemaphoreParamUnique {
-	return workerSemaphoreParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "gt",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQueryWorkerIDString) GtIfPresent(value *string) workerSemaphoreParamUnique {
-	if value == nil {
-		return workerSemaphoreParamUnique{}
-	}
-	return r.Gt(*value)
-}
-
-func (r workerSemaphoreQueryWorkerIDString) Gte(value string) workerSemaphoreParamUnique {
-	return workerSemaphoreParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "gte",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQueryWorkerIDString) GteIfPresent(value *string) workerSemaphoreParamUnique {
-	if value == nil {
-		return workerSemaphoreParamUnique{}
-	}
-	return r.Gte(*value)
-}
-
-func (r workerSemaphoreQueryWorkerIDString) Contains(value string) workerSemaphoreParamUnique {
-	return workerSemaphoreParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "contains",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQueryWorkerIDString) ContainsIfPresent(value *string) workerSemaphoreParamUnique {
-	if value == nil {
-		return workerSemaphoreParamUnique{}
-	}
-	return r.Contains(*value)
-}
-
-func (r workerSemaphoreQueryWorkerIDString) StartsWith(value string) workerSemaphoreParamUnique {
-	return workerSemaphoreParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "startsWith",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQueryWorkerIDString) StartsWithIfPresent(value *string) workerSemaphoreParamUnique {
-	if value == nil {
-		return workerSemaphoreParamUnique{}
-	}
-	return r.StartsWith(*value)
-}
-
-func (r workerSemaphoreQueryWorkerIDString) EndsWith(value string) workerSemaphoreParamUnique {
-	return workerSemaphoreParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "endsWith",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQueryWorkerIDString) EndsWithIfPresent(value *string) workerSemaphoreParamUnique {
-	if value == nil {
-		return workerSemaphoreParamUnique{}
-	}
-	return r.EndsWith(*value)
-}
-
-func (r workerSemaphoreQueryWorkerIDString) Mode(value QueryMode) workerSemaphoreParamUnique {
-	return workerSemaphoreParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "mode",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQueryWorkerIDString) ModeIfPresent(value *QueryMode) workerSemaphoreParamUnique {
-	if value == nil {
-		return workerSemaphoreParamUnique{}
-	}
-	return r.Mode(*value)
-}
-
-func (r workerSemaphoreQueryWorkerIDString) Not(value string) workerSemaphoreParamUnique {
-	return workerSemaphoreParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "not",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQueryWorkerIDString) NotIfPresent(value *string) workerSemaphoreParamUnique {
-	if value == nil {
-		return workerSemaphoreParamUnique{}
-	}
-	return r.Not(*value)
-}
-
-// deprecated: Use StartsWith instead.
-
-func (r workerSemaphoreQueryWorkerIDString) HasPrefix(value string) workerSemaphoreParamUnique {
-	return workerSemaphoreParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "starts_with",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-// deprecated: Use StartsWithIfPresent instead.
-func (r workerSemaphoreQueryWorkerIDString) HasPrefixIfPresent(value *string) workerSemaphoreParamUnique {
-	if value == nil {
-		return workerSemaphoreParamUnique{}
-	}
-	return r.HasPrefix(*value)
-}
-
-// deprecated: Use EndsWith instead.
-
-func (r workerSemaphoreQueryWorkerIDString) HasSuffix(value string) workerSemaphoreParamUnique {
-	return workerSemaphoreParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "ends_with",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-// deprecated: Use EndsWithIfPresent instead.
-func (r workerSemaphoreQueryWorkerIDString) HasSuffixIfPresent(value *string) workerSemaphoreParamUnique {
-	if value == nil {
-		return workerSemaphoreParamUnique{}
-	}
-	return r.HasSuffix(*value)
-}
-
-func (r workerSemaphoreQueryWorkerIDString) Field() workerSemaphorePrismaFields {
-	return workerSemaphoreFieldWorkerID
-}
-
-// base struct
-type workerSemaphoreQuerySlotsInt struct{}
-
-// Set the required value of Slots
-func (r workerSemaphoreQuerySlotsInt) Set(value int) workerSemaphoreWithPrismaSlotsSetParam {
-
-	return workerSemaphoreWithPrismaSlotsSetParam{
-		data: builder.Field{
-			Name:  "slots",
-			Value: value,
-		},
-	}
-
-}
-
-// Set the optional value of Slots dynamically
-func (r workerSemaphoreQuerySlotsInt) SetIfPresent(value *Int) workerSemaphoreWithPrismaSlotsSetParam {
-	if value == nil {
-		return workerSemaphoreWithPrismaSlotsSetParam{}
-	}
-
-	return r.Set(*value)
-}
-
-// Increment the required value of Slots
-func (r workerSemaphoreQuerySlotsInt) Increment(value int) workerSemaphoreWithPrismaSlotsSetParam {
-	return workerSemaphoreWithPrismaSlotsSetParam{
-		data: builder.Field{
-			Name: "slots",
-			Fields: []builder.Field{
-				builder.Field{
-					Name:  "increment",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQuerySlotsInt) IncrementIfPresent(value *int) workerSemaphoreWithPrismaSlotsSetParam {
-	if value == nil {
-		return workerSemaphoreWithPrismaSlotsSetParam{}
-	}
-	return r.Increment(*value)
-}
-
-// Decrement the required value of Slots
-func (r workerSemaphoreQuerySlotsInt) Decrement(value int) workerSemaphoreWithPrismaSlotsSetParam {
-	return workerSemaphoreWithPrismaSlotsSetParam{
-		data: builder.Field{
-			Name: "slots",
-			Fields: []builder.Field{
-				builder.Field{
-					Name:  "decrement",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQuerySlotsInt) DecrementIfPresent(value *int) workerSemaphoreWithPrismaSlotsSetParam {
-	if value == nil {
-		return workerSemaphoreWithPrismaSlotsSetParam{}
-	}
-	return r.Decrement(*value)
-}
-
-// Multiply the required value of Slots
-func (r workerSemaphoreQuerySlotsInt) Multiply(value int) workerSemaphoreWithPrismaSlotsSetParam {
-	return workerSemaphoreWithPrismaSlotsSetParam{
-		data: builder.Field{
-			Name: "slots",
-			Fields: []builder.Field{
-				builder.Field{
-					Name:  "multiply",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQuerySlotsInt) MultiplyIfPresent(value *int) workerSemaphoreWithPrismaSlotsSetParam {
-	if value == nil {
-		return workerSemaphoreWithPrismaSlotsSetParam{}
-	}
-	return r.Multiply(*value)
-}
-
-// Divide the required value of Slots
-func (r workerSemaphoreQuerySlotsInt) Divide(value int) workerSemaphoreWithPrismaSlotsSetParam {
-	return workerSemaphoreWithPrismaSlotsSetParam{
-		data: builder.Field{
-			Name: "slots",
-			Fields: []builder.Field{
-				builder.Field{
-					Name:  "divide",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQuerySlotsInt) DivideIfPresent(value *int) workerSemaphoreWithPrismaSlotsSetParam {
-	if value == nil {
-		return workerSemaphoreWithPrismaSlotsSetParam{}
-	}
-	return r.Divide(*value)
-}
-
-func (r workerSemaphoreQuerySlotsInt) Equals(value int) workerSemaphoreWithPrismaSlotsEqualsParam {
-
-	return workerSemaphoreWithPrismaSlotsEqualsParam{
-		data: builder.Field{
-			Name: "slots",
-			Fields: []builder.Field{
-				{
-					Name:  "equals",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQuerySlotsInt) EqualsIfPresent(value *int) workerSemaphoreWithPrismaSlotsEqualsParam {
-	if value == nil {
-		return workerSemaphoreWithPrismaSlotsEqualsParam{}
-	}
-	return r.Equals(*value)
-}
-
-func (r workerSemaphoreQuerySlotsInt) Order(direction SortOrder) workerSemaphoreDefaultParam {
-	return workerSemaphoreDefaultParam{
-		data: builder.Field{
-			Name:  "slots",
-			Value: direction,
-		},
-	}
-}
-
-func (r workerSemaphoreQuerySlotsInt) Cursor(cursor int) workerSemaphoreCursorParam {
-	return workerSemaphoreCursorParam{
-		data: builder.Field{
-			Name:  "slots",
-			Value: cursor,
-		},
-	}
-}
-
-func (r workerSemaphoreQuerySlotsInt) In(value []int) workerSemaphoreDefaultParam {
-	return workerSemaphoreDefaultParam{
-		data: builder.Field{
-			Name: "slots",
-			Fields: []builder.Field{
-				{
-					Name:  "in",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQuerySlotsInt) InIfPresent(value []int) workerSemaphoreDefaultParam {
-	if value == nil {
-		return workerSemaphoreDefaultParam{}
-	}
-	return r.In(value)
-}
-
-func (r workerSemaphoreQuerySlotsInt) NotIn(value []int) workerSemaphoreDefaultParam {
-	return workerSemaphoreDefaultParam{
-		data: builder.Field{
-			Name: "slots",
-			Fields: []builder.Field{
-				{
-					Name:  "notIn",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQuerySlotsInt) NotInIfPresent(value []int) workerSemaphoreDefaultParam {
-	if value == nil {
-		return workerSemaphoreDefaultParam{}
-	}
-	return r.NotIn(value)
-}
-
-func (r workerSemaphoreQuerySlotsInt) Lt(value int) workerSemaphoreDefaultParam {
-	return workerSemaphoreDefaultParam{
-		data: builder.Field{
-			Name: "slots",
-			Fields: []builder.Field{
-				{
-					Name:  "lt",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQuerySlotsInt) LtIfPresent(value *int) workerSemaphoreDefaultParam {
-	if value == nil {
-		return workerSemaphoreDefaultParam{}
-	}
-	return r.Lt(*value)
-}
-
-func (r workerSemaphoreQuerySlotsInt) Lte(value int) workerSemaphoreDefaultParam {
-	return workerSemaphoreDefaultParam{
-		data: builder.Field{
-			Name: "slots",
-			Fields: []builder.Field{
-				{
-					Name:  "lte",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQuerySlotsInt) LteIfPresent(value *int) workerSemaphoreDefaultParam {
-	if value == nil {
-		return workerSemaphoreDefaultParam{}
-	}
-	return r.Lte(*value)
-}
-
-func (r workerSemaphoreQuerySlotsInt) Gt(value int) workerSemaphoreDefaultParam {
-	return workerSemaphoreDefaultParam{
-		data: builder.Field{
-			Name: "slots",
-			Fields: []builder.Field{
-				{
-					Name:  "gt",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQuerySlotsInt) GtIfPresent(value *int) workerSemaphoreDefaultParam {
-	if value == nil {
-		return workerSemaphoreDefaultParam{}
-	}
-	return r.Gt(*value)
-}
-
-func (r workerSemaphoreQuerySlotsInt) Gte(value int) workerSemaphoreDefaultParam {
-	return workerSemaphoreDefaultParam{
-		data: builder.Field{
-			Name: "slots",
-			Fields: []builder.Field{
-				{
-					Name:  "gte",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQuerySlotsInt) GteIfPresent(value *int) workerSemaphoreDefaultParam {
-	if value == nil {
-		return workerSemaphoreDefaultParam{}
-	}
-	return r.Gte(*value)
-}
-
-func (r workerSemaphoreQuerySlotsInt) Not(value int) workerSemaphoreDefaultParam {
-	return workerSemaphoreDefaultParam{
-		data: builder.Field{
-			Name: "slots",
-			Fields: []builder.Field{
-				{
-					Name:  "not",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreQuerySlotsInt) NotIfPresent(value *int) workerSemaphoreDefaultParam {
-	if value == nil {
-		return workerSemaphoreDefaultParam{}
-	}
-	return r.Not(*value)
-}
-
-// deprecated: Use Lt instead.
-
-func (r workerSemaphoreQuerySlotsInt) LT(value int) workerSemaphoreDefaultParam {
-	return workerSemaphoreDefaultParam{
-		data: builder.Field{
-			Name: "slots",
-			Fields: []builder.Field{
-				{
-					Name:  "lt",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-// deprecated: Use LtIfPresent instead.
-func (r workerSemaphoreQuerySlotsInt) LTIfPresent(value *int) workerSemaphoreDefaultParam {
-	if value == nil {
-		return workerSemaphoreDefaultParam{}
-	}
-	return r.LT(*value)
-}
-
-// deprecated: Use Lte instead.
-
-func (r workerSemaphoreQuerySlotsInt) LTE(value int) workerSemaphoreDefaultParam {
-	return workerSemaphoreDefaultParam{
-		data: builder.Field{
-			Name: "slots",
-			Fields: []builder.Field{
-				{
-					Name:  "lte",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-// deprecated: Use LteIfPresent instead.
-func (r workerSemaphoreQuerySlotsInt) LTEIfPresent(value *int) workerSemaphoreDefaultParam {
-	if value == nil {
-		return workerSemaphoreDefaultParam{}
-	}
-	return r.LTE(*value)
-}
-
-// deprecated: Use Gt instead.
-
-func (r workerSemaphoreQuerySlotsInt) GT(value int) workerSemaphoreDefaultParam {
-	return workerSemaphoreDefaultParam{
-		data: builder.Field{
-			Name: "slots",
-			Fields: []builder.Field{
-				{
-					Name:  "gt",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-// deprecated: Use GtIfPresent instead.
-func (r workerSemaphoreQuerySlotsInt) GTIfPresent(value *int) workerSemaphoreDefaultParam {
-	if value == nil {
-		return workerSemaphoreDefaultParam{}
-	}
-	return r.GT(*value)
-}
-
-// deprecated: Use Gte instead.
-
-func (r workerSemaphoreQuerySlotsInt) GTE(value int) workerSemaphoreDefaultParam {
-	return workerSemaphoreDefaultParam{
-		data: builder.Field{
-			Name: "slots",
-			Fields: []builder.Field{
-				{
-					Name:  "gte",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-// deprecated: Use GteIfPresent instead.
-func (r workerSemaphoreQuerySlotsInt) GTEIfPresent(value *int) workerSemaphoreDefaultParam {
-	if value == nil {
-		return workerSemaphoreDefaultParam{}
-	}
-	return r.GTE(*value)
-}
-
-func (r workerSemaphoreQuerySlotsInt) Field() workerSemaphorePrismaFields {
-	return workerSemaphoreFieldSlots
-}
-
-// WorkerSemaphoreSlot acts as a namespaces to access query methods for the WorkerSemaphoreSlot model
-var WorkerSemaphoreSlot = workerSemaphoreSlotQuery{}
-
-// workerSemaphoreSlotQuery exposes query functions for the workerSemaphoreSlot model
-type workerSemaphoreSlotQuery struct {
-
-	// ID
-	//
-	// @required
-	ID workerSemaphoreSlotQueryIDString
-
-	Worker workerSemaphoreSlotQueryWorkerRelations
-
-	// WorkerID
-	//
-	// @required
-	WorkerID workerSemaphoreSlotQueryWorkerIDString
-
-	StepRun workerSemaphoreSlotQueryStepRunRelations
-
-	// StepRunID
-	//
-	// @optional
-	// @unique
-	StepRunID workerSemaphoreSlotQueryStepRunIDString
-}
-
-func (workerSemaphoreSlotQuery) Not(params ...WorkerSemaphoreSlotWhereParam) workerSemaphoreSlotDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return workerSemaphoreSlotDefaultParam{
-		data: builder.Field{
-			Name:     "NOT",
-			List:     true,
-			WrapList: true,
-			Fields:   fields,
-		},
-	}
-}
-
-func (workerSemaphoreSlotQuery) Or(params ...WorkerSemaphoreSlotWhereParam) workerSemaphoreSlotDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return workerSemaphoreSlotDefaultParam{
-		data: builder.Field{
-			Name:     "OR",
-			List:     true,
-			WrapList: true,
-			Fields:   fields,
-		},
-	}
-}
-
-func (workerSemaphoreSlotQuery) And(params ...WorkerSemaphoreSlotWhereParam) workerSemaphoreSlotDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return workerSemaphoreSlotDefaultParam{
-		data: builder.Field{
-			Name:     "AND",
-			List:     true,
-			WrapList: true,
-			Fields:   fields,
-		},
-	}
-}
-
-// base struct
-type workerSemaphoreSlotQueryIDString struct{}
-
-// Set the required value of ID
-func (r workerSemaphoreSlotQueryIDString) Set(value string) workerSemaphoreSlotSetParam {
-
-	return workerSemaphoreSlotSetParam{
-		data: builder.Field{
-			Name:  "id",
-			Value: value,
-		},
-	}
-
-}
-
-// Set the optional value of ID dynamically
-func (r workerSemaphoreSlotQueryIDString) SetIfPresent(value *String) workerSemaphoreSlotSetParam {
-	if value == nil {
-		return workerSemaphoreSlotSetParam{}
-	}
-
-	return r.Set(*value)
-}
-
-func (r workerSemaphoreSlotQueryIDString) Equals(value string) workerSemaphoreSlotWithPrismaIDEqualsUniqueParam {
-
-	return workerSemaphoreSlotWithPrismaIDEqualsUniqueParam{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				{
-					Name:  "equals",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryIDString) EqualsIfPresent(value *string) workerSemaphoreSlotWithPrismaIDEqualsUniqueParam {
-	if value == nil {
-		return workerSemaphoreSlotWithPrismaIDEqualsUniqueParam{}
-	}
-	return r.Equals(*value)
-}
-
-func (r workerSemaphoreSlotQueryIDString) Order(direction SortOrder) workerSemaphoreSlotDefaultParam {
-	return workerSemaphoreSlotDefaultParam{
-		data: builder.Field{
-			Name:  "id",
-			Value: direction,
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryIDString) Cursor(cursor string) workerSemaphoreSlotCursorParam {
-	return workerSemaphoreSlotCursorParam{
-		data: builder.Field{
-			Name:  "id",
-			Value: cursor,
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryIDString) In(value []string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				{
-					Name:  "in",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryIDString) InIfPresent(value []string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.In(value)
-}
-
-func (r workerSemaphoreSlotQueryIDString) NotIn(value []string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				{
-					Name:  "notIn",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryIDString) NotInIfPresent(value []string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.NotIn(value)
-}
-
-func (r workerSemaphoreSlotQueryIDString) Lt(value string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				{
-					Name:  "lt",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryIDString) LtIfPresent(value *string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.Lt(*value)
-}
-
-func (r workerSemaphoreSlotQueryIDString) Lte(value string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				{
-					Name:  "lte",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryIDString) LteIfPresent(value *string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.Lte(*value)
-}
-
-func (r workerSemaphoreSlotQueryIDString) Gt(value string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				{
-					Name:  "gt",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryIDString) GtIfPresent(value *string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.Gt(*value)
-}
-
-func (r workerSemaphoreSlotQueryIDString) Gte(value string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				{
-					Name:  "gte",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryIDString) GteIfPresent(value *string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.Gte(*value)
-}
-
-func (r workerSemaphoreSlotQueryIDString) Contains(value string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				{
-					Name:  "contains",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryIDString) ContainsIfPresent(value *string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.Contains(*value)
-}
-
-func (r workerSemaphoreSlotQueryIDString) StartsWith(value string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				{
-					Name:  "startsWith",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryIDString) StartsWithIfPresent(value *string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.StartsWith(*value)
-}
-
-func (r workerSemaphoreSlotQueryIDString) EndsWith(value string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				{
-					Name:  "endsWith",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryIDString) EndsWithIfPresent(value *string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.EndsWith(*value)
-}
-
-func (r workerSemaphoreSlotQueryIDString) Mode(value QueryMode) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				{
-					Name:  "mode",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryIDString) ModeIfPresent(value *QueryMode) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.Mode(*value)
-}
-
-func (r workerSemaphoreSlotQueryIDString) Not(value string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				{
-					Name:  "not",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryIDString) NotIfPresent(value *string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.Not(*value)
-}
-
-// deprecated: Use StartsWith instead.
-
-func (r workerSemaphoreSlotQueryIDString) HasPrefix(value string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				{
-					Name:  "starts_with",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-// deprecated: Use StartsWithIfPresent instead.
-func (r workerSemaphoreSlotQueryIDString) HasPrefixIfPresent(value *string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.HasPrefix(*value)
-}
-
-// deprecated: Use EndsWith instead.
-
-func (r workerSemaphoreSlotQueryIDString) HasSuffix(value string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				{
-					Name:  "ends_with",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-// deprecated: Use EndsWithIfPresent instead.
-func (r workerSemaphoreSlotQueryIDString) HasSuffixIfPresent(value *string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.HasSuffix(*value)
-}
-
-func (r workerSemaphoreSlotQueryIDString) Field() workerSemaphoreSlotPrismaFields {
-	return workerSemaphoreSlotFieldID
-}
-
-// base struct
-type workerSemaphoreSlotQueryWorkerWorker struct{}
-
-type workerSemaphoreSlotQueryWorkerRelations struct{}
-
-// WorkerSemaphoreSlot -> Worker
-//
-// @relation
-// @required
-func (workerSemaphoreSlotQueryWorkerRelations) Where(
-	params ...WorkerWhereParam,
-) workerSemaphoreSlotDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return workerSemaphoreSlotDefaultParam{
-		data: builder.Field{
-			Name: "worker",
-			Fields: []builder.Field{
-				{
-					Name:   "is",
-					Fields: fields,
-				},
-			},
-		},
-	}
-}
-
-func (workerSemaphoreSlotQueryWorkerRelations) Fetch() workerSemaphoreSlotToWorkerFindUnique {
-	var v workerSemaphoreSlotToWorkerFindUnique
-
-	v.query.Operation = "query"
-	v.query.Method = "worker"
-	v.query.Outputs = workerOutput
-
-	return v
-}
-
-func (r workerSemaphoreSlotQueryWorkerRelations) Link(
-	params WorkerWhereParam,
-) workerSemaphoreSlotWithPrismaWorkerSetParam {
-	var fields []builder.Field
-
-	f := params.field()
-	if f.Fields == nil && f.Value == nil {
-		return workerSemaphoreSlotWithPrismaWorkerSetParam{}
-	}
-
-	fields = append(fields, f)
-
-	return workerSemaphoreSlotWithPrismaWorkerSetParam{
-		data: builder.Field{
-			Name: "worker",
-			Fields: []builder.Field{
-				{
-					Name:   "connect",
-					Fields: builder.TransformEquals(fields),
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryWorkerRelations) Unlink() workerSemaphoreSlotWithPrismaWorkerSetParam {
-	var v workerSemaphoreSlotWithPrismaWorkerSetParam
-
-	v = workerSemaphoreSlotWithPrismaWorkerSetParam{
-		data: builder.Field{
-			Name: "worker",
-			Fields: []builder.Field{
-				{
-					Name:  "disconnect",
-					Value: true,
-				},
-			},
-		},
-	}
-
-	return v
-}
-
-func (r workerSemaphoreSlotQueryWorkerWorker) Field() workerSemaphoreSlotPrismaFields {
-	return workerSemaphoreSlotFieldWorker
-}
-
-// base struct
-type workerSemaphoreSlotQueryWorkerIDString struct{}
-
-// Set the required value of WorkerID
-func (r workerSemaphoreSlotQueryWorkerIDString) Set(value string) workerSemaphoreSlotSetParam {
-
-	return workerSemaphoreSlotSetParam{
-		data: builder.Field{
-			Name:  "workerId",
-			Value: value,
-		},
-	}
-
-}
-
-// Set the optional value of WorkerID dynamically
-func (r workerSemaphoreSlotQueryWorkerIDString) SetIfPresent(value *String) workerSemaphoreSlotSetParam {
-	if value == nil {
-		return workerSemaphoreSlotSetParam{}
-	}
-
-	return r.Set(*value)
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) Equals(value string) workerSemaphoreSlotWithPrismaWorkerIDEqualsParam {
-
-	return workerSemaphoreSlotWithPrismaWorkerIDEqualsParam{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "equals",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) EqualsIfPresent(value *string) workerSemaphoreSlotWithPrismaWorkerIDEqualsParam {
-	if value == nil {
-		return workerSemaphoreSlotWithPrismaWorkerIDEqualsParam{}
-	}
-	return r.Equals(*value)
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) Order(direction SortOrder) workerSemaphoreSlotDefaultParam {
-	return workerSemaphoreSlotDefaultParam{
-		data: builder.Field{
-			Name:  "workerId",
-			Value: direction,
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) Cursor(cursor string) workerSemaphoreSlotCursorParam {
-	return workerSemaphoreSlotCursorParam{
-		data: builder.Field{
-			Name:  "workerId",
-			Value: cursor,
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) In(value []string) workerSemaphoreSlotDefaultParam {
-	return workerSemaphoreSlotDefaultParam{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "in",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) InIfPresent(value []string) workerSemaphoreSlotDefaultParam {
-	if value == nil {
-		return workerSemaphoreSlotDefaultParam{}
-	}
-	return r.In(value)
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) NotIn(value []string) workerSemaphoreSlotDefaultParam {
-	return workerSemaphoreSlotDefaultParam{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "notIn",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) NotInIfPresent(value []string) workerSemaphoreSlotDefaultParam {
-	if value == nil {
-		return workerSemaphoreSlotDefaultParam{}
-	}
-	return r.NotIn(value)
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) Lt(value string) workerSemaphoreSlotDefaultParam {
-	return workerSemaphoreSlotDefaultParam{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "lt",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) LtIfPresent(value *string) workerSemaphoreSlotDefaultParam {
-	if value == nil {
-		return workerSemaphoreSlotDefaultParam{}
-	}
-	return r.Lt(*value)
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) Lte(value string) workerSemaphoreSlotDefaultParam {
-	return workerSemaphoreSlotDefaultParam{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "lte",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) LteIfPresent(value *string) workerSemaphoreSlotDefaultParam {
-	if value == nil {
-		return workerSemaphoreSlotDefaultParam{}
-	}
-	return r.Lte(*value)
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) Gt(value string) workerSemaphoreSlotDefaultParam {
-	return workerSemaphoreSlotDefaultParam{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "gt",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) GtIfPresent(value *string) workerSemaphoreSlotDefaultParam {
-	if value == nil {
-		return workerSemaphoreSlotDefaultParam{}
-	}
-	return r.Gt(*value)
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) Gte(value string) workerSemaphoreSlotDefaultParam {
-	return workerSemaphoreSlotDefaultParam{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "gte",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) GteIfPresent(value *string) workerSemaphoreSlotDefaultParam {
-	if value == nil {
-		return workerSemaphoreSlotDefaultParam{}
-	}
-	return r.Gte(*value)
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) Contains(value string) workerSemaphoreSlotDefaultParam {
-	return workerSemaphoreSlotDefaultParam{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "contains",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) ContainsIfPresent(value *string) workerSemaphoreSlotDefaultParam {
-	if value == nil {
-		return workerSemaphoreSlotDefaultParam{}
-	}
-	return r.Contains(*value)
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) StartsWith(value string) workerSemaphoreSlotDefaultParam {
-	return workerSemaphoreSlotDefaultParam{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "startsWith",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) StartsWithIfPresent(value *string) workerSemaphoreSlotDefaultParam {
-	if value == nil {
-		return workerSemaphoreSlotDefaultParam{}
-	}
-	return r.StartsWith(*value)
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) EndsWith(value string) workerSemaphoreSlotDefaultParam {
-	return workerSemaphoreSlotDefaultParam{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "endsWith",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) EndsWithIfPresent(value *string) workerSemaphoreSlotDefaultParam {
-	if value == nil {
-		return workerSemaphoreSlotDefaultParam{}
-	}
-	return r.EndsWith(*value)
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) Mode(value QueryMode) workerSemaphoreSlotDefaultParam {
-	return workerSemaphoreSlotDefaultParam{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "mode",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) ModeIfPresent(value *QueryMode) workerSemaphoreSlotDefaultParam {
-	if value == nil {
-		return workerSemaphoreSlotDefaultParam{}
-	}
-	return r.Mode(*value)
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) Not(value string) workerSemaphoreSlotDefaultParam {
-	return workerSemaphoreSlotDefaultParam{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "not",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) NotIfPresent(value *string) workerSemaphoreSlotDefaultParam {
-	if value == nil {
-		return workerSemaphoreSlotDefaultParam{}
-	}
-	return r.Not(*value)
-}
-
-// deprecated: Use StartsWith instead.
-
-func (r workerSemaphoreSlotQueryWorkerIDString) HasPrefix(value string) workerSemaphoreSlotDefaultParam {
-	return workerSemaphoreSlotDefaultParam{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "starts_with",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-// deprecated: Use StartsWithIfPresent instead.
-func (r workerSemaphoreSlotQueryWorkerIDString) HasPrefixIfPresent(value *string) workerSemaphoreSlotDefaultParam {
-	if value == nil {
-		return workerSemaphoreSlotDefaultParam{}
-	}
-	return r.HasPrefix(*value)
-}
-
-// deprecated: Use EndsWith instead.
-
-func (r workerSemaphoreSlotQueryWorkerIDString) HasSuffix(value string) workerSemaphoreSlotDefaultParam {
-	return workerSemaphoreSlotDefaultParam{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "ends_with",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-// deprecated: Use EndsWithIfPresent instead.
-func (r workerSemaphoreSlotQueryWorkerIDString) HasSuffixIfPresent(value *string) workerSemaphoreSlotDefaultParam {
-	if value == nil {
-		return workerSemaphoreSlotDefaultParam{}
-	}
-	return r.HasSuffix(*value)
-}
-
-func (r workerSemaphoreSlotQueryWorkerIDString) Field() workerSemaphoreSlotPrismaFields {
-	return workerSemaphoreSlotFieldWorkerID
-}
-
-// base struct
-type workerSemaphoreSlotQueryStepRunStepRun struct{}
-
-type workerSemaphoreSlotQueryStepRunRelations struct{}
-
-// WorkerSemaphoreSlot -> StepRun
-//
-// @relation
-// @optional
-func (workerSemaphoreSlotQueryStepRunRelations) Where(
-	params ...StepRunWhereParam,
-) workerSemaphoreSlotDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return workerSemaphoreSlotDefaultParam{
-		data: builder.Field{
-			Name: "stepRun",
-			Fields: []builder.Field{
-				{
-					Name:   "is",
-					Fields: fields,
-				},
-			},
-		},
-	}
-}
-
-func (workerSemaphoreSlotQueryStepRunRelations) Fetch() workerSemaphoreSlotToStepRunFindUnique {
-	var v workerSemaphoreSlotToStepRunFindUnique
-
-	v.query.Operation = "query"
-	v.query.Method = "stepRun"
-	v.query.Outputs = stepRunOutput
-
-	return v
-}
-
-func (r workerSemaphoreSlotQueryStepRunRelations) Link(
-	params StepRunWhereParam,
-) workerSemaphoreSlotSetParam {
-	var fields []builder.Field
-
-	f := params.field()
-	if f.Fields == nil && f.Value == nil {
-		return workerSemaphoreSlotSetParam{}
-	}
-
-	fields = append(fields, f)
-
-	return workerSemaphoreSlotSetParam{
-		data: builder.Field{
-			Name: "stepRun",
-			Fields: []builder.Field{
-				{
-					Name:   "connect",
-					Fields: builder.TransformEquals(fields),
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryStepRunRelations) Unlink() workerSemaphoreSlotSetParam {
-	var v workerSemaphoreSlotSetParam
-
-	v = workerSemaphoreSlotSetParam{
-		data: builder.Field{
-			Name: "stepRun",
-			Fields: []builder.Field{
-				{
-					Name:  "disconnect",
-					Value: true,
-				},
-			},
-		},
-	}
-
-	return v
-}
-
-func (r workerSemaphoreSlotQueryStepRunStepRun) Field() workerSemaphoreSlotPrismaFields {
-	return workerSemaphoreSlotFieldStepRun
-}
-
-// base struct
-type workerSemaphoreSlotQueryStepRunIDString struct{}
-
-// Set the optional value of StepRunID
-func (r workerSemaphoreSlotQueryStepRunIDString) Set(value string) workerSemaphoreSlotSetParam {
-
-	return workerSemaphoreSlotSetParam{
-		data: builder.Field{
-			Name:  "stepRunId",
-			Value: value,
-		},
-	}
-
-}
-
-// Set the optional value of StepRunID dynamically
-func (r workerSemaphoreSlotQueryStepRunIDString) SetIfPresent(value *String) workerSemaphoreSlotSetParam {
-	if value == nil {
-		return workerSemaphoreSlotSetParam{}
-	}
-
-	return r.Set(*value)
-}
-
-// Set the optional value of StepRunID dynamically
-func (r workerSemaphoreSlotQueryStepRunIDString) SetOptional(value *String) workerSemaphoreSlotSetParam {
-	if value == nil {
-
-		var v *string
-		return workerSemaphoreSlotSetParam{
-			data: builder.Field{
-				Name:  "stepRunId",
-				Value: v,
-			},
-		}
-	}
-
-	return r.Set(*value)
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) Equals(value string) workerSemaphoreSlotWithPrismaStepRunIDEqualsUniqueParam {
-
-	return workerSemaphoreSlotWithPrismaStepRunIDEqualsUniqueParam{
-		data: builder.Field{
-			Name: "stepRunId",
-			Fields: []builder.Field{
-				{
-					Name:  "equals",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) EqualsIfPresent(value *string) workerSemaphoreSlotWithPrismaStepRunIDEqualsUniqueParam {
-	if value == nil {
-		return workerSemaphoreSlotWithPrismaStepRunIDEqualsUniqueParam{}
-	}
-	return r.Equals(*value)
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) EqualsOptional(value *String) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "stepRunId",
-			Fields: []builder.Field{
-				{
-					Name:  "equals",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) IsNull() workerSemaphoreSlotParamUnique {
-	var str *string = nil
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "stepRunId",
-			Fields: []builder.Field{
-				{
-					Name:  "equals",
-					Value: str,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) Order(direction SortOrder) workerSemaphoreSlotDefaultParam {
-	return workerSemaphoreSlotDefaultParam{
-		data: builder.Field{
-			Name:  "stepRunId",
-			Value: direction,
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) Cursor(cursor string) workerSemaphoreSlotCursorParam {
-	return workerSemaphoreSlotCursorParam{
-		data: builder.Field{
-			Name:  "stepRunId",
-			Value: cursor,
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) In(value []string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "stepRunId",
-			Fields: []builder.Field{
-				{
-					Name:  "in",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) InIfPresent(value []string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.In(value)
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) NotIn(value []string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "stepRunId",
-			Fields: []builder.Field{
-				{
-					Name:  "notIn",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) NotInIfPresent(value []string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.NotIn(value)
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) Lt(value string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "stepRunId",
-			Fields: []builder.Field{
-				{
-					Name:  "lt",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) LtIfPresent(value *string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.Lt(*value)
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) Lte(value string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "stepRunId",
-			Fields: []builder.Field{
-				{
-					Name:  "lte",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) LteIfPresent(value *string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.Lte(*value)
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) Gt(value string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "stepRunId",
-			Fields: []builder.Field{
-				{
-					Name:  "gt",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) GtIfPresent(value *string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.Gt(*value)
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) Gte(value string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "stepRunId",
-			Fields: []builder.Field{
-				{
-					Name:  "gte",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) GteIfPresent(value *string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.Gte(*value)
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) Contains(value string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "stepRunId",
-			Fields: []builder.Field{
-				{
-					Name:  "contains",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) ContainsIfPresent(value *string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.Contains(*value)
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) StartsWith(value string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "stepRunId",
-			Fields: []builder.Field{
-				{
-					Name:  "startsWith",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) StartsWithIfPresent(value *string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.StartsWith(*value)
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) EndsWith(value string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "stepRunId",
-			Fields: []builder.Field{
-				{
-					Name:  "endsWith",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) EndsWithIfPresent(value *string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.EndsWith(*value)
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) Mode(value QueryMode) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "stepRunId",
-			Fields: []builder.Field{
-				{
-					Name:  "mode",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) ModeIfPresent(value *QueryMode) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.Mode(*value)
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) Not(value string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "stepRunId",
-			Fields: []builder.Field{
-				{
-					Name:  "not",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) NotIfPresent(value *string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.Not(*value)
-}
-
-// deprecated: Use StartsWith instead.
-
-func (r workerSemaphoreSlotQueryStepRunIDString) HasPrefix(value string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "stepRunId",
-			Fields: []builder.Field{
-				{
-					Name:  "starts_with",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-// deprecated: Use StartsWithIfPresent instead.
-func (r workerSemaphoreSlotQueryStepRunIDString) HasPrefixIfPresent(value *string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.HasPrefix(*value)
-}
-
-// deprecated: Use EndsWith instead.
-
-func (r workerSemaphoreSlotQueryStepRunIDString) HasSuffix(value string) workerSemaphoreSlotParamUnique {
-	return workerSemaphoreSlotParamUnique{
-		data: builder.Field{
-			Name: "stepRunId",
-			Fields: []builder.Field{
-				{
-					Name:  "ends_with",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-// deprecated: Use EndsWithIfPresent instead.
-func (r workerSemaphoreSlotQueryStepRunIDString) HasSuffixIfPresent(value *string) workerSemaphoreSlotParamUnique {
-	if value == nil {
-		return workerSemaphoreSlotParamUnique{}
-	}
-	return r.HasSuffix(*value)
-}
-
-func (r workerSemaphoreSlotQueryStepRunIDString) Field() workerSemaphoreSlotPrismaFields {
-	return workerSemaphoreSlotFieldStepRunID
-}
-
-// WorkerSemaphoreCount acts as a namespaces to access query methods for the WorkerSemaphoreCount model
-var WorkerSemaphoreCount = workerSemaphoreCountQuery{}
-
-// workerSemaphoreCountQuery exposes query functions for the workerSemaphoreCount model
-type workerSemaphoreCountQuery struct {
-	Worker workerSemaphoreCountQueryWorkerRelations
-
-	// WorkerID
-	//
-	// @required
-	WorkerID workerSemaphoreCountQueryWorkerIDString
-
-	// Count
-	//
-	// @required
-	Count workerSemaphoreCountQueryCountInt
-}
-
-func (workerSemaphoreCountQuery) Not(params ...WorkerSemaphoreCountWhereParam) workerSemaphoreCountDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return workerSemaphoreCountDefaultParam{
-		data: builder.Field{
-			Name:     "NOT",
-			List:     true,
-			WrapList: true,
-			Fields:   fields,
-		},
-	}
-}
-
-func (workerSemaphoreCountQuery) Or(params ...WorkerSemaphoreCountWhereParam) workerSemaphoreCountDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return workerSemaphoreCountDefaultParam{
-		data: builder.Field{
-			Name:     "OR",
-			List:     true,
-			WrapList: true,
-			Fields:   fields,
-		},
-	}
-}
-
-func (workerSemaphoreCountQuery) And(params ...WorkerSemaphoreCountWhereParam) workerSemaphoreCountDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return workerSemaphoreCountDefaultParam{
-		data: builder.Field{
-			Name:     "AND",
-			List:     true,
-			WrapList: true,
-			Fields:   fields,
-		},
-	}
-}
-
-// base struct
-type workerSemaphoreCountQueryWorkerWorker struct{}
-
-type workerSemaphoreCountQueryWorkerRelations struct{}
-
-// WorkerSemaphoreCount -> Worker
-//
-// @relation
-// @required
-func (workerSemaphoreCountQueryWorkerRelations) Where(
-	params ...WorkerWhereParam,
-) workerSemaphoreCountDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return workerSemaphoreCountDefaultParam{
-		data: builder.Field{
-			Name: "worker",
-			Fields: []builder.Field{
-				{
-					Name:   "is",
-					Fields: fields,
-				},
-			},
-		},
-	}
-}
-
-func (workerSemaphoreCountQueryWorkerRelations) Fetch() workerSemaphoreCountToWorkerFindUnique {
-	var v workerSemaphoreCountToWorkerFindUnique
-
-	v.query.Operation = "query"
-	v.query.Method = "worker"
-	v.query.Outputs = workerOutput
-
-	return v
-}
-
-func (r workerSemaphoreCountQueryWorkerRelations) Link(
-	params WorkerWhereParam,
-) workerSemaphoreCountWithPrismaWorkerSetParam {
-	var fields []builder.Field
-
-	f := params.field()
-	if f.Fields == nil && f.Value == nil {
-		return workerSemaphoreCountWithPrismaWorkerSetParam{}
-	}
-
-	fields = append(fields, f)
-
-	return workerSemaphoreCountWithPrismaWorkerSetParam{
-		data: builder.Field{
-			Name: "worker",
-			Fields: []builder.Field{
-				{
-					Name:   "connect",
-					Fields: builder.TransformEquals(fields),
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryWorkerRelations) Unlink() workerSemaphoreCountWithPrismaWorkerSetParam {
-	var v workerSemaphoreCountWithPrismaWorkerSetParam
-
-	v = workerSemaphoreCountWithPrismaWorkerSetParam{
-		data: builder.Field{
-			Name: "worker",
-			Fields: []builder.Field{
-				{
-					Name:  "disconnect",
-					Value: true,
-				},
-			},
-		},
-	}
-
-	return v
-}
-
-func (r workerSemaphoreCountQueryWorkerWorker) Field() workerSemaphoreCountPrismaFields {
-	return workerSemaphoreCountFieldWorker
-}
-
-// base struct
-type workerSemaphoreCountQueryWorkerIDString struct{}
-
-// Set the required value of WorkerID
-func (r workerSemaphoreCountQueryWorkerIDString) Set(value string) workerSemaphoreCountSetParam {
-
-	return workerSemaphoreCountSetParam{
-		data: builder.Field{
-			Name:  "workerId",
-			Value: value,
-		},
-	}
-
-}
-
-// Set the optional value of WorkerID dynamically
-func (r workerSemaphoreCountQueryWorkerIDString) SetIfPresent(value *String) workerSemaphoreCountSetParam {
-	if value == nil {
-		return workerSemaphoreCountSetParam{}
-	}
-
-	return r.Set(*value)
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) Equals(value string) workerSemaphoreCountWithPrismaWorkerIDEqualsUniqueParam {
-
-	return workerSemaphoreCountWithPrismaWorkerIDEqualsUniqueParam{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "equals",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) EqualsIfPresent(value *string) workerSemaphoreCountWithPrismaWorkerIDEqualsUniqueParam {
-	if value == nil {
-		return workerSemaphoreCountWithPrismaWorkerIDEqualsUniqueParam{}
-	}
-	return r.Equals(*value)
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) Order(direction SortOrder) workerSemaphoreCountDefaultParam {
-	return workerSemaphoreCountDefaultParam{
-		data: builder.Field{
-			Name:  "workerId",
-			Value: direction,
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) Cursor(cursor string) workerSemaphoreCountCursorParam {
-	return workerSemaphoreCountCursorParam{
-		data: builder.Field{
-			Name:  "workerId",
-			Value: cursor,
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) In(value []string) workerSemaphoreCountParamUnique {
-	return workerSemaphoreCountParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "in",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) InIfPresent(value []string) workerSemaphoreCountParamUnique {
-	if value == nil {
-		return workerSemaphoreCountParamUnique{}
-	}
-	return r.In(value)
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) NotIn(value []string) workerSemaphoreCountParamUnique {
-	return workerSemaphoreCountParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "notIn",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) NotInIfPresent(value []string) workerSemaphoreCountParamUnique {
-	if value == nil {
-		return workerSemaphoreCountParamUnique{}
-	}
-	return r.NotIn(value)
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) Lt(value string) workerSemaphoreCountParamUnique {
-	return workerSemaphoreCountParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "lt",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) LtIfPresent(value *string) workerSemaphoreCountParamUnique {
-	if value == nil {
-		return workerSemaphoreCountParamUnique{}
-	}
-	return r.Lt(*value)
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) Lte(value string) workerSemaphoreCountParamUnique {
-	return workerSemaphoreCountParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "lte",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) LteIfPresent(value *string) workerSemaphoreCountParamUnique {
-	if value == nil {
-		return workerSemaphoreCountParamUnique{}
-	}
-	return r.Lte(*value)
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) Gt(value string) workerSemaphoreCountParamUnique {
-	return workerSemaphoreCountParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "gt",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) GtIfPresent(value *string) workerSemaphoreCountParamUnique {
-	if value == nil {
-		return workerSemaphoreCountParamUnique{}
-	}
-	return r.Gt(*value)
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) Gte(value string) workerSemaphoreCountParamUnique {
-	return workerSemaphoreCountParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "gte",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) GteIfPresent(value *string) workerSemaphoreCountParamUnique {
-	if value == nil {
-		return workerSemaphoreCountParamUnique{}
-	}
-	return r.Gte(*value)
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) Contains(value string) workerSemaphoreCountParamUnique {
-	return workerSemaphoreCountParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "contains",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) ContainsIfPresent(value *string) workerSemaphoreCountParamUnique {
-	if value == nil {
-		return workerSemaphoreCountParamUnique{}
-	}
-	return r.Contains(*value)
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) StartsWith(value string) workerSemaphoreCountParamUnique {
-	return workerSemaphoreCountParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "startsWith",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) StartsWithIfPresent(value *string) workerSemaphoreCountParamUnique {
-	if value == nil {
-		return workerSemaphoreCountParamUnique{}
-	}
-	return r.StartsWith(*value)
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) EndsWith(value string) workerSemaphoreCountParamUnique {
-	return workerSemaphoreCountParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "endsWith",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) EndsWithIfPresent(value *string) workerSemaphoreCountParamUnique {
-	if value == nil {
-		return workerSemaphoreCountParamUnique{}
-	}
-	return r.EndsWith(*value)
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) Mode(value QueryMode) workerSemaphoreCountParamUnique {
-	return workerSemaphoreCountParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "mode",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) ModeIfPresent(value *QueryMode) workerSemaphoreCountParamUnique {
-	if value == nil {
-		return workerSemaphoreCountParamUnique{}
-	}
-	return r.Mode(*value)
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) Not(value string) workerSemaphoreCountParamUnique {
-	return workerSemaphoreCountParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "not",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) NotIfPresent(value *string) workerSemaphoreCountParamUnique {
-	if value == nil {
-		return workerSemaphoreCountParamUnique{}
-	}
-	return r.Not(*value)
-}
-
-// deprecated: Use StartsWith instead.
-
-func (r workerSemaphoreCountQueryWorkerIDString) HasPrefix(value string) workerSemaphoreCountParamUnique {
-	return workerSemaphoreCountParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "starts_with",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-// deprecated: Use StartsWithIfPresent instead.
-func (r workerSemaphoreCountQueryWorkerIDString) HasPrefixIfPresent(value *string) workerSemaphoreCountParamUnique {
-	if value == nil {
-		return workerSemaphoreCountParamUnique{}
-	}
-	return r.HasPrefix(*value)
-}
-
-// deprecated: Use EndsWith instead.
-
-func (r workerSemaphoreCountQueryWorkerIDString) HasSuffix(value string) workerSemaphoreCountParamUnique {
-	return workerSemaphoreCountParamUnique{
-		data: builder.Field{
-			Name: "workerId",
-			Fields: []builder.Field{
-				{
-					Name:  "ends_with",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-// deprecated: Use EndsWithIfPresent instead.
-func (r workerSemaphoreCountQueryWorkerIDString) HasSuffixIfPresent(value *string) workerSemaphoreCountParamUnique {
-	if value == nil {
-		return workerSemaphoreCountParamUnique{}
-	}
-	return r.HasSuffix(*value)
-}
-
-func (r workerSemaphoreCountQueryWorkerIDString) Field() workerSemaphoreCountPrismaFields {
-	return workerSemaphoreCountFieldWorkerID
-}
-
-// base struct
-type workerSemaphoreCountQueryCountInt struct{}
-
-// Set the required value of Count
-func (r workerSemaphoreCountQueryCountInt) Set(value int) workerSemaphoreCountWithPrismaCountSetParam {
-
-	return workerSemaphoreCountWithPrismaCountSetParam{
-		data: builder.Field{
-			Name:  "count",
-			Value: value,
-		},
-	}
-
-}
-
-// Set the optional value of Count dynamically
-func (r workerSemaphoreCountQueryCountInt) SetIfPresent(value *Int) workerSemaphoreCountWithPrismaCountSetParam {
-	if value == nil {
-		return workerSemaphoreCountWithPrismaCountSetParam{}
-	}
-
-	return r.Set(*value)
-}
-
-// Increment the required value of Count
-func (r workerSemaphoreCountQueryCountInt) Increment(value int) workerSemaphoreCountWithPrismaCountSetParam {
-	return workerSemaphoreCountWithPrismaCountSetParam{
-		data: builder.Field{
-			Name: "count",
-			Fields: []builder.Field{
-				builder.Field{
-					Name:  "increment",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryCountInt) IncrementIfPresent(value *int) workerSemaphoreCountWithPrismaCountSetParam {
-	if value == nil {
-		return workerSemaphoreCountWithPrismaCountSetParam{}
-	}
-	return r.Increment(*value)
-}
-
-// Decrement the required value of Count
-func (r workerSemaphoreCountQueryCountInt) Decrement(value int) workerSemaphoreCountWithPrismaCountSetParam {
-	return workerSemaphoreCountWithPrismaCountSetParam{
-		data: builder.Field{
-			Name: "count",
-			Fields: []builder.Field{
-				builder.Field{
-					Name:  "decrement",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryCountInt) DecrementIfPresent(value *int) workerSemaphoreCountWithPrismaCountSetParam {
-	if value == nil {
-		return workerSemaphoreCountWithPrismaCountSetParam{}
-	}
-	return r.Decrement(*value)
-}
-
-// Multiply the required value of Count
-func (r workerSemaphoreCountQueryCountInt) Multiply(value int) workerSemaphoreCountWithPrismaCountSetParam {
-	return workerSemaphoreCountWithPrismaCountSetParam{
-		data: builder.Field{
-			Name: "count",
-			Fields: []builder.Field{
-				builder.Field{
-					Name:  "multiply",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryCountInt) MultiplyIfPresent(value *int) workerSemaphoreCountWithPrismaCountSetParam {
-	if value == nil {
-		return workerSemaphoreCountWithPrismaCountSetParam{}
-	}
-	return r.Multiply(*value)
-}
-
-// Divide the required value of Count
-func (r workerSemaphoreCountQueryCountInt) Divide(value int) workerSemaphoreCountWithPrismaCountSetParam {
-	return workerSemaphoreCountWithPrismaCountSetParam{
-		data: builder.Field{
-			Name: "count",
-			Fields: []builder.Field{
-				builder.Field{
-					Name:  "divide",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryCountInt) DivideIfPresent(value *int) workerSemaphoreCountWithPrismaCountSetParam {
-	if value == nil {
-		return workerSemaphoreCountWithPrismaCountSetParam{}
-	}
-	return r.Divide(*value)
-}
-
-func (r workerSemaphoreCountQueryCountInt) Equals(value int) workerSemaphoreCountWithPrismaCountEqualsParam {
-
-	return workerSemaphoreCountWithPrismaCountEqualsParam{
-		data: builder.Field{
-			Name: "count",
-			Fields: []builder.Field{
-				{
-					Name:  "equals",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryCountInt) EqualsIfPresent(value *int) workerSemaphoreCountWithPrismaCountEqualsParam {
-	if value == nil {
-		return workerSemaphoreCountWithPrismaCountEqualsParam{}
-	}
-	return r.Equals(*value)
-}
-
-func (r workerSemaphoreCountQueryCountInt) Order(direction SortOrder) workerSemaphoreCountDefaultParam {
-	return workerSemaphoreCountDefaultParam{
-		data: builder.Field{
-			Name:  "count",
-			Value: direction,
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryCountInt) Cursor(cursor int) workerSemaphoreCountCursorParam {
-	return workerSemaphoreCountCursorParam{
-		data: builder.Field{
-			Name:  "count",
-			Value: cursor,
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryCountInt) In(value []int) workerSemaphoreCountDefaultParam {
-	return workerSemaphoreCountDefaultParam{
-		data: builder.Field{
-			Name: "count",
-			Fields: []builder.Field{
-				{
-					Name:  "in",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryCountInt) InIfPresent(value []int) workerSemaphoreCountDefaultParam {
-	if value == nil {
-		return workerSemaphoreCountDefaultParam{}
-	}
-	return r.In(value)
-}
-
-func (r workerSemaphoreCountQueryCountInt) NotIn(value []int) workerSemaphoreCountDefaultParam {
-	return workerSemaphoreCountDefaultParam{
-		data: builder.Field{
-			Name: "count",
-			Fields: []builder.Field{
-				{
-					Name:  "notIn",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryCountInt) NotInIfPresent(value []int) workerSemaphoreCountDefaultParam {
-	if value == nil {
-		return workerSemaphoreCountDefaultParam{}
-	}
-	return r.NotIn(value)
-}
-
-func (r workerSemaphoreCountQueryCountInt) Lt(value int) workerSemaphoreCountDefaultParam {
-	return workerSemaphoreCountDefaultParam{
-		data: builder.Field{
-			Name: "count",
-			Fields: []builder.Field{
-				{
-					Name:  "lt",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryCountInt) LtIfPresent(value *int) workerSemaphoreCountDefaultParam {
-	if value == nil {
-		return workerSemaphoreCountDefaultParam{}
-	}
-	return r.Lt(*value)
-}
-
-func (r workerSemaphoreCountQueryCountInt) Lte(value int) workerSemaphoreCountDefaultParam {
-	return workerSemaphoreCountDefaultParam{
-		data: builder.Field{
-			Name: "count",
-			Fields: []builder.Field{
-				{
-					Name:  "lte",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryCountInt) LteIfPresent(value *int) workerSemaphoreCountDefaultParam {
-	if value == nil {
-		return workerSemaphoreCountDefaultParam{}
-	}
-	return r.Lte(*value)
-}
-
-func (r workerSemaphoreCountQueryCountInt) Gt(value int) workerSemaphoreCountDefaultParam {
-	return workerSemaphoreCountDefaultParam{
-		data: builder.Field{
-			Name: "count",
-			Fields: []builder.Field{
-				{
-					Name:  "gt",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryCountInt) GtIfPresent(value *int) workerSemaphoreCountDefaultParam {
-	if value == nil {
-		return workerSemaphoreCountDefaultParam{}
-	}
-	return r.Gt(*value)
-}
-
-func (r workerSemaphoreCountQueryCountInt) Gte(value int) workerSemaphoreCountDefaultParam {
-	return workerSemaphoreCountDefaultParam{
-		data: builder.Field{
-			Name: "count",
-			Fields: []builder.Field{
-				{
-					Name:  "gte",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryCountInt) GteIfPresent(value *int) workerSemaphoreCountDefaultParam {
-	if value == nil {
-		return workerSemaphoreCountDefaultParam{}
-	}
-	return r.Gte(*value)
-}
-
-func (r workerSemaphoreCountQueryCountInt) Not(value int) workerSemaphoreCountDefaultParam {
-	return workerSemaphoreCountDefaultParam{
-		data: builder.Field{
-			Name: "count",
-			Fields: []builder.Field{
-				{
-					Name:  "not",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r workerSemaphoreCountQueryCountInt) NotIfPresent(value *int) workerSemaphoreCountDefaultParam {
-	if value == nil {
-		return workerSemaphoreCountDefaultParam{}
-	}
-	return r.Not(*value)
-}
-
-// deprecated: Use Lt instead.
-
-func (r workerSemaphoreCountQueryCountInt) LT(value int) workerSemaphoreCountDefaultParam {
-	return workerSemaphoreCountDefaultParam{
-		data: builder.Field{
-			Name: "count",
-			Fields: []builder.Field{
-				{
-					Name:  "lt",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-// deprecated: Use LtIfPresent instead.
-func (r workerSemaphoreCountQueryCountInt) LTIfPresent(value *int) workerSemaphoreCountDefaultParam {
-	if value == nil {
-		return workerSemaphoreCountDefaultParam{}
-	}
-	return r.LT(*value)
-}
-
-// deprecated: Use Lte instead.
-
-func (r workerSemaphoreCountQueryCountInt) LTE(value int) workerSemaphoreCountDefaultParam {
-	return workerSemaphoreCountDefaultParam{
-		data: builder.Field{
-			Name: "count",
-			Fields: []builder.Field{
-				{
-					Name:  "lte",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-// deprecated: Use LteIfPresent instead.
-func (r workerSemaphoreCountQueryCountInt) LTEIfPresent(value *int) workerSemaphoreCountDefaultParam {
-	if value == nil {
-		return workerSemaphoreCountDefaultParam{}
-	}
-	return r.LTE(*value)
-}
-
-// deprecated: Use Gt instead.
-
-func (r workerSemaphoreCountQueryCountInt) GT(value int) workerSemaphoreCountDefaultParam {
-	return workerSemaphoreCountDefaultParam{
-		data: builder.Field{
-			Name: "count",
-			Fields: []builder.Field{
-				{
-					Name:  "gt",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-// deprecated: Use GtIfPresent instead.
-func (r workerSemaphoreCountQueryCountInt) GTIfPresent(value *int) workerSemaphoreCountDefaultParam {
-	if value == nil {
-		return workerSemaphoreCountDefaultParam{}
-	}
-	return r.GT(*value)
-}
-
-// deprecated: Use Gte instead.
-
-func (r workerSemaphoreCountQueryCountInt) GTE(value int) workerSemaphoreCountDefaultParam {
-	return workerSemaphoreCountDefaultParam{
-		data: builder.Field{
-			Name: "count",
-			Fields: []builder.Field{
-				{
-					Name:  "gte",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-// deprecated: Use GteIfPresent instead.
-func (r workerSemaphoreCountQueryCountInt) GTEIfPresent(value *int) workerSemaphoreCountDefaultParam {
-	if value == nil {
-		return workerSemaphoreCountDefaultParam{}
-	}
-	return r.GTE(*value)
-}
-
-func (r workerSemaphoreCountQueryCountInt) Field() workerSemaphoreCountPrismaFields {
-	return workerSemaphoreCountFieldCount
 }
 
 // WorkerAssignEvent acts as a namespaces to access query methods for the WorkerAssignEvent model
@@ -249307,84 +246873,6 @@ func (p stepRunWithPrismaSemaphoreReleasedEqualsUniqueParam) semaphoreReleasedFi
 func (stepRunWithPrismaSemaphoreReleasedEqualsUniqueParam) unique() {}
 func (stepRunWithPrismaSemaphoreReleasedEqualsUniqueParam) equals() {}
 
-type StepRunWithPrismaSemaphoreSlotEqualsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	stepRunModel()
-	semaphoreSlotField()
-}
-
-type StepRunWithPrismaSemaphoreSlotSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	stepRunModel()
-	semaphoreSlotField()
-}
-
-type stepRunWithPrismaSemaphoreSlotSetParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p stepRunWithPrismaSemaphoreSlotSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p stepRunWithPrismaSemaphoreSlotSetParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p stepRunWithPrismaSemaphoreSlotSetParam) stepRunModel() {}
-
-func (p stepRunWithPrismaSemaphoreSlotSetParam) semaphoreSlotField() {}
-
-type StepRunWithPrismaSemaphoreSlotWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	stepRunModel()
-	semaphoreSlotField()
-}
-
-type stepRunWithPrismaSemaphoreSlotEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p stepRunWithPrismaSemaphoreSlotEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p stepRunWithPrismaSemaphoreSlotEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p stepRunWithPrismaSemaphoreSlotEqualsParam) stepRunModel() {}
-
-func (p stepRunWithPrismaSemaphoreSlotEqualsParam) semaphoreSlotField() {}
-
-func (stepRunWithPrismaSemaphoreSlotSetParam) settable()  {}
-func (stepRunWithPrismaSemaphoreSlotEqualsParam) equals() {}
-
-type stepRunWithPrismaSemaphoreSlotEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p stepRunWithPrismaSemaphoreSlotEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p stepRunWithPrismaSemaphoreSlotEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p stepRunWithPrismaSemaphoreSlotEqualsUniqueParam) stepRunModel()       {}
-func (p stepRunWithPrismaSemaphoreSlotEqualsUniqueParam) semaphoreSlotField() {}
-
-func (stepRunWithPrismaSemaphoreSlotEqualsUniqueParam) unique() {}
-func (stepRunWithPrismaSemaphoreSlotEqualsUniqueParam) equals() {}
-
 type StepRunWithPrismaArchivedResultsEqualsSetParam interface {
 	field() builder.Field
 	getQuery() builder.Query
@@ -252752,6 +250240,494 @@ func (p timeoutQueueItemWithPrismaIsQueuedEqualsUniqueParam) isQueuedField()    
 
 func (timeoutQueueItemWithPrismaIsQueuedEqualsUniqueParam) unique() {}
 func (timeoutQueueItemWithPrismaIsQueuedEqualsUniqueParam) equals() {}
+
+type semaphoreQueueItemActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var semaphoreQueueItemOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "stepRunId"},
+	{Name: "workerId"},
+	{Name: "tenantId"},
+}
+
+type SemaphoreQueueItemRelationWith interface {
+	getQuery() builder.Query
+	with()
+	semaphoreQueueItemRelation()
+}
+
+type SemaphoreQueueItemWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	semaphoreQueueItemModel()
+}
+
+type semaphoreQueueItemDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p semaphoreQueueItemDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p semaphoreQueueItemDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p semaphoreQueueItemDefaultParam) semaphoreQueueItemModel() {}
+
+type SemaphoreQueueItemOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	semaphoreQueueItemModel()
+}
+
+type semaphoreQueueItemOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p semaphoreQueueItemOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p semaphoreQueueItemOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p semaphoreQueueItemOrderByParam) semaphoreQueueItemModel() {}
+
+type SemaphoreQueueItemCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	semaphoreQueueItemModel()
+	isCursor()
+}
+
+type semaphoreQueueItemCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p semaphoreQueueItemCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p semaphoreQueueItemCursorParam) isCursor() {}
+
+func (p semaphoreQueueItemCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p semaphoreQueueItemCursorParam) semaphoreQueueItemModel() {}
+
+type SemaphoreQueueItemParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	semaphoreQueueItemModel()
+}
+
+type semaphoreQueueItemParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p semaphoreQueueItemParamUnique) semaphoreQueueItemModel() {}
+
+func (semaphoreQueueItemParamUnique) unique() {}
+
+func (p semaphoreQueueItemParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p semaphoreQueueItemParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type SemaphoreQueueItemEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	semaphoreQueueItemModel()
+}
+
+type semaphoreQueueItemEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p semaphoreQueueItemEqualsParam) semaphoreQueueItemModel() {}
+
+func (semaphoreQueueItemEqualsParam) equals() {}
+
+func (p semaphoreQueueItemEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p semaphoreQueueItemEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type SemaphoreQueueItemEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	semaphoreQueueItemModel()
+}
+
+type semaphoreQueueItemEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p semaphoreQueueItemEqualsUniqueParam) semaphoreQueueItemModel() {}
+
+func (semaphoreQueueItemEqualsUniqueParam) unique() {}
+func (semaphoreQueueItemEqualsUniqueParam) equals() {}
+
+func (p semaphoreQueueItemEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p semaphoreQueueItemEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type SemaphoreQueueItemSetParam interface {
+	field() builder.Field
+	settable()
+	semaphoreQueueItemModel()
+}
+
+type semaphoreQueueItemSetParam struct {
+	data builder.Field
+}
+
+func (semaphoreQueueItemSetParam) settable() {}
+
+func (p semaphoreQueueItemSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p semaphoreQueueItemSetParam) semaphoreQueueItemModel() {}
+
+type SemaphoreQueueItemWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	semaphoreQueueItemModel()
+	idField()
+}
+
+type SemaphoreQueueItemWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	semaphoreQueueItemModel()
+	idField()
+}
+
+type semaphoreQueueItemWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p semaphoreQueueItemWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p semaphoreQueueItemWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p semaphoreQueueItemWithPrismaIDSetParam) semaphoreQueueItemModel() {}
+
+func (p semaphoreQueueItemWithPrismaIDSetParam) idField() {}
+
+type SemaphoreQueueItemWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	semaphoreQueueItemModel()
+	idField()
+}
+
+type semaphoreQueueItemWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p semaphoreQueueItemWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p semaphoreQueueItemWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p semaphoreQueueItemWithPrismaIDEqualsParam) semaphoreQueueItemModel() {}
+
+func (p semaphoreQueueItemWithPrismaIDEqualsParam) idField() {}
+
+func (semaphoreQueueItemWithPrismaIDSetParam) settable()  {}
+func (semaphoreQueueItemWithPrismaIDEqualsParam) equals() {}
+
+type semaphoreQueueItemWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p semaphoreQueueItemWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p semaphoreQueueItemWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p semaphoreQueueItemWithPrismaIDEqualsUniqueParam) semaphoreQueueItemModel() {}
+func (p semaphoreQueueItemWithPrismaIDEqualsUniqueParam) idField()                 {}
+
+func (semaphoreQueueItemWithPrismaIDEqualsUniqueParam) unique() {}
+func (semaphoreQueueItemWithPrismaIDEqualsUniqueParam) equals() {}
+
+type SemaphoreQueueItemWithPrismaStepRunIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	semaphoreQueueItemModel()
+	stepRunIDField()
+}
+
+type SemaphoreQueueItemWithPrismaStepRunIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	semaphoreQueueItemModel()
+	stepRunIDField()
+}
+
+type semaphoreQueueItemWithPrismaStepRunIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p semaphoreQueueItemWithPrismaStepRunIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p semaphoreQueueItemWithPrismaStepRunIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p semaphoreQueueItemWithPrismaStepRunIDSetParam) semaphoreQueueItemModel() {}
+
+func (p semaphoreQueueItemWithPrismaStepRunIDSetParam) stepRunIDField() {}
+
+type SemaphoreQueueItemWithPrismaStepRunIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	semaphoreQueueItemModel()
+	stepRunIDField()
+}
+
+type semaphoreQueueItemWithPrismaStepRunIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p semaphoreQueueItemWithPrismaStepRunIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p semaphoreQueueItemWithPrismaStepRunIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p semaphoreQueueItemWithPrismaStepRunIDEqualsParam) semaphoreQueueItemModel() {}
+
+func (p semaphoreQueueItemWithPrismaStepRunIDEqualsParam) stepRunIDField() {}
+
+func (semaphoreQueueItemWithPrismaStepRunIDSetParam) settable()  {}
+func (semaphoreQueueItemWithPrismaStepRunIDEqualsParam) equals() {}
+
+type semaphoreQueueItemWithPrismaStepRunIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p semaphoreQueueItemWithPrismaStepRunIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p semaphoreQueueItemWithPrismaStepRunIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p semaphoreQueueItemWithPrismaStepRunIDEqualsUniqueParam) semaphoreQueueItemModel() {}
+func (p semaphoreQueueItemWithPrismaStepRunIDEqualsUniqueParam) stepRunIDField()          {}
+
+func (semaphoreQueueItemWithPrismaStepRunIDEqualsUniqueParam) unique() {}
+func (semaphoreQueueItemWithPrismaStepRunIDEqualsUniqueParam) equals() {}
+
+type SemaphoreQueueItemWithPrismaWorkerIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	semaphoreQueueItemModel()
+	workerIDField()
+}
+
+type SemaphoreQueueItemWithPrismaWorkerIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	semaphoreQueueItemModel()
+	workerIDField()
+}
+
+type semaphoreQueueItemWithPrismaWorkerIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p semaphoreQueueItemWithPrismaWorkerIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p semaphoreQueueItemWithPrismaWorkerIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p semaphoreQueueItemWithPrismaWorkerIDSetParam) semaphoreQueueItemModel() {}
+
+func (p semaphoreQueueItemWithPrismaWorkerIDSetParam) workerIDField() {}
+
+type SemaphoreQueueItemWithPrismaWorkerIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	semaphoreQueueItemModel()
+	workerIDField()
+}
+
+type semaphoreQueueItemWithPrismaWorkerIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p semaphoreQueueItemWithPrismaWorkerIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p semaphoreQueueItemWithPrismaWorkerIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p semaphoreQueueItemWithPrismaWorkerIDEqualsParam) semaphoreQueueItemModel() {}
+
+func (p semaphoreQueueItemWithPrismaWorkerIDEqualsParam) workerIDField() {}
+
+func (semaphoreQueueItemWithPrismaWorkerIDSetParam) settable()  {}
+func (semaphoreQueueItemWithPrismaWorkerIDEqualsParam) equals() {}
+
+type semaphoreQueueItemWithPrismaWorkerIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p semaphoreQueueItemWithPrismaWorkerIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p semaphoreQueueItemWithPrismaWorkerIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p semaphoreQueueItemWithPrismaWorkerIDEqualsUniqueParam) semaphoreQueueItemModel() {}
+func (p semaphoreQueueItemWithPrismaWorkerIDEqualsUniqueParam) workerIDField()           {}
+
+func (semaphoreQueueItemWithPrismaWorkerIDEqualsUniqueParam) unique() {}
+func (semaphoreQueueItemWithPrismaWorkerIDEqualsUniqueParam) equals() {}
+
+type SemaphoreQueueItemWithPrismaTenantIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	semaphoreQueueItemModel()
+	tenantIDField()
+}
+
+type SemaphoreQueueItemWithPrismaTenantIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	semaphoreQueueItemModel()
+	tenantIDField()
+}
+
+type semaphoreQueueItemWithPrismaTenantIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p semaphoreQueueItemWithPrismaTenantIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p semaphoreQueueItemWithPrismaTenantIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p semaphoreQueueItemWithPrismaTenantIDSetParam) semaphoreQueueItemModel() {}
+
+func (p semaphoreQueueItemWithPrismaTenantIDSetParam) tenantIDField() {}
+
+type SemaphoreQueueItemWithPrismaTenantIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	semaphoreQueueItemModel()
+	tenantIDField()
+}
+
+type semaphoreQueueItemWithPrismaTenantIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p semaphoreQueueItemWithPrismaTenantIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p semaphoreQueueItemWithPrismaTenantIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p semaphoreQueueItemWithPrismaTenantIDEqualsParam) semaphoreQueueItemModel() {}
+
+func (p semaphoreQueueItemWithPrismaTenantIDEqualsParam) tenantIDField() {}
+
+func (semaphoreQueueItemWithPrismaTenantIDSetParam) settable()  {}
+func (semaphoreQueueItemWithPrismaTenantIDEqualsParam) equals() {}
+
+type semaphoreQueueItemWithPrismaTenantIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p semaphoreQueueItemWithPrismaTenantIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p semaphoreQueueItemWithPrismaTenantIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p semaphoreQueueItemWithPrismaTenantIDEqualsUniqueParam) semaphoreQueueItemModel() {}
+func (p semaphoreQueueItemWithPrismaTenantIDEqualsUniqueParam) tenantIDField()           {}
+
+func (semaphoreQueueItemWithPrismaTenantIDEqualsUniqueParam) unique() {}
+func (semaphoreQueueItemWithPrismaTenantIDEqualsUniqueParam) equals() {}
 
 type stepRunEventActions struct {
 	// client holds the prisma client
@@ -259457,162 +257433,6 @@ func (p workerWithPrismaGroupKeyRunsEqualsUniqueParam) groupKeyRunsField() {}
 func (workerWithPrismaGroupKeyRunsEqualsUniqueParam) unique() {}
 func (workerWithPrismaGroupKeyRunsEqualsUniqueParam) equals() {}
 
-type WorkerWithPrismaSlotsEqualsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	workerModel()
-	slotsField()
-}
-
-type WorkerWithPrismaSlotsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerModel()
-	slotsField()
-}
-
-type workerWithPrismaSlotsSetParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerWithPrismaSlotsSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerWithPrismaSlotsSetParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerWithPrismaSlotsSetParam) workerModel() {}
-
-func (p workerWithPrismaSlotsSetParam) slotsField() {}
-
-type WorkerWithPrismaSlotsWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerModel()
-	slotsField()
-}
-
-type workerWithPrismaSlotsEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerWithPrismaSlotsEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerWithPrismaSlotsEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerWithPrismaSlotsEqualsParam) workerModel() {}
-
-func (p workerWithPrismaSlotsEqualsParam) slotsField() {}
-
-func (workerWithPrismaSlotsSetParam) settable()  {}
-func (workerWithPrismaSlotsEqualsParam) equals() {}
-
-type workerWithPrismaSlotsEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerWithPrismaSlotsEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerWithPrismaSlotsEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerWithPrismaSlotsEqualsUniqueParam) workerModel() {}
-func (p workerWithPrismaSlotsEqualsUniqueParam) slotsField()  {}
-
-func (workerWithPrismaSlotsEqualsUniqueParam) unique() {}
-func (workerWithPrismaSlotsEqualsUniqueParam) equals() {}
-
-type WorkerWithPrismaSemaphoreCountEqualsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	workerModel()
-	semaphoreCountField()
-}
-
-type WorkerWithPrismaSemaphoreCountSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerModel()
-	semaphoreCountField()
-}
-
-type workerWithPrismaSemaphoreCountSetParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerWithPrismaSemaphoreCountSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerWithPrismaSemaphoreCountSetParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerWithPrismaSemaphoreCountSetParam) workerModel() {}
-
-func (p workerWithPrismaSemaphoreCountSetParam) semaphoreCountField() {}
-
-type WorkerWithPrismaSemaphoreCountWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerModel()
-	semaphoreCountField()
-}
-
-type workerWithPrismaSemaphoreCountEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerWithPrismaSemaphoreCountEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerWithPrismaSemaphoreCountEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerWithPrismaSemaphoreCountEqualsParam) workerModel() {}
-
-func (p workerWithPrismaSemaphoreCountEqualsParam) semaphoreCountField() {}
-
-func (workerWithPrismaSemaphoreCountSetParam) settable()  {}
-func (workerWithPrismaSemaphoreCountEqualsParam) equals() {}
-
-type workerWithPrismaSemaphoreCountEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerWithPrismaSemaphoreCountEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerWithPrismaSemaphoreCountEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerWithPrismaSemaphoreCountEqualsUniqueParam) workerModel()         {}
-func (p workerWithPrismaSemaphoreCountEqualsUniqueParam) semaphoreCountField() {}
-
-func (workerWithPrismaSemaphoreCountEqualsUniqueParam) unique() {}
-func (workerWithPrismaSemaphoreCountEqualsUniqueParam) equals() {}
-
 type WorkerWithPrismaAssignedEventsEqualsSetParam interface {
 	field() builder.Field
 	getQuery() builder.Query
@@ -259846,1465 +257666,6 @@ func (p workerWithPrismaWebhookIDEqualsUniqueParam) webhookIDField() {}
 
 func (workerWithPrismaWebhookIDEqualsUniqueParam) unique() {}
 func (workerWithPrismaWebhookIDEqualsUniqueParam) equals() {}
-
-type WorkerWithPrismaSemaphoreEqualsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	workerModel()
-	semaphoreField()
-}
-
-type WorkerWithPrismaSemaphoreSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerModel()
-	semaphoreField()
-}
-
-type workerWithPrismaSemaphoreSetParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerWithPrismaSemaphoreSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerWithPrismaSemaphoreSetParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerWithPrismaSemaphoreSetParam) workerModel() {}
-
-func (p workerWithPrismaSemaphoreSetParam) semaphoreField() {}
-
-type WorkerWithPrismaSemaphoreWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerModel()
-	semaphoreField()
-}
-
-type workerWithPrismaSemaphoreEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerWithPrismaSemaphoreEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerWithPrismaSemaphoreEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerWithPrismaSemaphoreEqualsParam) workerModel() {}
-
-func (p workerWithPrismaSemaphoreEqualsParam) semaphoreField() {}
-
-func (workerWithPrismaSemaphoreSetParam) settable()  {}
-func (workerWithPrismaSemaphoreEqualsParam) equals() {}
-
-type workerWithPrismaSemaphoreEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerWithPrismaSemaphoreEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerWithPrismaSemaphoreEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerWithPrismaSemaphoreEqualsUniqueParam) workerModel()    {}
-func (p workerWithPrismaSemaphoreEqualsUniqueParam) semaphoreField() {}
-
-func (workerWithPrismaSemaphoreEqualsUniqueParam) unique() {}
-func (workerWithPrismaSemaphoreEqualsUniqueParam) equals() {}
-
-type workerSemaphoreActions struct {
-	// client holds the prisma client
-	client *PrismaClient
-}
-
-var workerSemaphoreOutput = []builder.Output{
-	{Name: "workerId"},
-	{Name: "slots"},
-}
-
-type WorkerSemaphoreRelationWith interface {
-	getQuery() builder.Query
-	with()
-	workerSemaphoreRelation()
-}
-
-type WorkerSemaphoreWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreModel()
-}
-
-type workerSemaphoreDefaultParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreDefaultParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreDefaultParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreDefaultParam) workerSemaphoreModel() {}
-
-type WorkerSemaphoreOrderByParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreModel()
-}
-
-type workerSemaphoreOrderByParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreOrderByParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreOrderByParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreOrderByParam) workerSemaphoreModel() {}
-
-type WorkerSemaphoreCursorParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreModel()
-	isCursor()
-}
-
-type workerSemaphoreCursorParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreCursorParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreCursorParam) isCursor() {}
-
-func (p workerSemaphoreCursorParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreCursorParam) workerSemaphoreModel() {}
-
-type WorkerSemaphoreParamUnique interface {
-	field() builder.Field
-	getQuery() builder.Query
-	unique()
-	workerSemaphoreModel()
-}
-
-type workerSemaphoreParamUnique struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreParamUnique) workerSemaphoreModel() {}
-
-func (workerSemaphoreParamUnique) unique() {}
-
-func (p workerSemaphoreParamUnique) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreParamUnique) getQuery() builder.Query {
-	return p.query
-}
-
-type WorkerSemaphoreEqualsWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	workerSemaphoreModel()
-}
-
-type workerSemaphoreEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreEqualsParam) workerSemaphoreModel() {}
-
-func (workerSemaphoreEqualsParam) equals() {}
-
-func (p workerSemaphoreEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-type WorkerSemaphoreEqualsUniqueWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	unique()
-	workerSemaphoreModel()
-}
-
-type workerSemaphoreEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreEqualsUniqueParam) workerSemaphoreModel() {}
-
-func (workerSemaphoreEqualsUniqueParam) unique() {}
-func (workerSemaphoreEqualsUniqueParam) equals() {}
-
-func (p workerSemaphoreEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-type WorkerSemaphoreSetParam interface {
-	field() builder.Field
-	settable()
-	workerSemaphoreModel()
-}
-
-type workerSemaphoreSetParam struct {
-	data builder.Field
-}
-
-func (workerSemaphoreSetParam) settable() {}
-
-func (p workerSemaphoreSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreSetParam) workerSemaphoreModel() {}
-
-type WorkerSemaphoreWithPrismaWorkerEqualsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	workerSemaphoreModel()
-	workerField()
-}
-
-type WorkerSemaphoreWithPrismaWorkerSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreModel()
-	workerField()
-}
-
-type workerSemaphoreWithPrismaWorkerSetParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreWithPrismaWorkerSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreWithPrismaWorkerSetParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreWithPrismaWorkerSetParam) workerSemaphoreModel() {}
-
-func (p workerSemaphoreWithPrismaWorkerSetParam) workerField() {}
-
-type WorkerSemaphoreWithPrismaWorkerWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreModel()
-	workerField()
-}
-
-type workerSemaphoreWithPrismaWorkerEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreWithPrismaWorkerEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreWithPrismaWorkerEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreWithPrismaWorkerEqualsParam) workerSemaphoreModel() {}
-
-func (p workerSemaphoreWithPrismaWorkerEqualsParam) workerField() {}
-
-func (workerSemaphoreWithPrismaWorkerSetParam) settable()  {}
-func (workerSemaphoreWithPrismaWorkerEqualsParam) equals() {}
-
-type workerSemaphoreWithPrismaWorkerEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreWithPrismaWorkerEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreWithPrismaWorkerEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreWithPrismaWorkerEqualsUniqueParam) workerSemaphoreModel() {}
-func (p workerSemaphoreWithPrismaWorkerEqualsUniqueParam) workerField()          {}
-
-func (workerSemaphoreWithPrismaWorkerEqualsUniqueParam) unique() {}
-func (workerSemaphoreWithPrismaWorkerEqualsUniqueParam) equals() {}
-
-type WorkerSemaphoreWithPrismaWorkerIDEqualsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	workerSemaphoreModel()
-	workerIDField()
-}
-
-type WorkerSemaphoreWithPrismaWorkerIDSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreModel()
-	workerIDField()
-}
-
-type workerSemaphoreWithPrismaWorkerIDSetParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreWithPrismaWorkerIDSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreWithPrismaWorkerIDSetParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreWithPrismaWorkerIDSetParam) workerSemaphoreModel() {}
-
-func (p workerSemaphoreWithPrismaWorkerIDSetParam) workerIDField() {}
-
-type WorkerSemaphoreWithPrismaWorkerIDWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreModel()
-	workerIDField()
-}
-
-type workerSemaphoreWithPrismaWorkerIDEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreWithPrismaWorkerIDEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreWithPrismaWorkerIDEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreWithPrismaWorkerIDEqualsParam) workerSemaphoreModel() {}
-
-func (p workerSemaphoreWithPrismaWorkerIDEqualsParam) workerIDField() {}
-
-func (workerSemaphoreWithPrismaWorkerIDSetParam) settable()  {}
-func (workerSemaphoreWithPrismaWorkerIDEqualsParam) equals() {}
-
-type workerSemaphoreWithPrismaWorkerIDEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreWithPrismaWorkerIDEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreWithPrismaWorkerIDEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreWithPrismaWorkerIDEqualsUniqueParam) workerSemaphoreModel() {}
-func (p workerSemaphoreWithPrismaWorkerIDEqualsUniqueParam) workerIDField()        {}
-
-func (workerSemaphoreWithPrismaWorkerIDEqualsUniqueParam) unique() {}
-func (workerSemaphoreWithPrismaWorkerIDEqualsUniqueParam) equals() {}
-
-type WorkerSemaphoreWithPrismaSlotsEqualsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	workerSemaphoreModel()
-	slotsField()
-}
-
-type WorkerSemaphoreWithPrismaSlotsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreModel()
-	slotsField()
-}
-
-type workerSemaphoreWithPrismaSlotsSetParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreWithPrismaSlotsSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreWithPrismaSlotsSetParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreWithPrismaSlotsSetParam) workerSemaphoreModel() {}
-
-func (p workerSemaphoreWithPrismaSlotsSetParam) slotsField() {}
-
-type WorkerSemaphoreWithPrismaSlotsWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreModel()
-	slotsField()
-}
-
-type workerSemaphoreWithPrismaSlotsEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreWithPrismaSlotsEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreWithPrismaSlotsEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreWithPrismaSlotsEqualsParam) workerSemaphoreModel() {}
-
-func (p workerSemaphoreWithPrismaSlotsEqualsParam) slotsField() {}
-
-func (workerSemaphoreWithPrismaSlotsSetParam) settable()  {}
-func (workerSemaphoreWithPrismaSlotsEqualsParam) equals() {}
-
-type workerSemaphoreWithPrismaSlotsEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreWithPrismaSlotsEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreWithPrismaSlotsEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreWithPrismaSlotsEqualsUniqueParam) workerSemaphoreModel() {}
-func (p workerSemaphoreWithPrismaSlotsEqualsUniqueParam) slotsField()           {}
-
-func (workerSemaphoreWithPrismaSlotsEqualsUniqueParam) unique() {}
-func (workerSemaphoreWithPrismaSlotsEqualsUniqueParam) equals() {}
-
-type workerSemaphoreSlotActions struct {
-	// client holds the prisma client
-	client *PrismaClient
-}
-
-var workerSemaphoreSlotOutput = []builder.Output{
-	{Name: "id"},
-	{Name: "workerId"},
-	{Name: "stepRunId"},
-}
-
-type WorkerSemaphoreSlotRelationWith interface {
-	getQuery() builder.Query
-	with()
-	workerSemaphoreSlotRelation()
-}
-
-type WorkerSemaphoreSlotWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreSlotModel()
-}
-
-type workerSemaphoreSlotDefaultParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreSlotDefaultParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreSlotDefaultParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreSlotDefaultParam) workerSemaphoreSlotModel() {}
-
-type WorkerSemaphoreSlotOrderByParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreSlotModel()
-}
-
-type workerSemaphoreSlotOrderByParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreSlotOrderByParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreSlotOrderByParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreSlotOrderByParam) workerSemaphoreSlotModel() {}
-
-type WorkerSemaphoreSlotCursorParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreSlotModel()
-	isCursor()
-}
-
-type workerSemaphoreSlotCursorParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreSlotCursorParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreSlotCursorParam) isCursor() {}
-
-func (p workerSemaphoreSlotCursorParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreSlotCursorParam) workerSemaphoreSlotModel() {}
-
-type WorkerSemaphoreSlotParamUnique interface {
-	field() builder.Field
-	getQuery() builder.Query
-	unique()
-	workerSemaphoreSlotModel()
-}
-
-type workerSemaphoreSlotParamUnique struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreSlotParamUnique) workerSemaphoreSlotModel() {}
-
-func (workerSemaphoreSlotParamUnique) unique() {}
-
-func (p workerSemaphoreSlotParamUnique) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreSlotParamUnique) getQuery() builder.Query {
-	return p.query
-}
-
-type WorkerSemaphoreSlotEqualsWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	workerSemaphoreSlotModel()
-}
-
-type workerSemaphoreSlotEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreSlotEqualsParam) workerSemaphoreSlotModel() {}
-
-func (workerSemaphoreSlotEqualsParam) equals() {}
-
-func (p workerSemaphoreSlotEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreSlotEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-type WorkerSemaphoreSlotEqualsUniqueWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	unique()
-	workerSemaphoreSlotModel()
-}
-
-type workerSemaphoreSlotEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreSlotEqualsUniqueParam) workerSemaphoreSlotModel() {}
-
-func (workerSemaphoreSlotEqualsUniqueParam) unique() {}
-func (workerSemaphoreSlotEqualsUniqueParam) equals() {}
-
-func (p workerSemaphoreSlotEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreSlotEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-type WorkerSemaphoreSlotSetParam interface {
-	field() builder.Field
-	settable()
-	workerSemaphoreSlotModel()
-}
-
-type workerSemaphoreSlotSetParam struct {
-	data builder.Field
-}
-
-func (workerSemaphoreSlotSetParam) settable() {}
-
-func (p workerSemaphoreSlotSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreSlotSetParam) workerSemaphoreSlotModel() {}
-
-type WorkerSemaphoreSlotWithPrismaIDEqualsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	workerSemaphoreSlotModel()
-	idField()
-}
-
-type WorkerSemaphoreSlotWithPrismaIDSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreSlotModel()
-	idField()
-}
-
-type workerSemaphoreSlotWithPrismaIDSetParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreSlotWithPrismaIDSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreSlotWithPrismaIDSetParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreSlotWithPrismaIDSetParam) workerSemaphoreSlotModel() {}
-
-func (p workerSemaphoreSlotWithPrismaIDSetParam) idField() {}
-
-type WorkerSemaphoreSlotWithPrismaIDWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreSlotModel()
-	idField()
-}
-
-type workerSemaphoreSlotWithPrismaIDEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreSlotWithPrismaIDEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreSlotWithPrismaIDEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreSlotWithPrismaIDEqualsParam) workerSemaphoreSlotModel() {}
-
-func (p workerSemaphoreSlotWithPrismaIDEqualsParam) idField() {}
-
-func (workerSemaphoreSlotWithPrismaIDSetParam) settable()  {}
-func (workerSemaphoreSlotWithPrismaIDEqualsParam) equals() {}
-
-type workerSemaphoreSlotWithPrismaIDEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreSlotWithPrismaIDEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreSlotWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreSlotWithPrismaIDEqualsUniqueParam) workerSemaphoreSlotModel() {}
-func (p workerSemaphoreSlotWithPrismaIDEqualsUniqueParam) idField()                  {}
-
-func (workerSemaphoreSlotWithPrismaIDEqualsUniqueParam) unique() {}
-func (workerSemaphoreSlotWithPrismaIDEqualsUniqueParam) equals() {}
-
-type WorkerSemaphoreSlotWithPrismaWorkerEqualsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	workerSemaphoreSlotModel()
-	workerField()
-}
-
-type WorkerSemaphoreSlotWithPrismaWorkerSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreSlotModel()
-	workerField()
-}
-
-type workerSemaphoreSlotWithPrismaWorkerSetParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreSlotWithPrismaWorkerSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreSlotWithPrismaWorkerSetParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreSlotWithPrismaWorkerSetParam) workerSemaphoreSlotModel() {}
-
-func (p workerSemaphoreSlotWithPrismaWorkerSetParam) workerField() {}
-
-type WorkerSemaphoreSlotWithPrismaWorkerWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreSlotModel()
-	workerField()
-}
-
-type workerSemaphoreSlotWithPrismaWorkerEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreSlotWithPrismaWorkerEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreSlotWithPrismaWorkerEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreSlotWithPrismaWorkerEqualsParam) workerSemaphoreSlotModel() {}
-
-func (p workerSemaphoreSlotWithPrismaWorkerEqualsParam) workerField() {}
-
-func (workerSemaphoreSlotWithPrismaWorkerSetParam) settable()  {}
-func (workerSemaphoreSlotWithPrismaWorkerEqualsParam) equals() {}
-
-type workerSemaphoreSlotWithPrismaWorkerEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreSlotWithPrismaWorkerEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreSlotWithPrismaWorkerEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreSlotWithPrismaWorkerEqualsUniqueParam) workerSemaphoreSlotModel() {}
-func (p workerSemaphoreSlotWithPrismaWorkerEqualsUniqueParam) workerField()              {}
-
-func (workerSemaphoreSlotWithPrismaWorkerEqualsUniqueParam) unique() {}
-func (workerSemaphoreSlotWithPrismaWorkerEqualsUniqueParam) equals() {}
-
-type WorkerSemaphoreSlotWithPrismaWorkerIDEqualsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	workerSemaphoreSlotModel()
-	workerIDField()
-}
-
-type WorkerSemaphoreSlotWithPrismaWorkerIDSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreSlotModel()
-	workerIDField()
-}
-
-type workerSemaphoreSlotWithPrismaWorkerIDSetParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreSlotWithPrismaWorkerIDSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreSlotWithPrismaWorkerIDSetParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreSlotWithPrismaWorkerIDSetParam) workerSemaphoreSlotModel() {}
-
-func (p workerSemaphoreSlotWithPrismaWorkerIDSetParam) workerIDField() {}
-
-type WorkerSemaphoreSlotWithPrismaWorkerIDWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreSlotModel()
-	workerIDField()
-}
-
-type workerSemaphoreSlotWithPrismaWorkerIDEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreSlotWithPrismaWorkerIDEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreSlotWithPrismaWorkerIDEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreSlotWithPrismaWorkerIDEqualsParam) workerSemaphoreSlotModel() {}
-
-func (p workerSemaphoreSlotWithPrismaWorkerIDEqualsParam) workerIDField() {}
-
-func (workerSemaphoreSlotWithPrismaWorkerIDSetParam) settable()  {}
-func (workerSemaphoreSlotWithPrismaWorkerIDEqualsParam) equals() {}
-
-type workerSemaphoreSlotWithPrismaWorkerIDEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreSlotWithPrismaWorkerIDEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreSlotWithPrismaWorkerIDEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreSlotWithPrismaWorkerIDEqualsUniqueParam) workerSemaphoreSlotModel() {}
-func (p workerSemaphoreSlotWithPrismaWorkerIDEqualsUniqueParam) workerIDField()            {}
-
-func (workerSemaphoreSlotWithPrismaWorkerIDEqualsUniqueParam) unique() {}
-func (workerSemaphoreSlotWithPrismaWorkerIDEqualsUniqueParam) equals() {}
-
-type WorkerSemaphoreSlotWithPrismaStepRunEqualsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	workerSemaphoreSlotModel()
-	stepRunField()
-}
-
-type WorkerSemaphoreSlotWithPrismaStepRunSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreSlotModel()
-	stepRunField()
-}
-
-type workerSemaphoreSlotWithPrismaStepRunSetParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreSlotWithPrismaStepRunSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreSlotWithPrismaStepRunSetParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreSlotWithPrismaStepRunSetParam) workerSemaphoreSlotModel() {}
-
-func (p workerSemaphoreSlotWithPrismaStepRunSetParam) stepRunField() {}
-
-type WorkerSemaphoreSlotWithPrismaStepRunWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreSlotModel()
-	stepRunField()
-}
-
-type workerSemaphoreSlotWithPrismaStepRunEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreSlotWithPrismaStepRunEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreSlotWithPrismaStepRunEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreSlotWithPrismaStepRunEqualsParam) workerSemaphoreSlotModel() {}
-
-func (p workerSemaphoreSlotWithPrismaStepRunEqualsParam) stepRunField() {}
-
-func (workerSemaphoreSlotWithPrismaStepRunSetParam) settable()  {}
-func (workerSemaphoreSlotWithPrismaStepRunEqualsParam) equals() {}
-
-type workerSemaphoreSlotWithPrismaStepRunEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreSlotWithPrismaStepRunEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreSlotWithPrismaStepRunEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreSlotWithPrismaStepRunEqualsUniqueParam) workerSemaphoreSlotModel() {}
-func (p workerSemaphoreSlotWithPrismaStepRunEqualsUniqueParam) stepRunField()             {}
-
-func (workerSemaphoreSlotWithPrismaStepRunEqualsUniqueParam) unique() {}
-func (workerSemaphoreSlotWithPrismaStepRunEqualsUniqueParam) equals() {}
-
-type WorkerSemaphoreSlotWithPrismaStepRunIDEqualsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	workerSemaphoreSlotModel()
-	stepRunIDField()
-}
-
-type WorkerSemaphoreSlotWithPrismaStepRunIDSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreSlotModel()
-	stepRunIDField()
-}
-
-type workerSemaphoreSlotWithPrismaStepRunIDSetParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreSlotWithPrismaStepRunIDSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreSlotWithPrismaStepRunIDSetParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreSlotWithPrismaStepRunIDSetParam) workerSemaphoreSlotModel() {}
-
-func (p workerSemaphoreSlotWithPrismaStepRunIDSetParam) stepRunIDField() {}
-
-type WorkerSemaphoreSlotWithPrismaStepRunIDWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreSlotModel()
-	stepRunIDField()
-}
-
-type workerSemaphoreSlotWithPrismaStepRunIDEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreSlotWithPrismaStepRunIDEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreSlotWithPrismaStepRunIDEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreSlotWithPrismaStepRunIDEqualsParam) workerSemaphoreSlotModel() {}
-
-func (p workerSemaphoreSlotWithPrismaStepRunIDEqualsParam) stepRunIDField() {}
-
-func (workerSemaphoreSlotWithPrismaStepRunIDSetParam) settable()  {}
-func (workerSemaphoreSlotWithPrismaStepRunIDEqualsParam) equals() {}
-
-type workerSemaphoreSlotWithPrismaStepRunIDEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreSlotWithPrismaStepRunIDEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreSlotWithPrismaStepRunIDEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreSlotWithPrismaStepRunIDEqualsUniqueParam) workerSemaphoreSlotModel() {}
-func (p workerSemaphoreSlotWithPrismaStepRunIDEqualsUniqueParam) stepRunIDField()           {}
-
-func (workerSemaphoreSlotWithPrismaStepRunIDEqualsUniqueParam) unique() {}
-func (workerSemaphoreSlotWithPrismaStepRunIDEqualsUniqueParam) equals() {}
-
-type workerSemaphoreCountActions struct {
-	// client holds the prisma client
-	client *PrismaClient
-}
-
-var workerSemaphoreCountOutput = []builder.Output{
-	{Name: "workerId"},
-	{Name: "count"},
-}
-
-type WorkerSemaphoreCountRelationWith interface {
-	getQuery() builder.Query
-	with()
-	workerSemaphoreCountRelation()
-}
-
-type WorkerSemaphoreCountWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreCountModel()
-}
-
-type workerSemaphoreCountDefaultParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreCountDefaultParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreCountDefaultParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreCountDefaultParam) workerSemaphoreCountModel() {}
-
-type WorkerSemaphoreCountOrderByParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreCountModel()
-}
-
-type workerSemaphoreCountOrderByParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreCountOrderByParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreCountOrderByParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreCountOrderByParam) workerSemaphoreCountModel() {}
-
-type WorkerSemaphoreCountCursorParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreCountModel()
-	isCursor()
-}
-
-type workerSemaphoreCountCursorParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreCountCursorParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreCountCursorParam) isCursor() {}
-
-func (p workerSemaphoreCountCursorParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreCountCursorParam) workerSemaphoreCountModel() {}
-
-type WorkerSemaphoreCountParamUnique interface {
-	field() builder.Field
-	getQuery() builder.Query
-	unique()
-	workerSemaphoreCountModel()
-}
-
-type workerSemaphoreCountParamUnique struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreCountParamUnique) workerSemaphoreCountModel() {}
-
-func (workerSemaphoreCountParamUnique) unique() {}
-
-func (p workerSemaphoreCountParamUnique) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreCountParamUnique) getQuery() builder.Query {
-	return p.query
-}
-
-type WorkerSemaphoreCountEqualsWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	workerSemaphoreCountModel()
-}
-
-type workerSemaphoreCountEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreCountEqualsParam) workerSemaphoreCountModel() {}
-
-func (workerSemaphoreCountEqualsParam) equals() {}
-
-func (p workerSemaphoreCountEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreCountEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-type WorkerSemaphoreCountEqualsUniqueWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	unique()
-	workerSemaphoreCountModel()
-}
-
-type workerSemaphoreCountEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreCountEqualsUniqueParam) workerSemaphoreCountModel() {}
-
-func (workerSemaphoreCountEqualsUniqueParam) unique() {}
-func (workerSemaphoreCountEqualsUniqueParam) equals() {}
-
-func (p workerSemaphoreCountEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreCountEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-type WorkerSemaphoreCountSetParam interface {
-	field() builder.Field
-	settable()
-	workerSemaphoreCountModel()
-}
-
-type workerSemaphoreCountSetParam struct {
-	data builder.Field
-}
-
-func (workerSemaphoreCountSetParam) settable() {}
-
-func (p workerSemaphoreCountSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreCountSetParam) workerSemaphoreCountModel() {}
-
-type WorkerSemaphoreCountWithPrismaWorkerEqualsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	workerSemaphoreCountModel()
-	workerField()
-}
-
-type WorkerSemaphoreCountWithPrismaWorkerSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreCountModel()
-	workerField()
-}
-
-type workerSemaphoreCountWithPrismaWorkerSetParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreCountWithPrismaWorkerSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreCountWithPrismaWorkerSetParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreCountWithPrismaWorkerSetParam) workerSemaphoreCountModel() {}
-
-func (p workerSemaphoreCountWithPrismaWorkerSetParam) workerField() {}
-
-type WorkerSemaphoreCountWithPrismaWorkerWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreCountModel()
-	workerField()
-}
-
-type workerSemaphoreCountWithPrismaWorkerEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreCountWithPrismaWorkerEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreCountWithPrismaWorkerEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreCountWithPrismaWorkerEqualsParam) workerSemaphoreCountModel() {}
-
-func (p workerSemaphoreCountWithPrismaWorkerEqualsParam) workerField() {}
-
-func (workerSemaphoreCountWithPrismaWorkerSetParam) settable()  {}
-func (workerSemaphoreCountWithPrismaWorkerEqualsParam) equals() {}
-
-type workerSemaphoreCountWithPrismaWorkerEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreCountWithPrismaWorkerEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreCountWithPrismaWorkerEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreCountWithPrismaWorkerEqualsUniqueParam) workerSemaphoreCountModel() {}
-func (p workerSemaphoreCountWithPrismaWorkerEqualsUniqueParam) workerField()               {}
-
-func (workerSemaphoreCountWithPrismaWorkerEqualsUniqueParam) unique() {}
-func (workerSemaphoreCountWithPrismaWorkerEqualsUniqueParam) equals() {}
-
-type WorkerSemaphoreCountWithPrismaWorkerIDEqualsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	workerSemaphoreCountModel()
-	workerIDField()
-}
-
-type WorkerSemaphoreCountWithPrismaWorkerIDSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreCountModel()
-	workerIDField()
-}
-
-type workerSemaphoreCountWithPrismaWorkerIDSetParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreCountWithPrismaWorkerIDSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreCountWithPrismaWorkerIDSetParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreCountWithPrismaWorkerIDSetParam) workerSemaphoreCountModel() {}
-
-func (p workerSemaphoreCountWithPrismaWorkerIDSetParam) workerIDField() {}
-
-type WorkerSemaphoreCountWithPrismaWorkerIDWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreCountModel()
-	workerIDField()
-}
-
-type workerSemaphoreCountWithPrismaWorkerIDEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreCountWithPrismaWorkerIDEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreCountWithPrismaWorkerIDEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreCountWithPrismaWorkerIDEqualsParam) workerSemaphoreCountModel() {}
-
-func (p workerSemaphoreCountWithPrismaWorkerIDEqualsParam) workerIDField() {}
-
-func (workerSemaphoreCountWithPrismaWorkerIDSetParam) settable()  {}
-func (workerSemaphoreCountWithPrismaWorkerIDEqualsParam) equals() {}
-
-type workerSemaphoreCountWithPrismaWorkerIDEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreCountWithPrismaWorkerIDEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreCountWithPrismaWorkerIDEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreCountWithPrismaWorkerIDEqualsUniqueParam) workerSemaphoreCountModel() {}
-func (p workerSemaphoreCountWithPrismaWorkerIDEqualsUniqueParam) workerIDField()             {}
-
-func (workerSemaphoreCountWithPrismaWorkerIDEqualsUniqueParam) unique() {}
-func (workerSemaphoreCountWithPrismaWorkerIDEqualsUniqueParam) equals() {}
-
-type WorkerSemaphoreCountWithPrismaCountEqualsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	workerSemaphoreCountModel()
-	countField()
-}
-
-type WorkerSemaphoreCountWithPrismaCountSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreCountModel()
-	countField()
-}
-
-type workerSemaphoreCountWithPrismaCountSetParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreCountWithPrismaCountSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreCountWithPrismaCountSetParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreCountWithPrismaCountSetParam) workerSemaphoreCountModel() {}
-
-func (p workerSemaphoreCountWithPrismaCountSetParam) countField() {}
-
-type WorkerSemaphoreCountWithPrismaCountWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	workerSemaphoreCountModel()
-	countField()
-}
-
-type workerSemaphoreCountWithPrismaCountEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreCountWithPrismaCountEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreCountWithPrismaCountEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreCountWithPrismaCountEqualsParam) workerSemaphoreCountModel() {}
-
-func (p workerSemaphoreCountWithPrismaCountEqualsParam) countField() {}
-
-func (workerSemaphoreCountWithPrismaCountSetParam) settable()  {}
-func (workerSemaphoreCountWithPrismaCountEqualsParam) equals() {}
-
-type workerSemaphoreCountWithPrismaCountEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p workerSemaphoreCountWithPrismaCountEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p workerSemaphoreCountWithPrismaCountEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreCountWithPrismaCountEqualsUniqueParam) workerSemaphoreCountModel() {}
-func (p workerSemaphoreCountWithPrismaCountEqualsUniqueParam) countField()                {}
-
-func (workerSemaphoreCountWithPrismaCountEqualsUniqueParam) unique() {}
-func (workerSemaphoreCountWithPrismaCountEqualsUniqueParam) equals() {}
 
 type workerAssignEventActions struct {
 	// client holds the prisma client
@@ -270881,6 +267242,78 @@ func (r timeoutQueueItemCreateOne) Tx() TimeoutQueueItemUniqueTxResult {
 	return v
 }
 
+// Creates a single semaphoreQueueItem.
+func (r semaphoreQueueItemActions) CreateOne(
+	_stepRunID SemaphoreQueueItemWithPrismaStepRunIDSetParam,
+	_workerID SemaphoreQueueItemWithPrismaWorkerIDSetParam,
+	_tenantID SemaphoreQueueItemWithPrismaTenantIDSetParam,
+
+	optional ...SemaphoreQueueItemSetParam,
+) semaphoreQueueItemCreateOne {
+	var v semaphoreQueueItemCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "SemaphoreQueueItem"
+	v.query.Outputs = semaphoreQueueItemOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _stepRunID.field())
+	fields = append(fields, _workerID.field())
+	fields = append(fields, _tenantID.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r semaphoreQueueItemCreateOne) With(params ...SemaphoreQueueItemRelationWith) semaphoreQueueItemCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type semaphoreQueueItemCreateOne struct {
+	query builder.Query
+}
+
+func (p semaphoreQueueItemCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p semaphoreQueueItemCreateOne) semaphoreQueueItemModel() {}
+
+func (r semaphoreQueueItemCreateOne) Exec(ctx context.Context) (*SemaphoreQueueItemModel, error) {
+	var v SemaphoreQueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r semaphoreQueueItemCreateOne) Tx() SemaphoreQueueItemUniqueTxResult {
+	v := newSemaphoreQueueItemUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 // Creates a single stepRunEvent.
 func (r stepRunEventActions) CreateOne(
 	_stepRun StepRunEventWithPrismaStepRunSetParam,
@@ -271290,214 +267723,6 @@ func (r workerCreateOne) Exec(ctx context.Context) (*WorkerModel, error) {
 
 func (r workerCreateOne) Tx() WorkerUniqueTxResult {
 	v := newWorkerUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-// Creates a single workerSemaphore.
-func (r workerSemaphoreActions) CreateOne(
-	_worker WorkerSemaphoreWithPrismaWorkerSetParam,
-	_slots WorkerSemaphoreWithPrismaSlotsSetParam,
-
-	optional ...WorkerSemaphoreSetParam,
-) workerSemaphoreCreateOne {
-	var v workerSemaphoreCreateOne
-	v.query = builder.NewQuery()
-	v.query.Engine = r.client
-
-	v.query.Operation = "mutation"
-	v.query.Method = "createOne"
-	v.query.Model = "WorkerSemaphore"
-	v.query.Outputs = workerSemaphoreOutput
-
-	var fields []builder.Field
-
-	fields = append(fields, _worker.field())
-	fields = append(fields, _slots.field())
-
-	for _, q := range optional {
-		fields = append(fields, q.field())
-	}
-
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-func (r workerSemaphoreCreateOne) With(params ...WorkerSemaphoreRelationWith) workerSemaphoreCreateOne {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-type workerSemaphoreCreateOne struct {
-	query builder.Query
-}
-
-func (p workerSemaphoreCreateOne) ExtractQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreCreateOne) workerSemaphoreModel() {}
-
-func (r workerSemaphoreCreateOne) Exec(ctx context.Context) (*WorkerSemaphoreModel, error) {
-	var v WorkerSemaphoreModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreCreateOne) Tx() WorkerSemaphoreUniqueTxResult {
-	v := newWorkerSemaphoreUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-// Creates a single workerSemaphoreSlot.
-func (r workerSemaphoreSlotActions) CreateOne(
-	_worker WorkerSemaphoreSlotWithPrismaWorkerSetParam,
-
-	optional ...WorkerSemaphoreSlotSetParam,
-) workerSemaphoreSlotCreateOne {
-	var v workerSemaphoreSlotCreateOne
-	v.query = builder.NewQuery()
-	v.query.Engine = r.client
-
-	v.query.Operation = "mutation"
-	v.query.Method = "createOne"
-	v.query.Model = "WorkerSemaphoreSlot"
-	v.query.Outputs = workerSemaphoreSlotOutput
-
-	var fields []builder.Field
-
-	fields = append(fields, _worker.field())
-
-	for _, q := range optional {
-		fields = append(fields, q.field())
-	}
-
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-func (r workerSemaphoreSlotCreateOne) With(params ...WorkerSemaphoreSlotRelationWith) workerSemaphoreSlotCreateOne {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-type workerSemaphoreSlotCreateOne struct {
-	query builder.Query
-}
-
-func (p workerSemaphoreSlotCreateOne) ExtractQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreSlotCreateOne) workerSemaphoreSlotModel() {}
-
-func (r workerSemaphoreSlotCreateOne) Exec(ctx context.Context) (*WorkerSemaphoreSlotModel, error) {
-	var v WorkerSemaphoreSlotModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreSlotCreateOne) Tx() WorkerSemaphoreSlotUniqueTxResult {
-	v := newWorkerSemaphoreSlotUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-// Creates a single workerSemaphoreCount.
-func (r workerSemaphoreCountActions) CreateOne(
-	_worker WorkerSemaphoreCountWithPrismaWorkerSetParam,
-	_count WorkerSemaphoreCountWithPrismaCountSetParam,
-
-	optional ...WorkerSemaphoreCountSetParam,
-) workerSemaphoreCountCreateOne {
-	var v workerSemaphoreCountCreateOne
-	v.query = builder.NewQuery()
-	v.query.Engine = r.client
-
-	v.query.Operation = "mutation"
-	v.query.Method = "createOne"
-	v.query.Model = "WorkerSemaphoreCount"
-	v.query.Outputs = workerSemaphoreCountOutput
-
-	var fields []builder.Field
-
-	fields = append(fields, _worker.field())
-	fields = append(fields, _count.field())
-
-	for _, q := range optional {
-		fields = append(fields, q.field())
-	}
-
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-func (r workerSemaphoreCountCreateOne) With(params ...WorkerSemaphoreCountRelationWith) workerSemaphoreCountCreateOne {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-type workerSemaphoreCountCreateOne struct {
-	query builder.Query
-}
-
-func (p workerSemaphoreCountCreateOne) ExtractQuery() builder.Query {
-	return p.query
-}
-
-func (p workerSemaphoreCountCreateOne) workerSemaphoreCountModel() {}
-
-func (r workerSemaphoreCountCreateOne) Exec(ctx context.Context) (*WorkerSemaphoreCountModel, error) {
-	var v WorkerSemaphoreCountModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreCountCreateOne) Tx() WorkerSemaphoreCountUniqueTxResult {
-	v := newWorkerSemaphoreCountUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -381052,560 +377277,6 @@ func (r stepRunToTickerDeleteMany) Tx() StepRunManyTxResult {
 	return v
 }
 
-type stepRunToSemaphoreSlotFindUnique struct {
-	query builder.Query
-}
-
-func (r stepRunToSemaphoreSlotFindUnique) getQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunToSemaphoreSlotFindUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunToSemaphoreSlotFindUnique) with()            {}
-func (r stepRunToSemaphoreSlotFindUnique) stepRunModel()    {}
-func (r stepRunToSemaphoreSlotFindUnique) stepRunRelation() {}
-
-func (r stepRunToSemaphoreSlotFindUnique) With(params ...WorkerSemaphoreSlotRelationWith) stepRunToSemaphoreSlotFindUnique {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r stepRunToSemaphoreSlotFindUnique) Select(params ...stepRunPrismaFields) stepRunToSemaphoreSlotFindUnique {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRunToSemaphoreSlotFindUnique) Omit(params ...stepRunPrismaFields) stepRunToSemaphoreSlotFindUnique {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range stepRunOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRunToSemaphoreSlotFindUnique) Exec(ctx context.Context) (
-	*StepRunModel,
-	error,
-) {
-	var v *StepRunModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r stepRunToSemaphoreSlotFindUnique) ExecInner(ctx context.Context) (
-	*InnerStepRun,
-	error,
-) {
-	var v *InnerStepRun
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r stepRunToSemaphoreSlotFindUnique) Update(params ...StepRunSetParam) stepRunToSemaphoreSlotUpdateUnique {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateOne"
-	r.query.Model = "StepRun"
-
-	var v stepRunToSemaphoreSlotUpdateUnique
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type stepRunToSemaphoreSlotUpdateUnique struct {
-	query builder.Query
-}
-
-func (r stepRunToSemaphoreSlotUpdateUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunToSemaphoreSlotUpdateUnique) stepRunModel() {}
-
-func (r stepRunToSemaphoreSlotUpdateUnique) Exec(ctx context.Context) (*StepRunModel, error) {
-	var v StepRunModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r stepRunToSemaphoreSlotUpdateUnique) Tx() StepRunUniqueTxResult {
-	v := newStepRunUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r stepRunToSemaphoreSlotFindUnique) Delete() stepRunToSemaphoreSlotDeleteUnique {
-	var v stepRunToSemaphoreSlotDeleteUnique
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteOne"
-	v.query.Model = "StepRun"
-
-	return v
-}
-
-type stepRunToSemaphoreSlotDeleteUnique struct {
-	query builder.Query
-}
-
-func (r stepRunToSemaphoreSlotDeleteUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p stepRunToSemaphoreSlotDeleteUnique) stepRunModel() {}
-
-func (r stepRunToSemaphoreSlotDeleteUnique) Exec(ctx context.Context) (*StepRunModel, error) {
-	var v StepRunModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r stepRunToSemaphoreSlotDeleteUnique) Tx() StepRunUniqueTxResult {
-	v := newStepRunUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type stepRunToSemaphoreSlotFindFirst struct {
-	query builder.Query
-}
-
-func (r stepRunToSemaphoreSlotFindFirst) getQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunToSemaphoreSlotFindFirst) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunToSemaphoreSlotFindFirst) with()            {}
-func (r stepRunToSemaphoreSlotFindFirst) stepRunModel()    {}
-func (r stepRunToSemaphoreSlotFindFirst) stepRunRelation() {}
-
-func (r stepRunToSemaphoreSlotFindFirst) With(params ...WorkerSemaphoreSlotRelationWith) stepRunToSemaphoreSlotFindFirst {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r stepRunToSemaphoreSlotFindFirst) Select(params ...stepRunPrismaFields) stepRunToSemaphoreSlotFindFirst {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRunToSemaphoreSlotFindFirst) Omit(params ...stepRunPrismaFields) stepRunToSemaphoreSlotFindFirst {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range stepRunOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRunToSemaphoreSlotFindFirst) OrderBy(params ...WorkerSemaphoreSlotOrderByParam) stepRunToSemaphoreSlotFindFirst {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r stepRunToSemaphoreSlotFindFirst) Skip(count int) stepRunToSemaphoreSlotFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r stepRunToSemaphoreSlotFindFirst) Take(count int) stepRunToSemaphoreSlotFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r stepRunToSemaphoreSlotFindFirst) Cursor(cursor StepRunCursorParam) stepRunToSemaphoreSlotFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r stepRunToSemaphoreSlotFindFirst) Exec(ctx context.Context) (
-	*StepRunModel,
-	error,
-) {
-	var v *StepRunModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r stepRunToSemaphoreSlotFindFirst) ExecInner(ctx context.Context) (
-	*InnerStepRun,
-	error,
-) {
-	var v *InnerStepRun
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-type stepRunToSemaphoreSlotFindMany struct {
-	query builder.Query
-}
-
-func (r stepRunToSemaphoreSlotFindMany) getQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunToSemaphoreSlotFindMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunToSemaphoreSlotFindMany) with()            {}
-func (r stepRunToSemaphoreSlotFindMany) stepRunModel()    {}
-func (r stepRunToSemaphoreSlotFindMany) stepRunRelation() {}
-
-func (r stepRunToSemaphoreSlotFindMany) With(params ...WorkerSemaphoreSlotRelationWith) stepRunToSemaphoreSlotFindMany {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r stepRunToSemaphoreSlotFindMany) Select(params ...stepRunPrismaFields) stepRunToSemaphoreSlotFindMany {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRunToSemaphoreSlotFindMany) Omit(params ...stepRunPrismaFields) stepRunToSemaphoreSlotFindMany {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range stepRunOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRunToSemaphoreSlotFindMany) OrderBy(params ...WorkerSemaphoreSlotOrderByParam) stepRunToSemaphoreSlotFindMany {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r stepRunToSemaphoreSlotFindMany) Skip(count int) stepRunToSemaphoreSlotFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r stepRunToSemaphoreSlotFindMany) Take(count int) stepRunToSemaphoreSlotFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r stepRunToSemaphoreSlotFindMany) Cursor(cursor StepRunCursorParam) stepRunToSemaphoreSlotFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r stepRunToSemaphoreSlotFindMany) Exec(ctx context.Context) (
-	[]StepRunModel,
-	error,
-) {
-	var v []StepRunModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r stepRunToSemaphoreSlotFindMany) ExecInner(ctx context.Context) (
-	[]InnerStepRun,
-	error,
-) {
-	var v []InnerStepRun
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r stepRunToSemaphoreSlotFindMany) Update(params ...StepRunSetParam) stepRunToSemaphoreSlotUpdateMany {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateMany"
-	r.query.Model = "StepRun"
-
-	r.query.Outputs = countOutput
-
-	var v stepRunToSemaphoreSlotUpdateMany
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type stepRunToSemaphoreSlotUpdateMany struct {
-	query builder.Query
-}
-
-func (r stepRunToSemaphoreSlotUpdateMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunToSemaphoreSlotUpdateMany) stepRunModel() {}
-
-func (r stepRunToSemaphoreSlotUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r stepRunToSemaphoreSlotUpdateMany) Tx() StepRunManyTxResult {
-	v := newStepRunManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r stepRunToSemaphoreSlotFindMany) Delete() stepRunToSemaphoreSlotDeleteMany {
-	var v stepRunToSemaphoreSlotDeleteMany
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteMany"
-	v.query.Model = "StepRun"
-
-	v.query.Outputs = countOutput
-
-	return v
-}
-
-type stepRunToSemaphoreSlotDeleteMany struct {
-	query builder.Query
-}
-
-func (r stepRunToSemaphoreSlotDeleteMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p stepRunToSemaphoreSlotDeleteMany) stepRunModel() {}
-
-func (r stepRunToSemaphoreSlotDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r stepRunToSemaphoreSlotDeleteMany) Tx() StepRunManyTxResult {
-	v := newStepRunManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
 type stepRunToArchivedResultsFindUnique struct {
 	query builder.Query
 }
@@ -388175,6 +383846,656 @@ func (r timeoutQueueItemDeleteMany) Exec(ctx context.Context) (*BatchResult, err
 
 func (r timeoutQueueItemDeleteMany) Tx() TimeoutQueueItemManyTxResult {
 	v := newTimeoutQueueItemManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type semaphoreQueueItemFindUnique struct {
+	query builder.Query
+}
+
+func (r semaphoreQueueItemFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r semaphoreQueueItemFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r semaphoreQueueItemFindUnique) with()                       {}
+func (r semaphoreQueueItemFindUnique) semaphoreQueueItemModel()    {}
+func (r semaphoreQueueItemFindUnique) semaphoreQueueItemRelation() {}
+
+func (r semaphoreQueueItemActions) FindUnique(
+	params SemaphoreQueueItemEqualsUniqueWhereParam,
+) semaphoreQueueItemFindUnique {
+	var v semaphoreQueueItemFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "SemaphoreQueueItem"
+	v.query.Outputs = semaphoreQueueItemOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r semaphoreQueueItemFindUnique) With(params ...SemaphoreQueueItemRelationWith) semaphoreQueueItemFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r semaphoreQueueItemFindUnique) Select(params ...semaphoreQueueItemPrismaFields) semaphoreQueueItemFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r semaphoreQueueItemFindUnique) Omit(params ...semaphoreQueueItemPrismaFields) semaphoreQueueItemFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range semaphoreQueueItemOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r semaphoreQueueItemFindUnique) Exec(ctx context.Context) (
+	*SemaphoreQueueItemModel,
+	error,
+) {
+	var v *SemaphoreQueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r semaphoreQueueItemFindUnique) ExecInner(ctx context.Context) (
+	*InnerSemaphoreQueueItem,
+	error,
+) {
+	var v *InnerSemaphoreQueueItem
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r semaphoreQueueItemFindUnique) Update(params ...SemaphoreQueueItemSetParam) semaphoreQueueItemUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "SemaphoreQueueItem"
+
+	var v semaphoreQueueItemUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type semaphoreQueueItemUpdateUnique struct {
+	query builder.Query
+}
+
+func (r semaphoreQueueItemUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r semaphoreQueueItemUpdateUnique) semaphoreQueueItemModel() {}
+
+func (r semaphoreQueueItemUpdateUnique) Exec(ctx context.Context) (*SemaphoreQueueItemModel, error) {
+	var v SemaphoreQueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r semaphoreQueueItemUpdateUnique) Tx() SemaphoreQueueItemUniqueTxResult {
+	v := newSemaphoreQueueItemUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r semaphoreQueueItemFindUnique) Delete() semaphoreQueueItemDeleteUnique {
+	var v semaphoreQueueItemDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "SemaphoreQueueItem"
+
+	return v
+}
+
+type semaphoreQueueItemDeleteUnique struct {
+	query builder.Query
+}
+
+func (r semaphoreQueueItemDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p semaphoreQueueItemDeleteUnique) semaphoreQueueItemModel() {}
+
+func (r semaphoreQueueItemDeleteUnique) Exec(ctx context.Context) (*SemaphoreQueueItemModel, error) {
+	var v SemaphoreQueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r semaphoreQueueItemDeleteUnique) Tx() SemaphoreQueueItemUniqueTxResult {
+	v := newSemaphoreQueueItemUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type semaphoreQueueItemFindFirst struct {
+	query builder.Query
+}
+
+func (r semaphoreQueueItemFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r semaphoreQueueItemFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r semaphoreQueueItemFindFirst) with()                       {}
+func (r semaphoreQueueItemFindFirst) semaphoreQueueItemModel()    {}
+func (r semaphoreQueueItemFindFirst) semaphoreQueueItemRelation() {}
+
+func (r semaphoreQueueItemActions) FindFirst(
+	params ...SemaphoreQueueItemWhereParam,
+) semaphoreQueueItemFindFirst {
+	var v semaphoreQueueItemFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "SemaphoreQueueItem"
+	v.query.Outputs = semaphoreQueueItemOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r semaphoreQueueItemFindFirst) With(params ...SemaphoreQueueItemRelationWith) semaphoreQueueItemFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r semaphoreQueueItemFindFirst) Select(params ...semaphoreQueueItemPrismaFields) semaphoreQueueItemFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r semaphoreQueueItemFindFirst) Omit(params ...semaphoreQueueItemPrismaFields) semaphoreQueueItemFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range semaphoreQueueItemOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r semaphoreQueueItemFindFirst) OrderBy(params ...SemaphoreQueueItemOrderByParam) semaphoreQueueItemFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r semaphoreQueueItemFindFirst) Skip(count int) semaphoreQueueItemFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r semaphoreQueueItemFindFirst) Take(count int) semaphoreQueueItemFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r semaphoreQueueItemFindFirst) Cursor(cursor SemaphoreQueueItemCursorParam) semaphoreQueueItemFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r semaphoreQueueItemFindFirst) Exec(ctx context.Context) (
+	*SemaphoreQueueItemModel,
+	error,
+) {
+	var v *SemaphoreQueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r semaphoreQueueItemFindFirst) ExecInner(ctx context.Context) (
+	*InnerSemaphoreQueueItem,
+	error,
+) {
+	var v *InnerSemaphoreQueueItem
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type semaphoreQueueItemFindMany struct {
+	query builder.Query
+}
+
+func (r semaphoreQueueItemFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r semaphoreQueueItemFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r semaphoreQueueItemFindMany) with()                       {}
+func (r semaphoreQueueItemFindMany) semaphoreQueueItemModel()    {}
+func (r semaphoreQueueItemFindMany) semaphoreQueueItemRelation() {}
+
+func (r semaphoreQueueItemActions) FindMany(
+	params ...SemaphoreQueueItemWhereParam,
+) semaphoreQueueItemFindMany {
+	var v semaphoreQueueItemFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "SemaphoreQueueItem"
+	v.query.Outputs = semaphoreQueueItemOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r semaphoreQueueItemFindMany) With(params ...SemaphoreQueueItemRelationWith) semaphoreQueueItemFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r semaphoreQueueItemFindMany) Select(params ...semaphoreQueueItemPrismaFields) semaphoreQueueItemFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r semaphoreQueueItemFindMany) Omit(params ...semaphoreQueueItemPrismaFields) semaphoreQueueItemFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range semaphoreQueueItemOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r semaphoreQueueItemFindMany) OrderBy(params ...SemaphoreQueueItemOrderByParam) semaphoreQueueItemFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r semaphoreQueueItemFindMany) Skip(count int) semaphoreQueueItemFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r semaphoreQueueItemFindMany) Take(count int) semaphoreQueueItemFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r semaphoreQueueItemFindMany) Cursor(cursor SemaphoreQueueItemCursorParam) semaphoreQueueItemFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r semaphoreQueueItemFindMany) Exec(ctx context.Context) (
+	[]SemaphoreQueueItemModel,
+	error,
+) {
+	var v []SemaphoreQueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r semaphoreQueueItemFindMany) ExecInner(ctx context.Context) (
+	[]InnerSemaphoreQueueItem,
+	error,
+) {
+	var v []InnerSemaphoreQueueItem
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r semaphoreQueueItemFindMany) Update(params ...SemaphoreQueueItemSetParam) semaphoreQueueItemUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "SemaphoreQueueItem"
+
+	r.query.Outputs = countOutput
+
+	var v semaphoreQueueItemUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type semaphoreQueueItemUpdateMany struct {
+	query builder.Query
+}
+
+func (r semaphoreQueueItemUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r semaphoreQueueItemUpdateMany) semaphoreQueueItemModel() {}
+
+func (r semaphoreQueueItemUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r semaphoreQueueItemUpdateMany) Tx() SemaphoreQueueItemManyTxResult {
+	v := newSemaphoreQueueItemManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r semaphoreQueueItemFindMany) Delete() semaphoreQueueItemDeleteMany {
+	var v semaphoreQueueItemDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "SemaphoreQueueItem"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type semaphoreQueueItemDeleteMany struct {
+	query builder.Query
+}
+
+func (r semaphoreQueueItemDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p semaphoreQueueItemDeleteMany) semaphoreQueueItemModel() {}
+
+func (r semaphoreQueueItemDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r semaphoreQueueItemDeleteMany) Tx() SemaphoreQueueItemManyTxResult {
+	v := newSemaphoreQueueItemManyTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -400848,1114 +397169,6 @@ func (r workerToGroupKeyRunsDeleteMany) Tx() WorkerManyTxResult {
 	return v
 }
 
-type workerToSlotsFindUnique struct {
-	query builder.Query
-}
-
-func (r workerToSlotsFindUnique) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSlotsFindUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSlotsFindUnique) with()           {}
-func (r workerToSlotsFindUnique) workerModel()    {}
-func (r workerToSlotsFindUnique) workerRelation() {}
-
-func (r workerToSlotsFindUnique) With(params ...WorkerSemaphoreSlotRelationWith) workerToSlotsFindUnique {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerToSlotsFindUnique) Select(params ...workerPrismaFields) workerToSlotsFindUnique {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerToSlotsFindUnique) Omit(params ...workerPrismaFields) workerToSlotsFindUnique {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerToSlotsFindUnique) Exec(ctx context.Context) (
-	*WorkerModel,
-	error,
-) {
-	var v *WorkerModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerToSlotsFindUnique) ExecInner(ctx context.Context) (
-	*InnerWorker,
-	error,
-) {
-	var v *InnerWorker
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerToSlotsFindUnique) Update(params ...WorkerSetParam) workerToSlotsUpdateUnique {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateOne"
-	r.query.Model = "Worker"
-
-	var v workerToSlotsUpdateUnique
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type workerToSlotsUpdateUnique struct {
-	query builder.Query
-}
-
-func (r workerToSlotsUpdateUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSlotsUpdateUnique) workerModel() {}
-
-func (r workerToSlotsUpdateUnique) Exec(ctx context.Context) (*WorkerModel, error) {
-	var v WorkerModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerToSlotsUpdateUnique) Tx() WorkerUniqueTxResult {
-	v := newWorkerUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r workerToSlotsFindUnique) Delete() workerToSlotsDeleteUnique {
-	var v workerToSlotsDeleteUnique
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteOne"
-	v.query.Model = "Worker"
-
-	return v
-}
-
-type workerToSlotsDeleteUnique struct {
-	query builder.Query
-}
-
-func (r workerToSlotsDeleteUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p workerToSlotsDeleteUnique) workerModel() {}
-
-func (r workerToSlotsDeleteUnique) Exec(ctx context.Context) (*WorkerModel, error) {
-	var v WorkerModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerToSlotsDeleteUnique) Tx() WorkerUniqueTxResult {
-	v := newWorkerUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type workerToSlotsFindFirst struct {
-	query builder.Query
-}
-
-func (r workerToSlotsFindFirst) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSlotsFindFirst) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSlotsFindFirst) with()           {}
-func (r workerToSlotsFindFirst) workerModel()    {}
-func (r workerToSlotsFindFirst) workerRelation() {}
-
-func (r workerToSlotsFindFirst) With(params ...WorkerSemaphoreSlotRelationWith) workerToSlotsFindFirst {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerToSlotsFindFirst) Select(params ...workerPrismaFields) workerToSlotsFindFirst {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerToSlotsFindFirst) Omit(params ...workerPrismaFields) workerToSlotsFindFirst {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerToSlotsFindFirst) OrderBy(params ...WorkerSemaphoreSlotOrderByParam) workerToSlotsFindFirst {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r workerToSlotsFindFirst) Skip(count int) workerToSlotsFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerToSlotsFindFirst) Take(count int) workerToSlotsFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerToSlotsFindFirst) Cursor(cursor WorkerCursorParam) workerToSlotsFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r workerToSlotsFindFirst) Exec(ctx context.Context) (
-	*WorkerModel,
-	error,
-) {
-	var v *WorkerModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerToSlotsFindFirst) ExecInner(ctx context.Context) (
-	*InnerWorker,
-	error,
-) {
-	var v *InnerWorker
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-type workerToSlotsFindMany struct {
-	query builder.Query
-}
-
-func (r workerToSlotsFindMany) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSlotsFindMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSlotsFindMany) with()           {}
-func (r workerToSlotsFindMany) workerModel()    {}
-func (r workerToSlotsFindMany) workerRelation() {}
-
-func (r workerToSlotsFindMany) With(params ...WorkerSemaphoreSlotRelationWith) workerToSlotsFindMany {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerToSlotsFindMany) Select(params ...workerPrismaFields) workerToSlotsFindMany {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerToSlotsFindMany) Omit(params ...workerPrismaFields) workerToSlotsFindMany {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerToSlotsFindMany) OrderBy(params ...WorkerSemaphoreSlotOrderByParam) workerToSlotsFindMany {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r workerToSlotsFindMany) Skip(count int) workerToSlotsFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerToSlotsFindMany) Take(count int) workerToSlotsFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerToSlotsFindMany) Cursor(cursor WorkerCursorParam) workerToSlotsFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r workerToSlotsFindMany) Exec(ctx context.Context) (
-	[]WorkerModel,
-	error,
-) {
-	var v []WorkerModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r workerToSlotsFindMany) ExecInner(ctx context.Context) (
-	[]InnerWorker,
-	error,
-) {
-	var v []InnerWorker
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r workerToSlotsFindMany) Update(params ...WorkerSetParam) workerToSlotsUpdateMany {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateMany"
-	r.query.Model = "Worker"
-
-	r.query.Outputs = countOutput
-
-	var v workerToSlotsUpdateMany
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type workerToSlotsUpdateMany struct {
-	query builder.Query
-}
-
-func (r workerToSlotsUpdateMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSlotsUpdateMany) workerModel() {}
-
-func (r workerToSlotsUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerToSlotsUpdateMany) Tx() WorkerManyTxResult {
-	v := newWorkerManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r workerToSlotsFindMany) Delete() workerToSlotsDeleteMany {
-	var v workerToSlotsDeleteMany
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteMany"
-	v.query.Model = "Worker"
-
-	v.query.Outputs = countOutput
-
-	return v
-}
-
-type workerToSlotsDeleteMany struct {
-	query builder.Query
-}
-
-func (r workerToSlotsDeleteMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p workerToSlotsDeleteMany) workerModel() {}
-
-func (r workerToSlotsDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerToSlotsDeleteMany) Tx() WorkerManyTxResult {
-	v := newWorkerManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type workerToSemaphoreCountFindUnique struct {
-	query builder.Query
-}
-
-func (r workerToSemaphoreCountFindUnique) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSemaphoreCountFindUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSemaphoreCountFindUnique) with()           {}
-func (r workerToSemaphoreCountFindUnique) workerModel()    {}
-func (r workerToSemaphoreCountFindUnique) workerRelation() {}
-
-func (r workerToSemaphoreCountFindUnique) With(params ...WorkerSemaphoreCountRelationWith) workerToSemaphoreCountFindUnique {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerToSemaphoreCountFindUnique) Select(params ...workerPrismaFields) workerToSemaphoreCountFindUnique {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerToSemaphoreCountFindUnique) Omit(params ...workerPrismaFields) workerToSemaphoreCountFindUnique {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerToSemaphoreCountFindUnique) Exec(ctx context.Context) (
-	*WorkerModel,
-	error,
-) {
-	var v *WorkerModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerToSemaphoreCountFindUnique) ExecInner(ctx context.Context) (
-	*InnerWorker,
-	error,
-) {
-	var v *InnerWorker
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerToSemaphoreCountFindUnique) Update(params ...WorkerSetParam) workerToSemaphoreCountUpdateUnique {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateOne"
-	r.query.Model = "Worker"
-
-	var v workerToSemaphoreCountUpdateUnique
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type workerToSemaphoreCountUpdateUnique struct {
-	query builder.Query
-}
-
-func (r workerToSemaphoreCountUpdateUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSemaphoreCountUpdateUnique) workerModel() {}
-
-func (r workerToSemaphoreCountUpdateUnique) Exec(ctx context.Context) (*WorkerModel, error) {
-	var v WorkerModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerToSemaphoreCountUpdateUnique) Tx() WorkerUniqueTxResult {
-	v := newWorkerUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r workerToSemaphoreCountFindUnique) Delete() workerToSemaphoreCountDeleteUnique {
-	var v workerToSemaphoreCountDeleteUnique
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteOne"
-	v.query.Model = "Worker"
-
-	return v
-}
-
-type workerToSemaphoreCountDeleteUnique struct {
-	query builder.Query
-}
-
-func (r workerToSemaphoreCountDeleteUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p workerToSemaphoreCountDeleteUnique) workerModel() {}
-
-func (r workerToSemaphoreCountDeleteUnique) Exec(ctx context.Context) (*WorkerModel, error) {
-	var v WorkerModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerToSemaphoreCountDeleteUnique) Tx() WorkerUniqueTxResult {
-	v := newWorkerUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type workerToSemaphoreCountFindFirst struct {
-	query builder.Query
-}
-
-func (r workerToSemaphoreCountFindFirst) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSemaphoreCountFindFirst) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSemaphoreCountFindFirst) with()           {}
-func (r workerToSemaphoreCountFindFirst) workerModel()    {}
-func (r workerToSemaphoreCountFindFirst) workerRelation() {}
-
-func (r workerToSemaphoreCountFindFirst) With(params ...WorkerSemaphoreCountRelationWith) workerToSemaphoreCountFindFirst {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerToSemaphoreCountFindFirst) Select(params ...workerPrismaFields) workerToSemaphoreCountFindFirst {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerToSemaphoreCountFindFirst) Omit(params ...workerPrismaFields) workerToSemaphoreCountFindFirst {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerToSemaphoreCountFindFirst) OrderBy(params ...WorkerSemaphoreCountOrderByParam) workerToSemaphoreCountFindFirst {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r workerToSemaphoreCountFindFirst) Skip(count int) workerToSemaphoreCountFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerToSemaphoreCountFindFirst) Take(count int) workerToSemaphoreCountFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerToSemaphoreCountFindFirst) Cursor(cursor WorkerCursorParam) workerToSemaphoreCountFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r workerToSemaphoreCountFindFirst) Exec(ctx context.Context) (
-	*WorkerModel,
-	error,
-) {
-	var v *WorkerModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerToSemaphoreCountFindFirst) ExecInner(ctx context.Context) (
-	*InnerWorker,
-	error,
-) {
-	var v *InnerWorker
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-type workerToSemaphoreCountFindMany struct {
-	query builder.Query
-}
-
-func (r workerToSemaphoreCountFindMany) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSemaphoreCountFindMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSemaphoreCountFindMany) with()           {}
-func (r workerToSemaphoreCountFindMany) workerModel()    {}
-func (r workerToSemaphoreCountFindMany) workerRelation() {}
-
-func (r workerToSemaphoreCountFindMany) With(params ...WorkerSemaphoreCountRelationWith) workerToSemaphoreCountFindMany {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerToSemaphoreCountFindMany) Select(params ...workerPrismaFields) workerToSemaphoreCountFindMany {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerToSemaphoreCountFindMany) Omit(params ...workerPrismaFields) workerToSemaphoreCountFindMany {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerToSemaphoreCountFindMany) OrderBy(params ...WorkerSemaphoreCountOrderByParam) workerToSemaphoreCountFindMany {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r workerToSemaphoreCountFindMany) Skip(count int) workerToSemaphoreCountFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerToSemaphoreCountFindMany) Take(count int) workerToSemaphoreCountFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerToSemaphoreCountFindMany) Cursor(cursor WorkerCursorParam) workerToSemaphoreCountFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r workerToSemaphoreCountFindMany) Exec(ctx context.Context) (
-	[]WorkerModel,
-	error,
-) {
-	var v []WorkerModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r workerToSemaphoreCountFindMany) ExecInner(ctx context.Context) (
-	[]InnerWorker,
-	error,
-) {
-	var v []InnerWorker
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r workerToSemaphoreCountFindMany) Update(params ...WorkerSetParam) workerToSemaphoreCountUpdateMany {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateMany"
-	r.query.Model = "Worker"
-
-	r.query.Outputs = countOutput
-
-	var v workerToSemaphoreCountUpdateMany
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type workerToSemaphoreCountUpdateMany struct {
-	query builder.Query
-}
-
-func (r workerToSemaphoreCountUpdateMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSemaphoreCountUpdateMany) workerModel() {}
-
-func (r workerToSemaphoreCountUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerToSemaphoreCountUpdateMany) Tx() WorkerManyTxResult {
-	v := newWorkerManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r workerToSemaphoreCountFindMany) Delete() workerToSemaphoreCountDeleteMany {
-	var v workerToSemaphoreCountDeleteMany
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteMany"
-	v.query.Model = "Worker"
-
-	v.query.Outputs = countOutput
-
-	return v
-}
-
-type workerToSemaphoreCountDeleteMany struct {
-	query builder.Query
-}
-
-func (r workerToSemaphoreCountDeleteMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p workerToSemaphoreCountDeleteMany) workerModel() {}
-
-func (r workerToSemaphoreCountDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerToSemaphoreCountDeleteMany) Tx() WorkerManyTxResult {
-	v := newWorkerManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
 type workerToAssignedEventsFindUnique struct {
 	query builder.Query
 }
@@ -403064,560 +398277,6 @@ func (r workerToWebhookDeleteMany) Tx() WorkerManyTxResult {
 	return v
 }
 
-type workerToSemaphoreFindUnique struct {
-	query builder.Query
-}
-
-func (r workerToSemaphoreFindUnique) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSemaphoreFindUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSemaphoreFindUnique) with()           {}
-func (r workerToSemaphoreFindUnique) workerModel()    {}
-func (r workerToSemaphoreFindUnique) workerRelation() {}
-
-func (r workerToSemaphoreFindUnique) With(params ...WorkerSemaphoreRelationWith) workerToSemaphoreFindUnique {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerToSemaphoreFindUnique) Select(params ...workerPrismaFields) workerToSemaphoreFindUnique {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerToSemaphoreFindUnique) Omit(params ...workerPrismaFields) workerToSemaphoreFindUnique {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerToSemaphoreFindUnique) Exec(ctx context.Context) (
-	*WorkerModel,
-	error,
-) {
-	var v *WorkerModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerToSemaphoreFindUnique) ExecInner(ctx context.Context) (
-	*InnerWorker,
-	error,
-) {
-	var v *InnerWorker
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerToSemaphoreFindUnique) Update(params ...WorkerSetParam) workerToSemaphoreUpdateUnique {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateOne"
-	r.query.Model = "Worker"
-
-	var v workerToSemaphoreUpdateUnique
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type workerToSemaphoreUpdateUnique struct {
-	query builder.Query
-}
-
-func (r workerToSemaphoreUpdateUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSemaphoreUpdateUnique) workerModel() {}
-
-func (r workerToSemaphoreUpdateUnique) Exec(ctx context.Context) (*WorkerModel, error) {
-	var v WorkerModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerToSemaphoreUpdateUnique) Tx() WorkerUniqueTxResult {
-	v := newWorkerUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r workerToSemaphoreFindUnique) Delete() workerToSemaphoreDeleteUnique {
-	var v workerToSemaphoreDeleteUnique
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteOne"
-	v.query.Model = "Worker"
-
-	return v
-}
-
-type workerToSemaphoreDeleteUnique struct {
-	query builder.Query
-}
-
-func (r workerToSemaphoreDeleteUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p workerToSemaphoreDeleteUnique) workerModel() {}
-
-func (r workerToSemaphoreDeleteUnique) Exec(ctx context.Context) (*WorkerModel, error) {
-	var v WorkerModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerToSemaphoreDeleteUnique) Tx() WorkerUniqueTxResult {
-	v := newWorkerUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type workerToSemaphoreFindFirst struct {
-	query builder.Query
-}
-
-func (r workerToSemaphoreFindFirst) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSemaphoreFindFirst) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSemaphoreFindFirst) with()           {}
-func (r workerToSemaphoreFindFirst) workerModel()    {}
-func (r workerToSemaphoreFindFirst) workerRelation() {}
-
-func (r workerToSemaphoreFindFirst) With(params ...WorkerSemaphoreRelationWith) workerToSemaphoreFindFirst {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerToSemaphoreFindFirst) Select(params ...workerPrismaFields) workerToSemaphoreFindFirst {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerToSemaphoreFindFirst) Omit(params ...workerPrismaFields) workerToSemaphoreFindFirst {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerToSemaphoreFindFirst) OrderBy(params ...WorkerSemaphoreOrderByParam) workerToSemaphoreFindFirst {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r workerToSemaphoreFindFirst) Skip(count int) workerToSemaphoreFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerToSemaphoreFindFirst) Take(count int) workerToSemaphoreFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerToSemaphoreFindFirst) Cursor(cursor WorkerCursorParam) workerToSemaphoreFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r workerToSemaphoreFindFirst) Exec(ctx context.Context) (
-	*WorkerModel,
-	error,
-) {
-	var v *WorkerModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerToSemaphoreFindFirst) ExecInner(ctx context.Context) (
-	*InnerWorker,
-	error,
-) {
-	var v *InnerWorker
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-type workerToSemaphoreFindMany struct {
-	query builder.Query
-}
-
-func (r workerToSemaphoreFindMany) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSemaphoreFindMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSemaphoreFindMany) with()           {}
-func (r workerToSemaphoreFindMany) workerModel()    {}
-func (r workerToSemaphoreFindMany) workerRelation() {}
-
-func (r workerToSemaphoreFindMany) With(params ...WorkerSemaphoreRelationWith) workerToSemaphoreFindMany {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerToSemaphoreFindMany) Select(params ...workerPrismaFields) workerToSemaphoreFindMany {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerToSemaphoreFindMany) Omit(params ...workerPrismaFields) workerToSemaphoreFindMany {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerToSemaphoreFindMany) OrderBy(params ...WorkerSemaphoreOrderByParam) workerToSemaphoreFindMany {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r workerToSemaphoreFindMany) Skip(count int) workerToSemaphoreFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerToSemaphoreFindMany) Take(count int) workerToSemaphoreFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerToSemaphoreFindMany) Cursor(cursor WorkerCursorParam) workerToSemaphoreFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r workerToSemaphoreFindMany) Exec(ctx context.Context) (
-	[]WorkerModel,
-	error,
-) {
-	var v []WorkerModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r workerToSemaphoreFindMany) ExecInner(ctx context.Context) (
-	[]InnerWorker,
-	error,
-) {
-	var v []InnerWorker
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r workerToSemaphoreFindMany) Update(params ...WorkerSetParam) workerToSemaphoreUpdateMany {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateMany"
-	r.query.Model = "Worker"
-
-	r.query.Outputs = countOutput
-
-	var v workerToSemaphoreUpdateMany
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type workerToSemaphoreUpdateMany struct {
-	query builder.Query
-}
-
-func (r workerToSemaphoreUpdateMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerToSemaphoreUpdateMany) workerModel() {}
-
-func (r workerToSemaphoreUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerToSemaphoreUpdateMany) Tx() WorkerManyTxResult {
-	v := newWorkerManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r workerToSemaphoreFindMany) Delete() workerToSemaphoreDeleteMany {
-	var v workerToSemaphoreDeleteMany
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteMany"
-	v.query.Model = "Worker"
-
-	v.query.Outputs = countOutput
-
-	return v
-}
-
-type workerToSemaphoreDeleteMany struct {
-	query builder.Query
-}
-
-func (r workerToSemaphoreDeleteMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p workerToSemaphoreDeleteMany) workerModel() {}
-
-func (r workerToSemaphoreDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerToSemaphoreDeleteMany) Tx() WorkerManyTxResult {
-	v := newWorkerManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
 type workerFindUnique struct {
 	query builder.Query
 }
@@ -404263,4172 +398922,6 @@ func (r workerDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
 
 func (r workerDeleteMany) Tx() WorkerManyTxResult {
 	v := newWorkerManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type workerSemaphoreToWorkerFindUnique struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreToWorkerFindUnique) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreToWorkerFindUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreToWorkerFindUnique) with()                    {}
-func (r workerSemaphoreToWorkerFindUnique) workerSemaphoreModel()    {}
-func (r workerSemaphoreToWorkerFindUnique) workerSemaphoreRelation() {}
-
-func (r workerSemaphoreToWorkerFindUnique) With(params ...WorkerRelationWith) workerSemaphoreToWorkerFindUnique {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerSemaphoreToWorkerFindUnique) Select(params ...workerSemaphorePrismaFields) workerSemaphoreToWorkerFindUnique {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreToWorkerFindUnique) Omit(params ...workerSemaphorePrismaFields) workerSemaphoreToWorkerFindUnique {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerSemaphoreOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreToWorkerFindUnique) Exec(ctx context.Context) (
-	*WorkerSemaphoreModel,
-	error,
-) {
-	var v *WorkerSemaphoreModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreToWorkerFindUnique) ExecInner(ctx context.Context) (
-	*InnerWorkerSemaphore,
-	error,
-) {
-	var v *InnerWorkerSemaphore
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreToWorkerFindUnique) Update(params ...WorkerSemaphoreSetParam) workerSemaphoreToWorkerUpdateUnique {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateOne"
-	r.query.Model = "WorkerSemaphore"
-
-	var v workerSemaphoreToWorkerUpdateUnique
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type workerSemaphoreToWorkerUpdateUnique struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreToWorkerUpdateUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreToWorkerUpdateUnique) workerSemaphoreModel() {}
-
-func (r workerSemaphoreToWorkerUpdateUnique) Exec(ctx context.Context) (*WorkerSemaphoreModel, error) {
-	var v WorkerSemaphoreModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreToWorkerUpdateUnique) Tx() WorkerSemaphoreUniqueTxResult {
-	v := newWorkerSemaphoreUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r workerSemaphoreToWorkerFindUnique) Delete() workerSemaphoreToWorkerDeleteUnique {
-	var v workerSemaphoreToWorkerDeleteUnique
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteOne"
-	v.query.Model = "WorkerSemaphore"
-
-	return v
-}
-
-type workerSemaphoreToWorkerDeleteUnique struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreToWorkerDeleteUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p workerSemaphoreToWorkerDeleteUnique) workerSemaphoreModel() {}
-
-func (r workerSemaphoreToWorkerDeleteUnique) Exec(ctx context.Context) (*WorkerSemaphoreModel, error) {
-	var v WorkerSemaphoreModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreToWorkerDeleteUnique) Tx() WorkerSemaphoreUniqueTxResult {
-	v := newWorkerSemaphoreUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type workerSemaphoreToWorkerFindFirst struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreToWorkerFindFirst) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreToWorkerFindFirst) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreToWorkerFindFirst) with()                    {}
-func (r workerSemaphoreToWorkerFindFirst) workerSemaphoreModel()    {}
-func (r workerSemaphoreToWorkerFindFirst) workerSemaphoreRelation() {}
-
-func (r workerSemaphoreToWorkerFindFirst) With(params ...WorkerRelationWith) workerSemaphoreToWorkerFindFirst {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerSemaphoreToWorkerFindFirst) Select(params ...workerSemaphorePrismaFields) workerSemaphoreToWorkerFindFirst {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreToWorkerFindFirst) Omit(params ...workerSemaphorePrismaFields) workerSemaphoreToWorkerFindFirst {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerSemaphoreOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreToWorkerFindFirst) OrderBy(params ...WorkerOrderByParam) workerSemaphoreToWorkerFindFirst {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r workerSemaphoreToWorkerFindFirst) Skip(count int) workerSemaphoreToWorkerFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreToWorkerFindFirst) Take(count int) workerSemaphoreToWorkerFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreToWorkerFindFirst) Cursor(cursor WorkerSemaphoreCursorParam) workerSemaphoreToWorkerFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r workerSemaphoreToWorkerFindFirst) Exec(ctx context.Context) (
-	*WorkerSemaphoreModel,
-	error,
-) {
-	var v *WorkerSemaphoreModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreToWorkerFindFirst) ExecInner(ctx context.Context) (
-	*InnerWorkerSemaphore,
-	error,
-) {
-	var v *InnerWorkerSemaphore
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-type workerSemaphoreToWorkerFindMany struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreToWorkerFindMany) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreToWorkerFindMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreToWorkerFindMany) with()                    {}
-func (r workerSemaphoreToWorkerFindMany) workerSemaphoreModel()    {}
-func (r workerSemaphoreToWorkerFindMany) workerSemaphoreRelation() {}
-
-func (r workerSemaphoreToWorkerFindMany) With(params ...WorkerRelationWith) workerSemaphoreToWorkerFindMany {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerSemaphoreToWorkerFindMany) Select(params ...workerSemaphorePrismaFields) workerSemaphoreToWorkerFindMany {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreToWorkerFindMany) Omit(params ...workerSemaphorePrismaFields) workerSemaphoreToWorkerFindMany {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerSemaphoreOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreToWorkerFindMany) OrderBy(params ...WorkerOrderByParam) workerSemaphoreToWorkerFindMany {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r workerSemaphoreToWorkerFindMany) Skip(count int) workerSemaphoreToWorkerFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreToWorkerFindMany) Take(count int) workerSemaphoreToWorkerFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreToWorkerFindMany) Cursor(cursor WorkerSemaphoreCursorParam) workerSemaphoreToWorkerFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r workerSemaphoreToWorkerFindMany) Exec(ctx context.Context) (
-	[]WorkerSemaphoreModel,
-	error,
-) {
-	var v []WorkerSemaphoreModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreToWorkerFindMany) ExecInner(ctx context.Context) (
-	[]InnerWorkerSemaphore,
-	error,
-) {
-	var v []InnerWorkerSemaphore
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreToWorkerFindMany) Update(params ...WorkerSemaphoreSetParam) workerSemaphoreToWorkerUpdateMany {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateMany"
-	r.query.Model = "WorkerSemaphore"
-
-	r.query.Outputs = countOutput
-
-	var v workerSemaphoreToWorkerUpdateMany
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type workerSemaphoreToWorkerUpdateMany struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreToWorkerUpdateMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreToWorkerUpdateMany) workerSemaphoreModel() {}
-
-func (r workerSemaphoreToWorkerUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreToWorkerUpdateMany) Tx() WorkerSemaphoreManyTxResult {
-	v := newWorkerSemaphoreManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r workerSemaphoreToWorkerFindMany) Delete() workerSemaphoreToWorkerDeleteMany {
-	var v workerSemaphoreToWorkerDeleteMany
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteMany"
-	v.query.Model = "WorkerSemaphore"
-
-	v.query.Outputs = countOutput
-
-	return v
-}
-
-type workerSemaphoreToWorkerDeleteMany struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreToWorkerDeleteMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p workerSemaphoreToWorkerDeleteMany) workerSemaphoreModel() {}
-
-func (r workerSemaphoreToWorkerDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreToWorkerDeleteMany) Tx() WorkerSemaphoreManyTxResult {
-	v := newWorkerSemaphoreManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type workerSemaphoreFindUnique struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreFindUnique) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreFindUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreFindUnique) with()                    {}
-func (r workerSemaphoreFindUnique) workerSemaphoreModel()    {}
-func (r workerSemaphoreFindUnique) workerSemaphoreRelation() {}
-
-func (r workerSemaphoreActions) FindUnique(
-	params WorkerSemaphoreEqualsUniqueWhereParam,
-) workerSemaphoreFindUnique {
-	var v workerSemaphoreFindUnique
-	v.query = builder.NewQuery()
-	v.query.Engine = r.client
-
-	v.query.Operation = "query"
-
-	v.query.Method = "findUnique"
-
-	v.query.Model = "WorkerSemaphore"
-	v.query.Outputs = workerSemaphoreOutput
-
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "where",
-		Fields: builder.TransformEquals([]builder.Field{params.field()}),
-	})
-
-	return v
-}
-
-func (r workerSemaphoreFindUnique) With(params ...WorkerSemaphoreRelationWith) workerSemaphoreFindUnique {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerSemaphoreFindUnique) Select(params ...workerSemaphorePrismaFields) workerSemaphoreFindUnique {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreFindUnique) Omit(params ...workerSemaphorePrismaFields) workerSemaphoreFindUnique {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerSemaphoreOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreFindUnique) Exec(ctx context.Context) (
-	*WorkerSemaphoreModel,
-	error,
-) {
-	var v *WorkerSemaphoreModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreFindUnique) ExecInner(ctx context.Context) (
-	*InnerWorkerSemaphore,
-	error,
-) {
-	var v *InnerWorkerSemaphore
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreFindUnique) Update(params ...WorkerSemaphoreSetParam) workerSemaphoreUpdateUnique {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateOne"
-	r.query.Model = "WorkerSemaphore"
-
-	var v workerSemaphoreUpdateUnique
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type workerSemaphoreUpdateUnique struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreUpdateUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreUpdateUnique) workerSemaphoreModel() {}
-
-func (r workerSemaphoreUpdateUnique) Exec(ctx context.Context) (*WorkerSemaphoreModel, error) {
-	var v WorkerSemaphoreModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreUpdateUnique) Tx() WorkerSemaphoreUniqueTxResult {
-	v := newWorkerSemaphoreUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r workerSemaphoreFindUnique) Delete() workerSemaphoreDeleteUnique {
-	var v workerSemaphoreDeleteUnique
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteOne"
-	v.query.Model = "WorkerSemaphore"
-
-	return v
-}
-
-type workerSemaphoreDeleteUnique struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreDeleteUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p workerSemaphoreDeleteUnique) workerSemaphoreModel() {}
-
-func (r workerSemaphoreDeleteUnique) Exec(ctx context.Context) (*WorkerSemaphoreModel, error) {
-	var v WorkerSemaphoreModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreDeleteUnique) Tx() WorkerSemaphoreUniqueTxResult {
-	v := newWorkerSemaphoreUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type workerSemaphoreFindFirst struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreFindFirst) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreFindFirst) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreFindFirst) with()                    {}
-func (r workerSemaphoreFindFirst) workerSemaphoreModel()    {}
-func (r workerSemaphoreFindFirst) workerSemaphoreRelation() {}
-
-func (r workerSemaphoreActions) FindFirst(
-	params ...WorkerSemaphoreWhereParam,
-) workerSemaphoreFindFirst {
-	var v workerSemaphoreFindFirst
-	v.query = builder.NewQuery()
-	v.query.Engine = r.client
-
-	v.query.Operation = "query"
-
-	v.query.Method = "findFirst"
-
-	v.query.Model = "WorkerSemaphore"
-	v.query.Outputs = workerSemaphoreOutput
-
-	var where []builder.Field
-	for _, q := range params {
-		if query := q.getQuery(); query.Operation != "" {
-			v.query.Outputs = append(v.query.Outputs, builder.Output{
-				Name:    query.Method,
-				Inputs:  query.Inputs,
-				Outputs: query.Outputs,
-			})
-		} else {
-			where = append(where, q.field())
-		}
-	}
-
-	if len(where) > 0 {
-		v.query.Inputs = append(v.query.Inputs, builder.Input{
-			Name:   "where",
-			Fields: where,
-		})
-	}
-
-	return v
-}
-
-func (r workerSemaphoreFindFirst) With(params ...WorkerSemaphoreRelationWith) workerSemaphoreFindFirst {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerSemaphoreFindFirst) Select(params ...workerSemaphorePrismaFields) workerSemaphoreFindFirst {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreFindFirst) Omit(params ...workerSemaphorePrismaFields) workerSemaphoreFindFirst {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerSemaphoreOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreFindFirst) OrderBy(params ...WorkerSemaphoreOrderByParam) workerSemaphoreFindFirst {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r workerSemaphoreFindFirst) Skip(count int) workerSemaphoreFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreFindFirst) Take(count int) workerSemaphoreFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreFindFirst) Cursor(cursor WorkerSemaphoreCursorParam) workerSemaphoreFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r workerSemaphoreFindFirst) Exec(ctx context.Context) (
-	*WorkerSemaphoreModel,
-	error,
-) {
-	var v *WorkerSemaphoreModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreFindFirst) ExecInner(ctx context.Context) (
-	*InnerWorkerSemaphore,
-	error,
-) {
-	var v *InnerWorkerSemaphore
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-type workerSemaphoreFindMany struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreFindMany) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreFindMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreFindMany) with()                    {}
-func (r workerSemaphoreFindMany) workerSemaphoreModel()    {}
-func (r workerSemaphoreFindMany) workerSemaphoreRelation() {}
-
-func (r workerSemaphoreActions) FindMany(
-	params ...WorkerSemaphoreWhereParam,
-) workerSemaphoreFindMany {
-	var v workerSemaphoreFindMany
-	v.query = builder.NewQuery()
-	v.query.Engine = r.client
-
-	v.query.Operation = "query"
-
-	v.query.Method = "findMany"
-
-	v.query.Model = "WorkerSemaphore"
-	v.query.Outputs = workerSemaphoreOutput
-
-	var where []builder.Field
-	for _, q := range params {
-		if query := q.getQuery(); query.Operation != "" {
-			v.query.Outputs = append(v.query.Outputs, builder.Output{
-				Name:    query.Method,
-				Inputs:  query.Inputs,
-				Outputs: query.Outputs,
-			})
-		} else {
-			where = append(where, q.field())
-		}
-	}
-
-	if len(where) > 0 {
-		v.query.Inputs = append(v.query.Inputs, builder.Input{
-			Name:   "where",
-			Fields: where,
-		})
-	}
-
-	return v
-}
-
-func (r workerSemaphoreFindMany) With(params ...WorkerSemaphoreRelationWith) workerSemaphoreFindMany {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerSemaphoreFindMany) Select(params ...workerSemaphorePrismaFields) workerSemaphoreFindMany {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreFindMany) Omit(params ...workerSemaphorePrismaFields) workerSemaphoreFindMany {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerSemaphoreOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreFindMany) OrderBy(params ...WorkerSemaphoreOrderByParam) workerSemaphoreFindMany {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r workerSemaphoreFindMany) Skip(count int) workerSemaphoreFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreFindMany) Take(count int) workerSemaphoreFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreFindMany) Cursor(cursor WorkerSemaphoreCursorParam) workerSemaphoreFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r workerSemaphoreFindMany) Exec(ctx context.Context) (
-	[]WorkerSemaphoreModel,
-	error,
-) {
-	var v []WorkerSemaphoreModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreFindMany) ExecInner(ctx context.Context) (
-	[]InnerWorkerSemaphore,
-	error,
-) {
-	var v []InnerWorkerSemaphore
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreFindMany) Update(params ...WorkerSemaphoreSetParam) workerSemaphoreUpdateMany {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateMany"
-	r.query.Model = "WorkerSemaphore"
-
-	r.query.Outputs = countOutput
-
-	var v workerSemaphoreUpdateMany
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type workerSemaphoreUpdateMany struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreUpdateMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreUpdateMany) workerSemaphoreModel() {}
-
-func (r workerSemaphoreUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreUpdateMany) Tx() WorkerSemaphoreManyTxResult {
-	v := newWorkerSemaphoreManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r workerSemaphoreFindMany) Delete() workerSemaphoreDeleteMany {
-	var v workerSemaphoreDeleteMany
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteMany"
-	v.query.Model = "WorkerSemaphore"
-
-	v.query.Outputs = countOutput
-
-	return v
-}
-
-type workerSemaphoreDeleteMany struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreDeleteMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p workerSemaphoreDeleteMany) workerSemaphoreModel() {}
-
-func (r workerSemaphoreDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreDeleteMany) Tx() WorkerSemaphoreManyTxResult {
-	v := newWorkerSemaphoreManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type workerSemaphoreSlotToWorkerFindUnique struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreSlotToWorkerFindUnique) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotToWorkerFindUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotToWorkerFindUnique) with()                        {}
-func (r workerSemaphoreSlotToWorkerFindUnique) workerSemaphoreSlotModel()    {}
-func (r workerSemaphoreSlotToWorkerFindUnique) workerSemaphoreSlotRelation() {}
-
-func (r workerSemaphoreSlotToWorkerFindUnique) With(params ...WorkerRelationWith) workerSemaphoreSlotToWorkerFindUnique {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerSemaphoreSlotToWorkerFindUnique) Select(params ...workerSemaphoreSlotPrismaFields) workerSemaphoreSlotToWorkerFindUnique {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreSlotToWorkerFindUnique) Omit(params ...workerSemaphoreSlotPrismaFields) workerSemaphoreSlotToWorkerFindUnique {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerSemaphoreSlotOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreSlotToWorkerFindUnique) Exec(ctx context.Context) (
-	*WorkerSemaphoreSlotModel,
-	error,
-) {
-	var v *WorkerSemaphoreSlotModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreSlotToWorkerFindUnique) ExecInner(ctx context.Context) (
-	*InnerWorkerSemaphoreSlot,
-	error,
-) {
-	var v *InnerWorkerSemaphoreSlot
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreSlotToWorkerFindUnique) Update(params ...WorkerSemaphoreSlotSetParam) workerSemaphoreSlotToWorkerUpdateUnique {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateOne"
-	r.query.Model = "WorkerSemaphoreSlot"
-
-	var v workerSemaphoreSlotToWorkerUpdateUnique
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type workerSemaphoreSlotToWorkerUpdateUnique struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreSlotToWorkerUpdateUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotToWorkerUpdateUnique) workerSemaphoreSlotModel() {}
-
-func (r workerSemaphoreSlotToWorkerUpdateUnique) Exec(ctx context.Context) (*WorkerSemaphoreSlotModel, error) {
-	var v WorkerSemaphoreSlotModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreSlotToWorkerUpdateUnique) Tx() WorkerSemaphoreSlotUniqueTxResult {
-	v := newWorkerSemaphoreSlotUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r workerSemaphoreSlotToWorkerFindUnique) Delete() workerSemaphoreSlotToWorkerDeleteUnique {
-	var v workerSemaphoreSlotToWorkerDeleteUnique
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteOne"
-	v.query.Model = "WorkerSemaphoreSlot"
-
-	return v
-}
-
-type workerSemaphoreSlotToWorkerDeleteUnique struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreSlotToWorkerDeleteUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p workerSemaphoreSlotToWorkerDeleteUnique) workerSemaphoreSlotModel() {}
-
-func (r workerSemaphoreSlotToWorkerDeleteUnique) Exec(ctx context.Context) (*WorkerSemaphoreSlotModel, error) {
-	var v WorkerSemaphoreSlotModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreSlotToWorkerDeleteUnique) Tx() WorkerSemaphoreSlotUniqueTxResult {
-	v := newWorkerSemaphoreSlotUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type workerSemaphoreSlotToWorkerFindFirst struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreSlotToWorkerFindFirst) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotToWorkerFindFirst) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotToWorkerFindFirst) with()                        {}
-func (r workerSemaphoreSlotToWorkerFindFirst) workerSemaphoreSlotModel()    {}
-func (r workerSemaphoreSlotToWorkerFindFirst) workerSemaphoreSlotRelation() {}
-
-func (r workerSemaphoreSlotToWorkerFindFirst) With(params ...WorkerRelationWith) workerSemaphoreSlotToWorkerFindFirst {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerSemaphoreSlotToWorkerFindFirst) Select(params ...workerSemaphoreSlotPrismaFields) workerSemaphoreSlotToWorkerFindFirst {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreSlotToWorkerFindFirst) Omit(params ...workerSemaphoreSlotPrismaFields) workerSemaphoreSlotToWorkerFindFirst {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerSemaphoreSlotOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreSlotToWorkerFindFirst) OrderBy(params ...WorkerOrderByParam) workerSemaphoreSlotToWorkerFindFirst {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r workerSemaphoreSlotToWorkerFindFirst) Skip(count int) workerSemaphoreSlotToWorkerFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreSlotToWorkerFindFirst) Take(count int) workerSemaphoreSlotToWorkerFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreSlotToWorkerFindFirst) Cursor(cursor WorkerSemaphoreSlotCursorParam) workerSemaphoreSlotToWorkerFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r workerSemaphoreSlotToWorkerFindFirst) Exec(ctx context.Context) (
-	*WorkerSemaphoreSlotModel,
-	error,
-) {
-	var v *WorkerSemaphoreSlotModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreSlotToWorkerFindFirst) ExecInner(ctx context.Context) (
-	*InnerWorkerSemaphoreSlot,
-	error,
-) {
-	var v *InnerWorkerSemaphoreSlot
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-type workerSemaphoreSlotToWorkerFindMany struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreSlotToWorkerFindMany) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotToWorkerFindMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotToWorkerFindMany) with()                        {}
-func (r workerSemaphoreSlotToWorkerFindMany) workerSemaphoreSlotModel()    {}
-func (r workerSemaphoreSlotToWorkerFindMany) workerSemaphoreSlotRelation() {}
-
-func (r workerSemaphoreSlotToWorkerFindMany) With(params ...WorkerRelationWith) workerSemaphoreSlotToWorkerFindMany {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerSemaphoreSlotToWorkerFindMany) Select(params ...workerSemaphoreSlotPrismaFields) workerSemaphoreSlotToWorkerFindMany {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreSlotToWorkerFindMany) Omit(params ...workerSemaphoreSlotPrismaFields) workerSemaphoreSlotToWorkerFindMany {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerSemaphoreSlotOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreSlotToWorkerFindMany) OrderBy(params ...WorkerOrderByParam) workerSemaphoreSlotToWorkerFindMany {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r workerSemaphoreSlotToWorkerFindMany) Skip(count int) workerSemaphoreSlotToWorkerFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreSlotToWorkerFindMany) Take(count int) workerSemaphoreSlotToWorkerFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreSlotToWorkerFindMany) Cursor(cursor WorkerSemaphoreSlotCursorParam) workerSemaphoreSlotToWorkerFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r workerSemaphoreSlotToWorkerFindMany) Exec(ctx context.Context) (
-	[]WorkerSemaphoreSlotModel,
-	error,
-) {
-	var v []WorkerSemaphoreSlotModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreSlotToWorkerFindMany) ExecInner(ctx context.Context) (
-	[]InnerWorkerSemaphoreSlot,
-	error,
-) {
-	var v []InnerWorkerSemaphoreSlot
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreSlotToWorkerFindMany) Update(params ...WorkerSemaphoreSlotSetParam) workerSemaphoreSlotToWorkerUpdateMany {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateMany"
-	r.query.Model = "WorkerSemaphoreSlot"
-
-	r.query.Outputs = countOutput
-
-	var v workerSemaphoreSlotToWorkerUpdateMany
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type workerSemaphoreSlotToWorkerUpdateMany struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreSlotToWorkerUpdateMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotToWorkerUpdateMany) workerSemaphoreSlotModel() {}
-
-func (r workerSemaphoreSlotToWorkerUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreSlotToWorkerUpdateMany) Tx() WorkerSemaphoreSlotManyTxResult {
-	v := newWorkerSemaphoreSlotManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r workerSemaphoreSlotToWorkerFindMany) Delete() workerSemaphoreSlotToWorkerDeleteMany {
-	var v workerSemaphoreSlotToWorkerDeleteMany
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteMany"
-	v.query.Model = "WorkerSemaphoreSlot"
-
-	v.query.Outputs = countOutput
-
-	return v
-}
-
-type workerSemaphoreSlotToWorkerDeleteMany struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreSlotToWorkerDeleteMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p workerSemaphoreSlotToWorkerDeleteMany) workerSemaphoreSlotModel() {}
-
-func (r workerSemaphoreSlotToWorkerDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreSlotToWorkerDeleteMany) Tx() WorkerSemaphoreSlotManyTxResult {
-	v := newWorkerSemaphoreSlotManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type workerSemaphoreSlotToStepRunFindUnique struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreSlotToStepRunFindUnique) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotToStepRunFindUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotToStepRunFindUnique) with()                        {}
-func (r workerSemaphoreSlotToStepRunFindUnique) workerSemaphoreSlotModel()    {}
-func (r workerSemaphoreSlotToStepRunFindUnique) workerSemaphoreSlotRelation() {}
-
-func (r workerSemaphoreSlotToStepRunFindUnique) With(params ...StepRunRelationWith) workerSemaphoreSlotToStepRunFindUnique {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerSemaphoreSlotToStepRunFindUnique) Select(params ...workerSemaphoreSlotPrismaFields) workerSemaphoreSlotToStepRunFindUnique {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreSlotToStepRunFindUnique) Omit(params ...workerSemaphoreSlotPrismaFields) workerSemaphoreSlotToStepRunFindUnique {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerSemaphoreSlotOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreSlotToStepRunFindUnique) Exec(ctx context.Context) (
-	*WorkerSemaphoreSlotModel,
-	error,
-) {
-	var v *WorkerSemaphoreSlotModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreSlotToStepRunFindUnique) ExecInner(ctx context.Context) (
-	*InnerWorkerSemaphoreSlot,
-	error,
-) {
-	var v *InnerWorkerSemaphoreSlot
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreSlotToStepRunFindUnique) Update(params ...WorkerSemaphoreSlotSetParam) workerSemaphoreSlotToStepRunUpdateUnique {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateOne"
-	r.query.Model = "WorkerSemaphoreSlot"
-
-	var v workerSemaphoreSlotToStepRunUpdateUnique
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type workerSemaphoreSlotToStepRunUpdateUnique struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreSlotToStepRunUpdateUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotToStepRunUpdateUnique) workerSemaphoreSlotModel() {}
-
-func (r workerSemaphoreSlotToStepRunUpdateUnique) Exec(ctx context.Context) (*WorkerSemaphoreSlotModel, error) {
-	var v WorkerSemaphoreSlotModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreSlotToStepRunUpdateUnique) Tx() WorkerSemaphoreSlotUniqueTxResult {
-	v := newWorkerSemaphoreSlotUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r workerSemaphoreSlotToStepRunFindUnique) Delete() workerSemaphoreSlotToStepRunDeleteUnique {
-	var v workerSemaphoreSlotToStepRunDeleteUnique
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteOne"
-	v.query.Model = "WorkerSemaphoreSlot"
-
-	return v
-}
-
-type workerSemaphoreSlotToStepRunDeleteUnique struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreSlotToStepRunDeleteUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p workerSemaphoreSlotToStepRunDeleteUnique) workerSemaphoreSlotModel() {}
-
-func (r workerSemaphoreSlotToStepRunDeleteUnique) Exec(ctx context.Context) (*WorkerSemaphoreSlotModel, error) {
-	var v WorkerSemaphoreSlotModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreSlotToStepRunDeleteUnique) Tx() WorkerSemaphoreSlotUniqueTxResult {
-	v := newWorkerSemaphoreSlotUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type workerSemaphoreSlotToStepRunFindFirst struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreSlotToStepRunFindFirst) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotToStepRunFindFirst) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotToStepRunFindFirst) with()                        {}
-func (r workerSemaphoreSlotToStepRunFindFirst) workerSemaphoreSlotModel()    {}
-func (r workerSemaphoreSlotToStepRunFindFirst) workerSemaphoreSlotRelation() {}
-
-func (r workerSemaphoreSlotToStepRunFindFirst) With(params ...StepRunRelationWith) workerSemaphoreSlotToStepRunFindFirst {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerSemaphoreSlotToStepRunFindFirst) Select(params ...workerSemaphoreSlotPrismaFields) workerSemaphoreSlotToStepRunFindFirst {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreSlotToStepRunFindFirst) Omit(params ...workerSemaphoreSlotPrismaFields) workerSemaphoreSlotToStepRunFindFirst {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerSemaphoreSlotOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreSlotToStepRunFindFirst) OrderBy(params ...StepRunOrderByParam) workerSemaphoreSlotToStepRunFindFirst {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r workerSemaphoreSlotToStepRunFindFirst) Skip(count int) workerSemaphoreSlotToStepRunFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreSlotToStepRunFindFirst) Take(count int) workerSemaphoreSlotToStepRunFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreSlotToStepRunFindFirst) Cursor(cursor WorkerSemaphoreSlotCursorParam) workerSemaphoreSlotToStepRunFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r workerSemaphoreSlotToStepRunFindFirst) Exec(ctx context.Context) (
-	*WorkerSemaphoreSlotModel,
-	error,
-) {
-	var v *WorkerSemaphoreSlotModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreSlotToStepRunFindFirst) ExecInner(ctx context.Context) (
-	*InnerWorkerSemaphoreSlot,
-	error,
-) {
-	var v *InnerWorkerSemaphoreSlot
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-type workerSemaphoreSlotToStepRunFindMany struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreSlotToStepRunFindMany) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotToStepRunFindMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotToStepRunFindMany) with()                        {}
-func (r workerSemaphoreSlotToStepRunFindMany) workerSemaphoreSlotModel()    {}
-func (r workerSemaphoreSlotToStepRunFindMany) workerSemaphoreSlotRelation() {}
-
-func (r workerSemaphoreSlotToStepRunFindMany) With(params ...StepRunRelationWith) workerSemaphoreSlotToStepRunFindMany {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerSemaphoreSlotToStepRunFindMany) Select(params ...workerSemaphoreSlotPrismaFields) workerSemaphoreSlotToStepRunFindMany {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreSlotToStepRunFindMany) Omit(params ...workerSemaphoreSlotPrismaFields) workerSemaphoreSlotToStepRunFindMany {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerSemaphoreSlotOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreSlotToStepRunFindMany) OrderBy(params ...StepRunOrderByParam) workerSemaphoreSlotToStepRunFindMany {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r workerSemaphoreSlotToStepRunFindMany) Skip(count int) workerSemaphoreSlotToStepRunFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreSlotToStepRunFindMany) Take(count int) workerSemaphoreSlotToStepRunFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreSlotToStepRunFindMany) Cursor(cursor WorkerSemaphoreSlotCursorParam) workerSemaphoreSlotToStepRunFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r workerSemaphoreSlotToStepRunFindMany) Exec(ctx context.Context) (
-	[]WorkerSemaphoreSlotModel,
-	error,
-) {
-	var v []WorkerSemaphoreSlotModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreSlotToStepRunFindMany) ExecInner(ctx context.Context) (
-	[]InnerWorkerSemaphoreSlot,
-	error,
-) {
-	var v []InnerWorkerSemaphoreSlot
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreSlotToStepRunFindMany) Update(params ...WorkerSemaphoreSlotSetParam) workerSemaphoreSlotToStepRunUpdateMany {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateMany"
-	r.query.Model = "WorkerSemaphoreSlot"
-
-	r.query.Outputs = countOutput
-
-	var v workerSemaphoreSlotToStepRunUpdateMany
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type workerSemaphoreSlotToStepRunUpdateMany struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreSlotToStepRunUpdateMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotToStepRunUpdateMany) workerSemaphoreSlotModel() {}
-
-func (r workerSemaphoreSlotToStepRunUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreSlotToStepRunUpdateMany) Tx() WorkerSemaphoreSlotManyTxResult {
-	v := newWorkerSemaphoreSlotManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r workerSemaphoreSlotToStepRunFindMany) Delete() workerSemaphoreSlotToStepRunDeleteMany {
-	var v workerSemaphoreSlotToStepRunDeleteMany
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteMany"
-	v.query.Model = "WorkerSemaphoreSlot"
-
-	v.query.Outputs = countOutput
-
-	return v
-}
-
-type workerSemaphoreSlotToStepRunDeleteMany struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreSlotToStepRunDeleteMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p workerSemaphoreSlotToStepRunDeleteMany) workerSemaphoreSlotModel() {}
-
-func (r workerSemaphoreSlotToStepRunDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreSlotToStepRunDeleteMany) Tx() WorkerSemaphoreSlotManyTxResult {
-	v := newWorkerSemaphoreSlotManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type workerSemaphoreSlotFindUnique struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreSlotFindUnique) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotFindUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotFindUnique) with()                        {}
-func (r workerSemaphoreSlotFindUnique) workerSemaphoreSlotModel()    {}
-func (r workerSemaphoreSlotFindUnique) workerSemaphoreSlotRelation() {}
-
-func (r workerSemaphoreSlotActions) FindUnique(
-	params WorkerSemaphoreSlotEqualsUniqueWhereParam,
-) workerSemaphoreSlotFindUnique {
-	var v workerSemaphoreSlotFindUnique
-	v.query = builder.NewQuery()
-	v.query.Engine = r.client
-
-	v.query.Operation = "query"
-
-	v.query.Method = "findUnique"
-
-	v.query.Model = "WorkerSemaphoreSlot"
-	v.query.Outputs = workerSemaphoreSlotOutput
-
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "where",
-		Fields: builder.TransformEquals([]builder.Field{params.field()}),
-	})
-
-	return v
-}
-
-func (r workerSemaphoreSlotFindUnique) With(params ...WorkerSemaphoreSlotRelationWith) workerSemaphoreSlotFindUnique {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerSemaphoreSlotFindUnique) Select(params ...workerSemaphoreSlotPrismaFields) workerSemaphoreSlotFindUnique {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreSlotFindUnique) Omit(params ...workerSemaphoreSlotPrismaFields) workerSemaphoreSlotFindUnique {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerSemaphoreSlotOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreSlotFindUnique) Exec(ctx context.Context) (
-	*WorkerSemaphoreSlotModel,
-	error,
-) {
-	var v *WorkerSemaphoreSlotModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreSlotFindUnique) ExecInner(ctx context.Context) (
-	*InnerWorkerSemaphoreSlot,
-	error,
-) {
-	var v *InnerWorkerSemaphoreSlot
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreSlotFindUnique) Update(params ...WorkerSemaphoreSlotSetParam) workerSemaphoreSlotUpdateUnique {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateOne"
-	r.query.Model = "WorkerSemaphoreSlot"
-
-	var v workerSemaphoreSlotUpdateUnique
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type workerSemaphoreSlotUpdateUnique struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreSlotUpdateUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotUpdateUnique) workerSemaphoreSlotModel() {}
-
-func (r workerSemaphoreSlotUpdateUnique) Exec(ctx context.Context) (*WorkerSemaphoreSlotModel, error) {
-	var v WorkerSemaphoreSlotModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreSlotUpdateUnique) Tx() WorkerSemaphoreSlotUniqueTxResult {
-	v := newWorkerSemaphoreSlotUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r workerSemaphoreSlotFindUnique) Delete() workerSemaphoreSlotDeleteUnique {
-	var v workerSemaphoreSlotDeleteUnique
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteOne"
-	v.query.Model = "WorkerSemaphoreSlot"
-
-	return v
-}
-
-type workerSemaphoreSlotDeleteUnique struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreSlotDeleteUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p workerSemaphoreSlotDeleteUnique) workerSemaphoreSlotModel() {}
-
-func (r workerSemaphoreSlotDeleteUnique) Exec(ctx context.Context) (*WorkerSemaphoreSlotModel, error) {
-	var v WorkerSemaphoreSlotModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreSlotDeleteUnique) Tx() WorkerSemaphoreSlotUniqueTxResult {
-	v := newWorkerSemaphoreSlotUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type workerSemaphoreSlotFindFirst struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreSlotFindFirst) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotFindFirst) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotFindFirst) with()                        {}
-func (r workerSemaphoreSlotFindFirst) workerSemaphoreSlotModel()    {}
-func (r workerSemaphoreSlotFindFirst) workerSemaphoreSlotRelation() {}
-
-func (r workerSemaphoreSlotActions) FindFirst(
-	params ...WorkerSemaphoreSlotWhereParam,
-) workerSemaphoreSlotFindFirst {
-	var v workerSemaphoreSlotFindFirst
-	v.query = builder.NewQuery()
-	v.query.Engine = r.client
-
-	v.query.Operation = "query"
-
-	v.query.Method = "findFirst"
-
-	v.query.Model = "WorkerSemaphoreSlot"
-	v.query.Outputs = workerSemaphoreSlotOutput
-
-	var where []builder.Field
-	for _, q := range params {
-		if query := q.getQuery(); query.Operation != "" {
-			v.query.Outputs = append(v.query.Outputs, builder.Output{
-				Name:    query.Method,
-				Inputs:  query.Inputs,
-				Outputs: query.Outputs,
-			})
-		} else {
-			where = append(where, q.field())
-		}
-	}
-
-	if len(where) > 0 {
-		v.query.Inputs = append(v.query.Inputs, builder.Input{
-			Name:   "where",
-			Fields: where,
-		})
-	}
-
-	return v
-}
-
-func (r workerSemaphoreSlotFindFirst) With(params ...WorkerSemaphoreSlotRelationWith) workerSemaphoreSlotFindFirst {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerSemaphoreSlotFindFirst) Select(params ...workerSemaphoreSlotPrismaFields) workerSemaphoreSlotFindFirst {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreSlotFindFirst) Omit(params ...workerSemaphoreSlotPrismaFields) workerSemaphoreSlotFindFirst {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerSemaphoreSlotOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreSlotFindFirst) OrderBy(params ...WorkerSemaphoreSlotOrderByParam) workerSemaphoreSlotFindFirst {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r workerSemaphoreSlotFindFirst) Skip(count int) workerSemaphoreSlotFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreSlotFindFirst) Take(count int) workerSemaphoreSlotFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreSlotFindFirst) Cursor(cursor WorkerSemaphoreSlotCursorParam) workerSemaphoreSlotFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r workerSemaphoreSlotFindFirst) Exec(ctx context.Context) (
-	*WorkerSemaphoreSlotModel,
-	error,
-) {
-	var v *WorkerSemaphoreSlotModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreSlotFindFirst) ExecInner(ctx context.Context) (
-	*InnerWorkerSemaphoreSlot,
-	error,
-) {
-	var v *InnerWorkerSemaphoreSlot
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-type workerSemaphoreSlotFindMany struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreSlotFindMany) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotFindMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotFindMany) with()                        {}
-func (r workerSemaphoreSlotFindMany) workerSemaphoreSlotModel()    {}
-func (r workerSemaphoreSlotFindMany) workerSemaphoreSlotRelation() {}
-
-func (r workerSemaphoreSlotActions) FindMany(
-	params ...WorkerSemaphoreSlotWhereParam,
-) workerSemaphoreSlotFindMany {
-	var v workerSemaphoreSlotFindMany
-	v.query = builder.NewQuery()
-	v.query.Engine = r.client
-
-	v.query.Operation = "query"
-
-	v.query.Method = "findMany"
-
-	v.query.Model = "WorkerSemaphoreSlot"
-	v.query.Outputs = workerSemaphoreSlotOutput
-
-	var where []builder.Field
-	for _, q := range params {
-		if query := q.getQuery(); query.Operation != "" {
-			v.query.Outputs = append(v.query.Outputs, builder.Output{
-				Name:    query.Method,
-				Inputs:  query.Inputs,
-				Outputs: query.Outputs,
-			})
-		} else {
-			where = append(where, q.field())
-		}
-	}
-
-	if len(where) > 0 {
-		v.query.Inputs = append(v.query.Inputs, builder.Input{
-			Name:   "where",
-			Fields: where,
-		})
-	}
-
-	return v
-}
-
-func (r workerSemaphoreSlotFindMany) With(params ...WorkerSemaphoreSlotRelationWith) workerSemaphoreSlotFindMany {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerSemaphoreSlotFindMany) Select(params ...workerSemaphoreSlotPrismaFields) workerSemaphoreSlotFindMany {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreSlotFindMany) Omit(params ...workerSemaphoreSlotPrismaFields) workerSemaphoreSlotFindMany {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerSemaphoreSlotOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreSlotFindMany) OrderBy(params ...WorkerSemaphoreSlotOrderByParam) workerSemaphoreSlotFindMany {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r workerSemaphoreSlotFindMany) Skip(count int) workerSemaphoreSlotFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreSlotFindMany) Take(count int) workerSemaphoreSlotFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreSlotFindMany) Cursor(cursor WorkerSemaphoreSlotCursorParam) workerSemaphoreSlotFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r workerSemaphoreSlotFindMany) Exec(ctx context.Context) (
-	[]WorkerSemaphoreSlotModel,
-	error,
-) {
-	var v []WorkerSemaphoreSlotModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreSlotFindMany) ExecInner(ctx context.Context) (
-	[]InnerWorkerSemaphoreSlot,
-	error,
-) {
-	var v []InnerWorkerSemaphoreSlot
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreSlotFindMany) Update(params ...WorkerSemaphoreSlotSetParam) workerSemaphoreSlotUpdateMany {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateMany"
-	r.query.Model = "WorkerSemaphoreSlot"
-
-	r.query.Outputs = countOutput
-
-	var v workerSemaphoreSlotUpdateMany
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type workerSemaphoreSlotUpdateMany struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreSlotUpdateMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotUpdateMany) workerSemaphoreSlotModel() {}
-
-func (r workerSemaphoreSlotUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreSlotUpdateMany) Tx() WorkerSemaphoreSlotManyTxResult {
-	v := newWorkerSemaphoreSlotManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r workerSemaphoreSlotFindMany) Delete() workerSemaphoreSlotDeleteMany {
-	var v workerSemaphoreSlotDeleteMany
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteMany"
-	v.query.Model = "WorkerSemaphoreSlot"
-
-	v.query.Outputs = countOutput
-
-	return v
-}
-
-type workerSemaphoreSlotDeleteMany struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreSlotDeleteMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p workerSemaphoreSlotDeleteMany) workerSemaphoreSlotModel() {}
-
-func (r workerSemaphoreSlotDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreSlotDeleteMany) Tx() WorkerSemaphoreSlotManyTxResult {
-	v := newWorkerSemaphoreSlotManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type workerSemaphoreCountToWorkerFindUnique struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreCountToWorkerFindUnique) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreCountToWorkerFindUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreCountToWorkerFindUnique) with()                         {}
-func (r workerSemaphoreCountToWorkerFindUnique) workerSemaphoreCountModel()    {}
-func (r workerSemaphoreCountToWorkerFindUnique) workerSemaphoreCountRelation() {}
-
-func (r workerSemaphoreCountToWorkerFindUnique) With(params ...WorkerRelationWith) workerSemaphoreCountToWorkerFindUnique {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerSemaphoreCountToWorkerFindUnique) Select(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountToWorkerFindUnique {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreCountToWorkerFindUnique) Omit(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountToWorkerFindUnique {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerSemaphoreCountOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreCountToWorkerFindUnique) Exec(ctx context.Context) (
-	*WorkerSemaphoreCountModel,
-	error,
-) {
-	var v *WorkerSemaphoreCountModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreCountToWorkerFindUnique) ExecInner(ctx context.Context) (
-	*InnerWorkerSemaphoreCount,
-	error,
-) {
-	var v *InnerWorkerSemaphoreCount
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreCountToWorkerFindUnique) Update(params ...WorkerSemaphoreCountSetParam) workerSemaphoreCountToWorkerUpdateUnique {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateOne"
-	r.query.Model = "WorkerSemaphoreCount"
-
-	var v workerSemaphoreCountToWorkerUpdateUnique
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type workerSemaphoreCountToWorkerUpdateUnique struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreCountToWorkerUpdateUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreCountToWorkerUpdateUnique) workerSemaphoreCountModel() {}
-
-func (r workerSemaphoreCountToWorkerUpdateUnique) Exec(ctx context.Context) (*WorkerSemaphoreCountModel, error) {
-	var v WorkerSemaphoreCountModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreCountToWorkerUpdateUnique) Tx() WorkerSemaphoreCountUniqueTxResult {
-	v := newWorkerSemaphoreCountUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r workerSemaphoreCountToWorkerFindUnique) Delete() workerSemaphoreCountToWorkerDeleteUnique {
-	var v workerSemaphoreCountToWorkerDeleteUnique
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteOne"
-	v.query.Model = "WorkerSemaphoreCount"
-
-	return v
-}
-
-type workerSemaphoreCountToWorkerDeleteUnique struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreCountToWorkerDeleteUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p workerSemaphoreCountToWorkerDeleteUnique) workerSemaphoreCountModel() {}
-
-func (r workerSemaphoreCountToWorkerDeleteUnique) Exec(ctx context.Context) (*WorkerSemaphoreCountModel, error) {
-	var v WorkerSemaphoreCountModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreCountToWorkerDeleteUnique) Tx() WorkerSemaphoreCountUniqueTxResult {
-	v := newWorkerSemaphoreCountUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type workerSemaphoreCountToWorkerFindFirst struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreCountToWorkerFindFirst) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreCountToWorkerFindFirst) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreCountToWorkerFindFirst) with()                         {}
-func (r workerSemaphoreCountToWorkerFindFirst) workerSemaphoreCountModel()    {}
-func (r workerSemaphoreCountToWorkerFindFirst) workerSemaphoreCountRelation() {}
-
-func (r workerSemaphoreCountToWorkerFindFirst) With(params ...WorkerRelationWith) workerSemaphoreCountToWorkerFindFirst {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerSemaphoreCountToWorkerFindFirst) Select(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountToWorkerFindFirst {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreCountToWorkerFindFirst) Omit(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountToWorkerFindFirst {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerSemaphoreCountOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreCountToWorkerFindFirst) OrderBy(params ...WorkerOrderByParam) workerSemaphoreCountToWorkerFindFirst {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r workerSemaphoreCountToWorkerFindFirst) Skip(count int) workerSemaphoreCountToWorkerFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreCountToWorkerFindFirst) Take(count int) workerSemaphoreCountToWorkerFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreCountToWorkerFindFirst) Cursor(cursor WorkerSemaphoreCountCursorParam) workerSemaphoreCountToWorkerFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r workerSemaphoreCountToWorkerFindFirst) Exec(ctx context.Context) (
-	*WorkerSemaphoreCountModel,
-	error,
-) {
-	var v *WorkerSemaphoreCountModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreCountToWorkerFindFirst) ExecInner(ctx context.Context) (
-	*InnerWorkerSemaphoreCount,
-	error,
-) {
-	var v *InnerWorkerSemaphoreCount
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-type workerSemaphoreCountToWorkerFindMany struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreCountToWorkerFindMany) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreCountToWorkerFindMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreCountToWorkerFindMany) with()                         {}
-func (r workerSemaphoreCountToWorkerFindMany) workerSemaphoreCountModel()    {}
-func (r workerSemaphoreCountToWorkerFindMany) workerSemaphoreCountRelation() {}
-
-func (r workerSemaphoreCountToWorkerFindMany) With(params ...WorkerRelationWith) workerSemaphoreCountToWorkerFindMany {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerSemaphoreCountToWorkerFindMany) Select(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountToWorkerFindMany {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreCountToWorkerFindMany) Omit(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountToWorkerFindMany {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerSemaphoreCountOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreCountToWorkerFindMany) OrderBy(params ...WorkerOrderByParam) workerSemaphoreCountToWorkerFindMany {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r workerSemaphoreCountToWorkerFindMany) Skip(count int) workerSemaphoreCountToWorkerFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreCountToWorkerFindMany) Take(count int) workerSemaphoreCountToWorkerFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreCountToWorkerFindMany) Cursor(cursor WorkerSemaphoreCountCursorParam) workerSemaphoreCountToWorkerFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r workerSemaphoreCountToWorkerFindMany) Exec(ctx context.Context) (
-	[]WorkerSemaphoreCountModel,
-	error,
-) {
-	var v []WorkerSemaphoreCountModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreCountToWorkerFindMany) ExecInner(ctx context.Context) (
-	[]InnerWorkerSemaphoreCount,
-	error,
-) {
-	var v []InnerWorkerSemaphoreCount
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreCountToWorkerFindMany) Update(params ...WorkerSemaphoreCountSetParam) workerSemaphoreCountToWorkerUpdateMany {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateMany"
-	r.query.Model = "WorkerSemaphoreCount"
-
-	r.query.Outputs = countOutput
-
-	var v workerSemaphoreCountToWorkerUpdateMany
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type workerSemaphoreCountToWorkerUpdateMany struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreCountToWorkerUpdateMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreCountToWorkerUpdateMany) workerSemaphoreCountModel() {}
-
-func (r workerSemaphoreCountToWorkerUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreCountToWorkerUpdateMany) Tx() WorkerSemaphoreCountManyTxResult {
-	v := newWorkerSemaphoreCountManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r workerSemaphoreCountToWorkerFindMany) Delete() workerSemaphoreCountToWorkerDeleteMany {
-	var v workerSemaphoreCountToWorkerDeleteMany
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteMany"
-	v.query.Model = "WorkerSemaphoreCount"
-
-	v.query.Outputs = countOutput
-
-	return v
-}
-
-type workerSemaphoreCountToWorkerDeleteMany struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreCountToWorkerDeleteMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p workerSemaphoreCountToWorkerDeleteMany) workerSemaphoreCountModel() {}
-
-func (r workerSemaphoreCountToWorkerDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreCountToWorkerDeleteMany) Tx() WorkerSemaphoreCountManyTxResult {
-	v := newWorkerSemaphoreCountManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type workerSemaphoreCountFindUnique struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreCountFindUnique) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreCountFindUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreCountFindUnique) with()                         {}
-func (r workerSemaphoreCountFindUnique) workerSemaphoreCountModel()    {}
-func (r workerSemaphoreCountFindUnique) workerSemaphoreCountRelation() {}
-
-func (r workerSemaphoreCountActions) FindUnique(
-	params WorkerSemaphoreCountEqualsUniqueWhereParam,
-) workerSemaphoreCountFindUnique {
-	var v workerSemaphoreCountFindUnique
-	v.query = builder.NewQuery()
-	v.query.Engine = r.client
-
-	v.query.Operation = "query"
-
-	v.query.Method = "findUnique"
-
-	v.query.Model = "WorkerSemaphoreCount"
-	v.query.Outputs = workerSemaphoreCountOutput
-
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "where",
-		Fields: builder.TransformEquals([]builder.Field{params.field()}),
-	})
-
-	return v
-}
-
-func (r workerSemaphoreCountFindUnique) With(params ...WorkerSemaphoreCountRelationWith) workerSemaphoreCountFindUnique {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerSemaphoreCountFindUnique) Select(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountFindUnique {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreCountFindUnique) Omit(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountFindUnique {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerSemaphoreCountOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreCountFindUnique) Exec(ctx context.Context) (
-	*WorkerSemaphoreCountModel,
-	error,
-) {
-	var v *WorkerSemaphoreCountModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreCountFindUnique) ExecInner(ctx context.Context) (
-	*InnerWorkerSemaphoreCount,
-	error,
-) {
-	var v *InnerWorkerSemaphoreCount
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreCountFindUnique) Update(params ...WorkerSemaphoreCountSetParam) workerSemaphoreCountUpdateUnique {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateOne"
-	r.query.Model = "WorkerSemaphoreCount"
-
-	var v workerSemaphoreCountUpdateUnique
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type workerSemaphoreCountUpdateUnique struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreCountUpdateUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreCountUpdateUnique) workerSemaphoreCountModel() {}
-
-func (r workerSemaphoreCountUpdateUnique) Exec(ctx context.Context) (*WorkerSemaphoreCountModel, error) {
-	var v WorkerSemaphoreCountModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreCountUpdateUnique) Tx() WorkerSemaphoreCountUniqueTxResult {
-	v := newWorkerSemaphoreCountUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r workerSemaphoreCountFindUnique) Delete() workerSemaphoreCountDeleteUnique {
-	var v workerSemaphoreCountDeleteUnique
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteOne"
-	v.query.Model = "WorkerSemaphoreCount"
-
-	return v
-}
-
-type workerSemaphoreCountDeleteUnique struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreCountDeleteUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p workerSemaphoreCountDeleteUnique) workerSemaphoreCountModel() {}
-
-func (r workerSemaphoreCountDeleteUnique) Exec(ctx context.Context) (*WorkerSemaphoreCountModel, error) {
-	var v WorkerSemaphoreCountModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreCountDeleteUnique) Tx() WorkerSemaphoreCountUniqueTxResult {
-	v := newWorkerSemaphoreCountUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type workerSemaphoreCountFindFirst struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreCountFindFirst) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreCountFindFirst) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreCountFindFirst) with()                         {}
-func (r workerSemaphoreCountFindFirst) workerSemaphoreCountModel()    {}
-func (r workerSemaphoreCountFindFirst) workerSemaphoreCountRelation() {}
-
-func (r workerSemaphoreCountActions) FindFirst(
-	params ...WorkerSemaphoreCountWhereParam,
-) workerSemaphoreCountFindFirst {
-	var v workerSemaphoreCountFindFirst
-	v.query = builder.NewQuery()
-	v.query.Engine = r.client
-
-	v.query.Operation = "query"
-
-	v.query.Method = "findFirst"
-
-	v.query.Model = "WorkerSemaphoreCount"
-	v.query.Outputs = workerSemaphoreCountOutput
-
-	var where []builder.Field
-	for _, q := range params {
-		if query := q.getQuery(); query.Operation != "" {
-			v.query.Outputs = append(v.query.Outputs, builder.Output{
-				Name:    query.Method,
-				Inputs:  query.Inputs,
-				Outputs: query.Outputs,
-			})
-		} else {
-			where = append(where, q.field())
-		}
-	}
-
-	if len(where) > 0 {
-		v.query.Inputs = append(v.query.Inputs, builder.Input{
-			Name:   "where",
-			Fields: where,
-		})
-	}
-
-	return v
-}
-
-func (r workerSemaphoreCountFindFirst) With(params ...WorkerSemaphoreCountRelationWith) workerSemaphoreCountFindFirst {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerSemaphoreCountFindFirst) Select(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountFindFirst {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreCountFindFirst) Omit(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountFindFirst {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerSemaphoreCountOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreCountFindFirst) OrderBy(params ...WorkerSemaphoreCountOrderByParam) workerSemaphoreCountFindFirst {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r workerSemaphoreCountFindFirst) Skip(count int) workerSemaphoreCountFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreCountFindFirst) Take(count int) workerSemaphoreCountFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreCountFindFirst) Cursor(cursor WorkerSemaphoreCountCursorParam) workerSemaphoreCountFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r workerSemaphoreCountFindFirst) Exec(ctx context.Context) (
-	*WorkerSemaphoreCountModel,
-	error,
-) {
-	var v *WorkerSemaphoreCountModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreCountFindFirst) ExecInner(ctx context.Context) (
-	*InnerWorkerSemaphoreCount,
-	error,
-) {
-	var v *InnerWorkerSemaphoreCount
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-type workerSemaphoreCountFindMany struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreCountFindMany) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreCountFindMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreCountFindMany) with()                         {}
-func (r workerSemaphoreCountFindMany) workerSemaphoreCountModel()    {}
-func (r workerSemaphoreCountFindMany) workerSemaphoreCountRelation() {}
-
-func (r workerSemaphoreCountActions) FindMany(
-	params ...WorkerSemaphoreCountWhereParam,
-) workerSemaphoreCountFindMany {
-	var v workerSemaphoreCountFindMany
-	v.query = builder.NewQuery()
-	v.query.Engine = r.client
-
-	v.query.Operation = "query"
-
-	v.query.Method = "findMany"
-
-	v.query.Model = "WorkerSemaphoreCount"
-	v.query.Outputs = workerSemaphoreCountOutput
-
-	var where []builder.Field
-	for _, q := range params {
-		if query := q.getQuery(); query.Operation != "" {
-			v.query.Outputs = append(v.query.Outputs, builder.Output{
-				Name:    query.Method,
-				Inputs:  query.Inputs,
-				Outputs: query.Outputs,
-			})
-		} else {
-			where = append(where, q.field())
-		}
-	}
-
-	if len(where) > 0 {
-		v.query.Inputs = append(v.query.Inputs, builder.Input{
-			Name:   "where",
-			Fields: where,
-		})
-	}
-
-	return v
-}
-
-func (r workerSemaphoreCountFindMany) With(params ...WorkerSemaphoreCountRelationWith) workerSemaphoreCountFindMany {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r workerSemaphoreCountFindMany) Select(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountFindMany {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreCountFindMany) Omit(params ...workerSemaphoreCountPrismaFields) workerSemaphoreCountFindMany {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range workerSemaphoreCountOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r workerSemaphoreCountFindMany) OrderBy(params ...WorkerSemaphoreCountOrderByParam) workerSemaphoreCountFindMany {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r workerSemaphoreCountFindMany) Skip(count int) workerSemaphoreCountFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreCountFindMany) Take(count int) workerSemaphoreCountFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r workerSemaphoreCountFindMany) Cursor(cursor WorkerSemaphoreCountCursorParam) workerSemaphoreCountFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r workerSemaphoreCountFindMany) Exec(ctx context.Context) (
-	[]WorkerSemaphoreCountModel,
-	error,
-) {
-	var v []WorkerSemaphoreCountModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreCountFindMany) ExecInner(ctx context.Context) (
-	[]InnerWorkerSemaphoreCount,
-	error,
-) {
-	var v []InnerWorkerSemaphoreCount
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r workerSemaphoreCountFindMany) Update(params ...WorkerSemaphoreCountSetParam) workerSemaphoreCountUpdateMany {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateMany"
-	r.query.Model = "WorkerSemaphoreCount"
-
-	r.query.Outputs = countOutput
-
-	var v workerSemaphoreCountUpdateMany
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type workerSemaphoreCountUpdateMany struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreCountUpdateMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreCountUpdateMany) workerSemaphoreCountModel() {}
-
-func (r workerSemaphoreCountUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreCountUpdateMany) Tx() WorkerSemaphoreCountManyTxResult {
-	v := newWorkerSemaphoreCountManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r workerSemaphoreCountFindMany) Delete() workerSemaphoreCountDeleteMany {
-	var v workerSemaphoreCountDeleteMany
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteMany"
-	v.query.Model = "WorkerSemaphoreCount"
-
-	v.query.Outputs = countOutput
-
-	return v
-}
-
-type workerSemaphoreCountDeleteMany struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreCountDeleteMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p workerSemaphoreCountDeleteMany) workerSemaphoreCountModel() {}
-
-func (r workerSemaphoreCountDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreCountDeleteMany) Tx() WorkerSemaphoreCountManyTxResult {
-	v := newWorkerSemaphoreCountManyTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -422444,6 +412937,54 @@ func (r TimeoutQueueItemManyTxResult) Result() (v *BatchResult) {
 	return v
 }
 
+func newSemaphoreQueueItemUniqueTxResult() SemaphoreQueueItemUniqueTxResult {
+	return SemaphoreQueueItemUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type SemaphoreQueueItemUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p SemaphoreQueueItemUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p SemaphoreQueueItemUniqueTxResult) IsTx() {}
+
+func (r SemaphoreQueueItemUniqueTxResult) Result() (v *SemaphoreQueueItemModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newSemaphoreQueueItemManyTxResult() SemaphoreQueueItemManyTxResult {
+	return SemaphoreQueueItemManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type SemaphoreQueueItemManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p SemaphoreQueueItemManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p SemaphoreQueueItemManyTxResult) IsTx() {}
+
+func (r SemaphoreQueueItemManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
 func newStepRunEventUniqueTxResult() StepRunEventUniqueTxResult {
 	return StepRunEventUniqueTxResult{
 		result: &transaction.Result{},
@@ -422726,150 +413267,6 @@ func (p WorkerManyTxResult) ExtractQuery() builder.Query {
 func (p WorkerManyTxResult) IsTx() {}
 
 func (r WorkerManyTxResult) Result() (v *BatchResult) {
-	if err := r.result.Get(r.query.TxResult, &v); err != nil {
-		panic(err)
-	}
-	return v
-}
-
-func newWorkerSemaphoreUniqueTxResult() WorkerSemaphoreUniqueTxResult {
-	return WorkerSemaphoreUniqueTxResult{
-		result: &transaction.Result{},
-	}
-}
-
-type WorkerSemaphoreUniqueTxResult struct {
-	query  builder.Query
-	result *transaction.Result
-}
-
-func (p WorkerSemaphoreUniqueTxResult) ExtractQuery() builder.Query {
-	return p.query
-}
-
-func (p WorkerSemaphoreUniqueTxResult) IsTx() {}
-
-func (r WorkerSemaphoreUniqueTxResult) Result() (v *WorkerSemaphoreModel) {
-	if err := r.result.Get(r.query.TxResult, &v); err != nil {
-		panic(err)
-	}
-	return v
-}
-
-func newWorkerSemaphoreManyTxResult() WorkerSemaphoreManyTxResult {
-	return WorkerSemaphoreManyTxResult{
-		result: &transaction.Result{},
-	}
-}
-
-type WorkerSemaphoreManyTxResult struct {
-	query  builder.Query
-	result *transaction.Result
-}
-
-func (p WorkerSemaphoreManyTxResult) ExtractQuery() builder.Query {
-	return p.query
-}
-
-func (p WorkerSemaphoreManyTxResult) IsTx() {}
-
-func (r WorkerSemaphoreManyTxResult) Result() (v *BatchResult) {
-	if err := r.result.Get(r.query.TxResult, &v); err != nil {
-		panic(err)
-	}
-	return v
-}
-
-func newWorkerSemaphoreSlotUniqueTxResult() WorkerSemaphoreSlotUniqueTxResult {
-	return WorkerSemaphoreSlotUniqueTxResult{
-		result: &transaction.Result{},
-	}
-}
-
-type WorkerSemaphoreSlotUniqueTxResult struct {
-	query  builder.Query
-	result *transaction.Result
-}
-
-func (p WorkerSemaphoreSlotUniqueTxResult) ExtractQuery() builder.Query {
-	return p.query
-}
-
-func (p WorkerSemaphoreSlotUniqueTxResult) IsTx() {}
-
-func (r WorkerSemaphoreSlotUniqueTxResult) Result() (v *WorkerSemaphoreSlotModel) {
-	if err := r.result.Get(r.query.TxResult, &v); err != nil {
-		panic(err)
-	}
-	return v
-}
-
-func newWorkerSemaphoreSlotManyTxResult() WorkerSemaphoreSlotManyTxResult {
-	return WorkerSemaphoreSlotManyTxResult{
-		result: &transaction.Result{},
-	}
-}
-
-type WorkerSemaphoreSlotManyTxResult struct {
-	query  builder.Query
-	result *transaction.Result
-}
-
-func (p WorkerSemaphoreSlotManyTxResult) ExtractQuery() builder.Query {
-	return p.query
-}
-
-func (p WorkerSemaphoreSlotManyTxResult) IsTx() {}
-
-func (r WorkerSemaphoreSlotManyTxResult) Result() (v *BatchResult) {
-	if err := r.result.Get(r.query.TxResult, &v); err != nil {
-		panic(err)
-	}
-	return v
-}
-
-func newWorkerSemaphoreCountUniqueTxResult() WorkerSemaphoreCountUniqueTxResult {
-	return WorkerSemaphoreCountUniqueTxResult{
-		result: &transaction.Result{},
-	}
-}
-
-type WorkerSemaphoreCountUniqueTxResult struct {
-	query  builder.Query
-	result *transaction.Result
-}
-
-func (p WorkerSemaphoreCountUniqueTxResult) ExtractQuery() builder.Query {
-	return p.query
-}
-
-func (p WorkerSemaphoreCountUniqueTxResult) IsTx() {}
-
-func (r WorkerSemaphoreCountUniqueTxResult) Result() (v *WorkerSemaphoreCountModel) {
-	if err := r.result.Get(r.query.TxResult, &v); err != nil {
-		panic(err)
-	}
-	return v
-}
-
-func newWorkerSemaphoreCountManyTxResult() WorkerSemaphoreCountManyTxResult {
-	return WorkerSemaphoreCountManyTxResult{
-		result: &transaction.Result{},
-	}
-}
-
-type WorkerSemaphoreCountManyTxResult struct {
-	query  builder.Query
-	result *transaction.Result
-}
-
-func (p WorkerSemaphoreCountManyTxResult) ExtractQuery() builder.Query {
-	return p.query
-}
-
-func (p WorkerSemaphoreCountManyTxResult) IsTx() {}
-
-func (r WorkerSemaphoreCountManyTxResult) Result() (v *BatchResult) {
 	if err := r.result.Get(r.query.TxResult, &v); err != nil {
 		panic(err)
 	}
@@ -428175,6 +418572,120 @@ func (r timeoutQueueItemUpsertOne) Tx() TimeoutQueueItemUniqueTxResult {
 	return v
 }
 
+type semaphoreQueueItemUpsertOne struct {
+	query builder.Query
+}
+
+func (r semaphoreQueueItemUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r semaphoreQueueItemUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r semaphoreQueueItemUpsertOne) with()                       {}
+func (r semaphoreQueueItemUpsertOne) semaphoreQueueItemModel()    {}
+func (r semaphoreQueueItemUpsertOne) semaphoreQueueItemRelation() {}
+
+func (r semaphoreQueueItemActions) UpsertOne(
+	params SemaphoreQueueItemEqualsUniqueWhereParam,
+) semaphoreQueueItemUpsertOne {
+	var v semaphoreQueueItemUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "SemaphoreQueueItem"
+	v.query.Outputs = semaphoreQueueItemOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r semaphoreQueueItemUpsertOne) Create(
+
+	_stepRunID SemaphoreQueueItemWithPrismaStepRunIDSetParam,
+	_workerID SemaphoreQueueItemWithPrismaWorkerIDSetParam,
+	_tenantID SemaphoreQueueItemWithPrismaTenantIDSetParam,
+
+	optional ...SemaphoreQueueItemSetParam,
+) semaphoreQueueItemUpsertOne {
+	var v semaphoreQueueItemUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _stepRunID.field())
+	fields = append(fields, _workerID.field())
+	fields = append(fields, _tenantID.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r semaphoreQueueItemUpsertOne) Update(
+	params ...SemaphoreQueueItemSetParam,
+) semaphoreQueueItemUpsertOne {
+	var v semaphoreQueueItemUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r semaphoreQueueItemUpsertOne) Exec(ctx context.Context) (*SemaphoreQueueItemModel, error) {
+	var v SemaphoreQueueItemModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r semaphoreQueueItemUpsertOne) Tx() SemaphoreQueueItemUniqueTxResult {
+	v := newSemaphoreQueueItemUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 type stepRunEventUpsertOne struct {
 	query builder.Query
 }
@@ -428836,340 +419347,6 @@ func (r workerUpsertOne) Exec(ctx context.Context) (*WorkerModel, error) {
 
 func (r workerUpsertOne) Tx() WorkerUniqueTxResult {
 	v := newWorkerUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type workerSemaphoreUpsertOne struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreUpsertOne) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreUpsertOne) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreUpsertOne) with()                    {}
-func (r workerSemaphoreUpsertOne) workerSemaphoreModel()    {}
-func (r workerSemaphoreUpsertOne) workerSemaphoreRelation() {}
-
-func (r workerSemaphoreActions) UpsertOne(
-	params WorkerSemaphoreEqualsUniqueWhereParam,
-) workerSemaphoreUpsertOne {
-	var v workerSemaphoreUpsertOne
-	v.query = builder.NewQuery()
-	v.query.Engine = r.client
-
-	v.query.Operation = "mutation"
-	v.query.Method = "upsertOne"
-	v.query.Model = "WorkerSemaphore"
-	v.query.Outputs = workerSemaphoreOutput
-
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "where",
-		Fields: builder.TransformEquals([]builder.Field{params.field()}),
-	})
-
-	return v
-}
-
-func (r workerSemaphoreUpsertOne) Create(
-
-	_worker WorkerSemaphoreWithPrismaWorkerSetParam,
-	_slots WorkerSemaphoreWithPrismaSlotsSetParam,
-
-	optional ...WorkerSemaphoreSetParam,
-) workerSemaphoreUpsertOne {
-	var v workerSemaphoreUpsertOne
-	v.query = r.query
-
-	var fields []builder.Field
-	fields = append(fields, _worker.field())
-	fields = append(fields, _slots.field())
-
-	for _, q := range optional {
-		fields = append(fields, q.field())
-	}
-
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "create",
-		Fields: fields,
-	})
-
-	return v
-}
-
-func (r workerSemaphoreUpsertOne) Update(
-	params ...WorkerSemaphoreSetParam,
-) workerSemaphoreUpsertOne {
-	var v workerSemaphoreUpsertOne
-	v.query = r.query
-
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "update",
-		Fields: fields,
-	})
-
-	return v
-}
-
-func (r workerSemaphoreUpsertOne) Exec(ctx context.Context) (*WorkerSemaphoreModel, error) {
-	var v WorkerSemaphoreModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreUpsertOne) Tx() WorkerSemaphoreUniqueTxResult {
-	v := newWorkerSemaphoreUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type workerSemaphoreSlotUpsertOne struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreSlotUpsertOne) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotUpsertOne) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreSlotUpsertOne) with()                        {}
-func (r workerSemaphoreSlotUpsertOne) workerSemaphoreSlotModel()    {}
-func (r workerSemaphoreSlotUpsertOne) workerSemaphoreSlotRelation() {}
-
-func (r workerSemaphoreSlotActions) UpsertOne(
-	params WorkerSemaphoreSlotEqualsUniqueWhereParam,
-) workerSemaphoreSlotUpsertOne {
-	var v workerSemaphoreSlotUpsertOne
-	v.query = builder.NewQuery()
-	v.query.Engine = r.client
-
-	v.query.Operation = "mutation"
-	v.query.Method = "upsertOne"
-	v.query.Model = "WorkerSemaphoreSlot"
-	v.query.Outputs = workerSemaphoreSlotOutput
-
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "where",
-		Fields: builder.TransformEquals([]builder.Field{params.field()}),
-	})
-
-	return v
-}
-
-func (r workerSemaphoreSlotUpsertOne) Create(
-
-	_worker WorkerSemaphoreSlotWithPrismaWorkerSetParam,
-
-	optional ...WorkerSemaphoreSlotSetParam,
-) workerSemaphoreSlotUpsertOne {
-	var v workerSemaphoreSlotUpsertOne
-	v.query = r.query
-
-	var fields []builder.Field
-	fields = append(fields, _worker.field())
-
-	for _, q := range optional {
-		fields = append(fields, q.field())
-	}
-
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "create",
-		Fields: fields,
-	})
-
-	return v
-}
-
-func (r workerSemaphoreSlotUpsertOne) Update(
-	params ...WorkerSemaphoreSlotSetParam,
-) workerSemaphoreSlotUpsertOne {
-	var v workerSemaphoreSlotUpsertOne
-	v.query = r.query
-
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "update",
-		Fields: fields,
-	})
-
-	return v
-}
-
-func (r workerSemaphoreSlotUpsertOne) Exec(ctx context.Context) (*WorkerSemaphoreSlotModel, error) {
-	var v WorkerSemaphoreSlotModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreSlotUpsertOne) Tx() WorkerSemaphoreSlotUniqueTxResult {
-	v := newWorkerSemaphoreSlotUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type workerSemaphoreCountUpsertOne struct {
-	query builder.Query
-}
-
-func (r workerSemaphoreCountUpsertOne) getQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreCountUpsertOne) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r workerSemaphoreCountUpsertOne) with()                         {}
-func (r workerSemaphoreCountUpsertOne) workerSemaphoreCountModel()    {}
-func (r workerSemaphoreCountUpsertOne) workerSemaphoreCountRelation() {}
-
-func (r workerSemaphoreCountActions) UpsertOne(
-	params WorkerSemaphoreCountEqualsUniqueWhereParam,
-) workerSemaphoreCountUpsertOne {
-	var v workerSemaphoreCountUpsertOne
-	v.query = builder.NewQuery()
-	v.query.Engine = r.client
-
-	v.query.Operation = "mutation"
-	v.query.Method = "upsertOne"
-	v.query.Model = "WorkerSemaphoreCount"
-	v.query.Outputs = workerSemaphoreCountOutput
-
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "where",
-		Fields: builder.TransformEquals([]builder.Field{params.field()}),
-	})
-
-	return v
-}
-
-func (r workerSemaphoreCountUpsertOne) Create(
-
-	_worker WorkerSemaphoreCountWithPrismaWorkerSetParam,
-	_count WorkerSemaphoreCountWithPrismaCountSetParam,
-
-	optional ...WorkerSemaphoreCountSetParam,
-) workerSemaphoreCountUpsertOne {
-	var v workerSemaphoreCountUpsertOne
-	v.query = r.query
-
-	var fields []builder.Field
-	fields = append(fields, _worker.field())
-	fields = append(fields, _count.field())
-
-	for _, q := range optional {
-		fields = append(fields, q.field())
-	}
-
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "create",
-		Fields: fields,
-	})
-
-	return v
-}
-
-func (r workerSemaphoreCountUpsertOne) Update(
-	params ...WorkerSemaphoreCountSetParam,
-) workerSemaphoreCountUpsertOne {
-	var v workerSemaphoreCountUpsertOne
-	v.query = r.query
-
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "update",
-		Fields: fields,
-	})
-
-	return v
-}
-
-func (r workerSemaphoreCountUpsertOne) Exec(ctx context.Context) (*WorkerSemaphoreCountModel, error) {
-	var v WorkerSemaphoreCountModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r workerSemaphoreCountUpsertOne) Tx() WorkerSemaphoreCountUniqueTxResult {
-	v := newWorkerSemaphoreCountUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
