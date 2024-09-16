@@ -1386,10 +1386,8 @@ model StepRun {
   @@index([id, tenantId])
   // index for ResolveJobRunStatus, ResolveLaterStepRuns, and LinkStepRunParents
   @@index([jobRunId, tenantId, order])
-  // index for ListStepRunsToReassign
-  @@index([jobRunId, status, tenantId])
-  // index for PollStepRuns
-  @@index([tenantId, status, timeoutAt])
+  // NOTE: custom index on "StepRun_jobRunId_status_tenantId_idx" set manually in migrations
+  // deletedAt index
   @@index([deletedAt])
 }
 
@@ -1469,16 +1467,12 @@ model TimeoutQueueItem {
 }
 
 model SemaphoreQueueItem {
-  id BigInt @id @default(autoincrement()) @db.BigInt
-
-  // the parent step run
-  stepRunId String @db.Uuid
+  stepRunId String @id @unique @db.Uuid
   workerId  String @db.Uuid
 
   // the parent tenant
   tenantId String @db.Uuid
 
-  @@unique([stepRunId, workerId])
   @@index([tenantId, workerId])
 }
 
@@ -1528,7 +1522,9 @@ model StepRunEvent {
 
   data Json?
 
-  @@index([stepRunId])
+  // id - timeFirstSeen uniue index
+
+  @@index([stepRunId]) // only on wfr id
 }
 
 model StepRunResultArchive {
@@ -1540,6 +1536,8 @@ model StepRunResultArchive {
   // the parent step run
   stepRun   StepRun @relation(fields: [stepRunId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   stepRunId String  @db.Uuid
+
+  retryCount Int @default(0)
 
   order BigInt @default(autoincrement()) @db.BigInt
 
@@ -2924,7 +2922,6 @@ const (
 type SemaphoreQueueItemScalarFieldEnum string
 
 const (
-	SemaphoreQueueItemScalarFieldEnumID        SemaphoreQueueItemScalarFieldEnum = "id"
 	SemaphoreQueueItemScalarFieldEnumStepRunID SemaphoreQueueItemScalarFieldEnum = "stepRunId"
 	SemaphoreQueueItemScalarFieldEnumWorkerID  SemaphoreQueueItemScalarFieldEnum = "workerId"
 	SemaphoreQueueItemScalarFieldEnumTenantID  SemaphoreQueueItemScalarFieldEnum = "tenantId"
@@ -2952,6 +2949,7 @@ const (
 	StepRunResultArchiveScalarFieldEnumUpdatedAt       StepRunResultArchiveScalarFieldEnum = "updatedAt"
 	StepRunResultArchiveScalarFieldEnumDeletedAt       StepRunResultArchiveScalarFieldEnum = "deletedAt"
 	StepRunResultArchiveScalarFieldEnumStepRunID       StepRunResultArchiveScalarFieldEnum = "stepRunId"
+	StepRunResultArchiveScalarFieldEnumRetryCount      StepRunResultArchiveScalarFieldEnum = "retryCount"
 	StepRunResultArchiveScalarFieldEnumOrder           StepRunResultArchiveScalarFieldEnum = "order"
 	StepRunResultArchiveScalarFieldEnumInput           StepRunResultArchiveScalarFieldEnum = "input"
 	StepRunResultArchiveScalarFieldEnumOutput          StepRunResultArchiveScalarFieldEnum = "output"
@@ -4328,8 +4326,6 @@ const timeoutQueueItemFieldIsQueued timeoutQueueItemPrismaFields = "isQueued"
 
 type semaphoreQueueItemPrismaFields = prismaFields
 
-const semaphoreQueueItemFieldID semaphoreQueueItemPrismaFields = "id"
-
 const semaphoreQueueItemFieldStepRunID semaphoreQueueItemPrismaFields = "stepRunId"
 
 const semaphoreQueueItemFieldWorkerID semaphoreQueueItemPrismaFields = "workerId"
@@ -4371,6 +4367,8 @@ const stepRunResultArchiveFieldDeletedAt stepRunResultArchivePrismaFields = "del
 const stepRunResultArchiveFieldStepRun stepRunResultArchivePrismaFields = "stepRun"
 
 const stepRunResultArchiveFieldStepRunID stepRunResultArchivePrismaFields = "stepRunId"
+
+const stepRunResultArchiveFieldRetryCount stepRunResultArchivePrismaFields = "retryCount"
 
 const stepRunResultArchiveFieldOrder stepRunResultArchivePrismaFields = "order"
 
@@ -11172,7 +11170,6 @@ type SemaphoreQueueItemModel struct {
 
 // InnerSemaphoreQueueItem holds the actual data
 type InnerSemaphoreQueueItem struct {
-	ID        BigInt `json:"id"`
 	StepRunID string `json:"stepRunId"`
 	WorkerID  string `json:"workerId"`
 	TenantID  string `json:"tenantId"`
@@ -11180,7 +11177,6 @@ type InnerSemaphoreQueueItem struct {
 
 // RawSemaphoreQueueItemModel is a struct for SemaphoreQueueItem when used in raw queries
 type RawSemaphoreQueueItemModel struct {
-	ID        RawBigInt `json:"id"`
 	StepRunID RawString `json:"stepRunId"`
 	WorkerID  RawString `json:"workerId"`
 	TenantID  RawString `json:"tenantId"`
@@ -11254,6 +11250,7 @@ type InnerStepRunResultArchive struct {
 	UpdatedAt       DateTime  `json:"updatedAt"`
 	DeletedAt       *DateTime `json:"deletedAt,omitempty"`
 	StepRunID       string    `json:"stepRunId"`
+	RetryCount      int       `json:"retryCount"`
 	Order           BigInt    `json:"order"`
 	Input           *JSON     `json:"input,omitempty"`
 	Output          *JSON     `json:"output,omitempty"`
@@ -11273,6 +11270,7 @@ type RawStepRunResultArchiveModel struct {
 	UpdatedAt       RawDateTime  `json:"updatedAt"`
 	DeletedAt       *RawDateTime `json:"deletedAt,omitempty"`
 	StepRunID       RawString    `json:"stepRunId"`
+	RetryCount      RawInt       `json:"retryCount"`
 	Order           RawBigInt    `json:"order"`
 	Input           *RawJSON     `json:"input,omitempty"`
 	Output          *RawJSON     `json:"output,omitempty"`
@@ -159655,11 +159653,6 @@ var SemaphoreQueueItem = semaphoreQueueItemQuery{}
 // semaphoreQueueItemQuery exposes query functions for the semaphoreQueueItem model
 type semaphoreQueueItemQuery struct {
 
-	// ID
-	//
-	// @required
-	ID semaphoreQueueItemQueryIDBigInt
-
 	// StepRunID
 	//
 	// @required
@@ -159727,327 +159720,6 @@ func (semaphoreQueueItemQuery) And(params ...SemaphoreQueueItemWhereParam) semap
 	}
 }
 
-func (semaphoreQueueItemQuery) StepRunIDWorkerID(
-	_stepRunID SemaphoreQueueItemWithPrismaStepRunIDWhereParam,
-
-	_workerID SemaphoreQueueItemWithPrismaWorkerIDWhereParam,
-) SemaphoreQueueItemEqualsUniqueWhereParam {
-	var fields []builder.Field
-
-	fields = append(fields, _stepRunID.field())
-	fields = append(fields, _workerID.field())
-
-	return semaphoreQueueItemEqualsUniqueParam{
-		data: builder.Field{
-			Name:   "stepRunId_workerId",
-			Fields: builder.TransformEquals(fields),
-		},
-	}
-}
-
-// base struct
-type semaphoreQueueItemQueryIDBigInt struct{}
-
-// Set the required value of ID
-func (r semaphoreQueueItemQueryIDBigInt) Set(value BigInt) semaphoreQueueItemSetParam {
-
-	return semaphoreQueueItemSetParam{
-		data: builder.Field{
-			Name:  "id",
-			Value: value,
-		},
-	}
-
-}
-
-// Set the optional value of ID dynamically
-func (r semaphoreQueueItemQueryIDBigInt) SetIfPresent(value *BigInt) semaphoreQueueItemSetParam {
-	if value == nil {
-		return semaphoreQueueItemSetParam{}
-	}
-
-	return r.Set(*value)
-}
-
-// Increment the required value of ID
-func (r semaphoreQueueItemQueryIDBigInt) Increment(value BigInt) semaphoreQueueItemSetParam {
-	return semaphoreQueueItemSetParam{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				builder.Field{
-					Name:  "increment",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r semaphoreQueueItemQueryIDBigInt) IncrementIfPresent(value *BigInt) semaphoreQueueItemSetParam {
-	if value == nil {
-		return semaphoreQueueItemSetParam{}
-	}
-	return r.Increment(*value)
-}
-
-// Decrement the required value of ID
-func (r semaphoreQueueItemQueryIDBigInt) Decrement(value BigInt) semaphoreQueueItemSetParam {
-	return semaphoreQueueItemSetParam{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				builder.Field{
-					Name:  "decrement",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r semaphoreQueueItemQueryIDBigInt) DecrementIfPresent(value *BigInt) semaphoreQueueItemSetParam {
-	if value == nil {
-		return semaphoreQueueItemSetParam{}
-	}
-	return r.Decrement(*value)
-}
-
-// Multiply the required value of ID
-func (r semaphoreQueueItemQueryIDBigInt) Multiply(value BigInt) semaphoreQueueItemSetParam {
-	return semaphoreQueueItemSetParam{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				builder.Field{
-					Name:  "multiply",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r semaphoreQueueItemQueryIDBigInt) MultiplyIfPresent(value *BigInt) semaphoreQueueItemSetParam {
-	if value == nil {
-		return semaphoreQueueItemSetParam{}
-	}
-	return r.Multiply(*value)
-}
-
-// Divide the required value of ID
-func (r semaphoreQueueItemQueryIDBigInt) Divide(value BigInt) semaphoreQueueItemSetParam {
-	return semaphoreQueueItemSetParam{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				builder.Field{
-					Name:  "divide",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r semaphoreQueueItemQueryIDBigInt) DivideIfPresent(value *BigInt) semaphoreQueueItemSetParam {
-	if value == nil {
-		return semaphoreQueueItemSetParam{}
-	}
-	return r.Divide(*value)
-}
-
-func (r semaphoreQueueItemQueryIDBigInt) Equals(value BigInt) semaphoreQueueItemWithPrismaIDEqualsUniqueParam {
-
-	return semaphoreQueueItemWithPrismaIDEqualsUniqueParam{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				{
-					Name:  "equals",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r semaphoreQueueItemQueryIDBigInt) EqualsIfPresent(value *BigInt) semaphoreQueueItemWithPrismaIDEqualsUniqueParam {
-	if value == nil {
-		return semaphoreQueueItemWithPrismaIDEqualsUniqueParam{}
-	}
-	return r.Equals(*value)
-}
-
-func (r semaphoreQueueItemQueryIDBigInt) Order(direction SortOrder) semaphoreQueueItemDefaultParam {
-	return semaphoreQueueItemDefaultParam{
-		data: builder.Field{
-			Name:  "id",
-			Value: direction,
-		},
-	}
-}
-
-func (r semaphoreQueueItemQueryIDBigInt) Cursor(cursor BigInt) semaphoreQueueItemCursorParam {
-	return semaphoreQueueItemCursorParam{
-		data: builder.Field{
-			Name:  "id",
-			Value: cursor,
-		},
-	}
-}
-
-func (r semaphoreQueueItemQueryIDBigInt) In(value []BigInt) semaphoreQueueItemParamUnique {
-	return semaphoreQueueItemParamUnique{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				{
-					Name:  "in",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r semaphoreQueueItemQueryIDBigInt) InIfPresent(value []BigInt) semaphoreQueueItemParamUnique {
-	if value == nil {
-		return semaphoreQueueItemParamUnique{}
-	}
-	return r.In(value)
-}
-
-func (r semaphoreQueueItemQueryIDBigInt) NotIn(value []BigInt) semaphoreQueueItemParamUnique {
-	return semaphoreQueueItemParamUnique{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				{
-					Name:  "notIn",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r semaphoreQueueItemQueryIDBigInt) NotInIfPresent(value []BigInt) semaphoreQueueItemParamUnique {
-	if value == nil {
-		return semaphoreQueueItemParamUnique{}
-	}
-	return r.NotIn(value)
-}
-
-func (r semaphoreQueueItemQueryIDBigInt) Lt(value BigInt) semaphoreQueueItemParamUnique {
-	return semaphoreQueueItemParamUnique{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				{
-					Name:  "lt",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r semaphoreQueueItemQueryIDBigInt) LtIfPresent(value *BigInt) semaphoreQueueItemParamUnique {
-	if value == nil {
-		return semaphoreQueueItemParamUnique{}
-	}
-	return r.Lt(*value)
-}
-
-func (r semaphoreQueueItemQueryIDBigInt) Lte(value BigInt) semaphoreQueueItemParamUnique {
-	return semaphoreQueueItemParamUnique{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				{
-					Name:  "lte",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r semaphoreQueueItemQueryIDBigInt) LteIfPresent(value *BigInt) semaphoreQueueItemParamUnique {
-	if value == nil {
-		return semaphoreQueueItemParamUnique{}
-	}
-	return r.Lte(*value)
-}
-
-func (r semaphoreQueueItemQueryIDBigInt) Gt(value BigInt) semaphoreQueueItemParamUnique {
-	return semaphoreQueueItemParamUnique{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				{
-					Name:  "gt",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r semaphoreQueueItemQueryIDBigInt) GtIfPresent(value *BigInt) semaphoreQueueItemParamUnique {
-	if value == nil {
-		return semaphoreQueueItemParamUnique{}
-	}
-	return r.Gt(*value)
-}
-
-func (r semaphoreQueueItemQueryIDBigInt) Gte(value BigInt) semaphoreQueueItemParamUnique {
-	return semaphoreQueueItemParamUnique{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				{
-					Name:  "gte",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r semaphoreQueueItemQueryIDBigInt) GteIfPresent(value *BigInt) semaphoreQueueItemParamUnique {
-	if value == nil {
-		return semaphoreQueueItemParamUnique{}
-	}
-	return r.Gte(*value)
-}
-
-func (r semaphoreQueueItemQueryIDBigInt) Not(value BigInt) semaphoreQueueItemParamUnique {
-	return semaphoreQueueItemParamUnique{
-		data: builder.Field{
-			Name: "id",
-			Fields: []builder.Field{
-				{
-					Name:  "not",
-					Value: value,
-				},
-			},
-		},
-	}
-}
-
-func (r semaphoreQueueItemQueryIDBigInt) NotIfPresent(value *BigInt) semaphoreQueueItemParamUnique {
-	if value == nil {
-		return semaphoreQueueItemParamUnique{}
-	}
-	return r.Not(*value)
-}
-
-func (r semaphoreQueueItemQueryIDBigInt) Field() semaphoreQueueItemPrismaFields {
-	return semaphoreQueueItemFieldID
-}
-
 // base struct
 type semaphoreQueueItemQueryStepRunIDString struct{}
 
@@ -160072,9 +159744,9 @@ func (r semaphoreQueueItemQueryStepRunIDString) SetIfPresent(value *String) sema
 	return r.Set(*value)
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) Equals(value string) semaphoreQueueItemWithPrismaStepRunIDEqualsParam {
+func (r semaphoreQueueItemQueryStepRunIDString) Equals(value string) semaphoreQueueItemWithPrismaStepRunIDEqualsUniqueParam {
 
-	return semaphoreQueueItemWithPrismaStepRunIDEqualsParam{
+	return semaphoreQueueItemWithPrismaStepRunIDEqualsUniqueParam{
 		data: builder.Field{
 			Name: "stepRunId",
 			Fields: []builder.Field{
@@ -160087,9 +159759,9 @@ func (r semaphoreQueueItemQueryStepRunIDString) Equals(value string) semaphoreQu
 	}
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) EqualsIfPresent(value *string) semaphoreQueueItemWithPrismaStepRunIDEqualsParam {
+func (r semaphoreQueueItemQueryStepRunIDString) EqualsIfPresent(value *string) semaphoreQueueItemWithPrismaStepRunIDEqualsUniqueParam {
 	if value == nil {
-		return semaphoreQueueItemWithPrismaStepRunIDEqualsParam{}
+		return semaphoreQueueItemWithPrismaStepRunIDEqualsUniqueParam{}
 	}
 	return r.Equals(*value)
 }
@@ -160112,8 +159784,8 @@ func (r semaphoreQueueItemQueryStepRunIDString) Cursor(cursor string) semaphoreQ
 	}
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) In(value []string) semaphoreQueueItemDefaultParam {
-	return semaphoreQueueItemDefaultParam{
+func (r semaphoreQueueItemQueryStepRunIDString) In(value []string) semaphoreQueueItemParamUnique {
+	return semaphoreQueueItemParamUnique{
 		data: builder.Field{
 			Name: "stepRunId",
 			Fields: []builder.Field{
@@ -160126,15 +159798,15 @@ func (r semaphoreQueueItemQueryStepRunIDString) In(value []string) semaphoreQueu
 	}
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) InIfPresent(value []string) semaphoreQueueItemDefaultParam {
+func (r semaphoreQueueItemQueryStepRunIDString) InIfPresent(value []string) semaphoreQueueItemParamUnique {
 	if value == nil {
-		return semaphoreQueueItemDefaultParam{}
+		return semaphoreQueueItemParamUnique{}
 	}
 	return r.In(value)
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) NotIn(value []string) semaphoreQueueItemDefaultParam {
-	return semaphoreQueueItemDefaultParam{
+func (r semaphoreQueueItemQueryStepRunIDString) NotIn(value []string) semaphoreQueueItemParamUnique {
+	return semaphoreQueueItemParamUnique{
 		data: builder.Field{
 			Name: "stepRunId",
 			Fields: []builder.Field{
@@ -160147,15 +159819,15 @@ func (r semaphoreQueueItemQueryStepRunIDString) NotIn(value []string) semaphoreQ
 	}
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) NotInIfPresent(value []string) semaphoreQueueItemDefaultParam {
+func (r semaphoreQueueItemQueryStepRunIDString) NotInIfPresent(value []string) semaphoreQueueItemParamUnique {
 	if value == nil {
-		return semaphoreQueueItemDefaultParam{}
+		return semaphoreQueueItemParamUnique{}
 	}
 	return r.NotIn(value)
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) Lt(value string) semaphoreQueueItemDefaultParam {
-	return semaphoreQueueItemDefaultParam{
+func (r semaphoreQueueItemQueryStepRunIDString) Lt(value string) semaphoreQueueItemParamUnique {
+	return semaphoreQueueItemParamUnique{
 		data: builder.Field{
 			Name: "stepRunId",
 			Fields: []builder.Field{
@@ -160168,15 +159840,15 @@ func (r semaphoreQueueItemQueryStepRunIDString) Lt(value string) semaphoreQueueI
 	}
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) LtIfPresent(value *string) semaphoreQueueItemDefaultParam {
+func (r semaphoreQueueItemQueryStepRunIDString) LtIfPresent(value *string) semaphoreQueueItemParamUnique {
 	if value == nil {
-		return semaphoreQueueItemDefaultParam{}
+		return semaphoreQueueItemParamUnique{}
 	}
 	return r.Lt(*value)
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) Lte(value string) semaphoreQueueItemDefaultParam {
-	return semaphoreQueueItemDefaultParam{
+func (r semaphoreQueueItemQueryStepRunIDString) Lte(value string) semaphoreQueueItemParamUnique {
+	return semaphoreQueueItemParamUnique{
 		data: builder.Field{
 			Name: "stepRunId",
 			Fields: []builder.Field{
@@ -160189,15 +159861,15 @@ func (r semaphoreQueueItemQueryStepRunIDString) Lte(value string) semaphoreQueue
 	}
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) LteIfPresent(value *string) semaphoreQueueItemDefaultParam {
+func (r semaphoreQueueItemQueryStepRunIDString) LteIfPresent(value *string) semaphoreQueueItemParamUnique {
 	if value == nil {
-		return semaphoreQueueItemDefaultParam{}
+		return semaphoreQueueItemParamUnique{}
 	}
 	return r.Lte(*value)
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) Gt(value string) semaphoreQueueItemDefaultParam {
-	return semaphoreQueueItemDefaultParam{
+func (r semaphoreQueueItemQueryStepRunIDString) Gt(value string) semaphoreQueueItemParamUnique {
+	return semaphoreQueueItemParamUnique{
 		data: builder.Field{
 			Name: "stepRunId",
 			Fields: []builder.Field{
@@ -160210,15 +159882,15 @@ func (r semaphoreQueueItemQueryStepRunIDString) Gt(value string) semaphoreQueueI
 	}
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) GtIfPresent(value *string) semaphoreQueueItemDefaultParam {
+func (r semaphoreQueueItemQueryStepRunIDString) GtIfPresent(value *string) semaphoreQueueItemParamUnique {
 	if value == nil {
-		return semaphoreQueueItemDefaultParam{}
+		return semaphoreQueueItemParamUnique{}
 	}
 	return r.Gt(*value)
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) Gte(value string) semaphoreQueueItemDefaultParam {
-	return semaphoreQueueItemDefaultParam{
+func (r semaphoreQueueItemQueryStepRunIDString) Gte(value string) semaphoreQueueItemParamUnique {
+	return semaphoreQueueItemParamUnique{
 		data: builder.Field{
 			Name: "stepRunId",
 			Fields: []builder.Field{
@@ -160231,15 +159903,15 @@ func (r semaphoreQueueItemQueryStepRunIDString) Gte(value string) semaphoreQueue
 	}
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) GteIfPresent(value *string) semaphoreQueueItemDefaultParam {
+func (r semaphoreQueueItemQueryStepRunIDString) GteIfPresent(value *string) semaphoreQueueItemParamUnique {
 	if value == nil {
-		return semaphoreQueueItemDefaultParam{}
+		return semaphoreQueueItemParamUnique{}
 	}
 	return r.Gte(*value)
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) Contains(value string) semaphoreQueueItemDefaultParam {
-	return semaphoreQueueItemDefaultParam{
+func (r semaphoreQueueItemQueryStepRunIDString) Contains(value string) semaphoreQueueItemParamUnique {
+	return semaphoreQueueItemParamUnique{
 		data: builder.Field{
 			Name: "stepRunId",
 			Fields: []builder.Field{
@@ -160252,15 +159924,15 @@ func (r semaphoreQueueItemQueryStepRunIDString) Contains(value string) semaphore
 	}
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) ContainsIfPresent(value *string) semaphoreQueueItemDefaultParam {
+func (r semaphoreQueueItemQueryStepRunIDString) ContainsIfPresent(value *string) semaphoreQueueItemParamUnique {
 	if value == nil {
-		return semaphoreQueueItemDefaultParam{}
+		return semaphoreQueueItemParamUnique{}
 	}
 	return r.Contains(*value)
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) StartsWith(value string) semaphoreQueueItemDefaultParam {
-	return semaphoreQueueItemDefaultParam{
+func (r semaphoreQueueItemQueryStepRunIDString) StartsWith(value string) semaphoreQueueItemParamUnique {
+	return semaphoreQueueItemParamUnique{
 		data: builder.Field{
 			Name: "stepRunId",
 			Fields: []builder.Field{
@@ -160273,15 +159945,15 @@ func (r semaphoreQueueItemQueryStepRunIDString) StartsWith(value string) semapho
 	}
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) StartsWithIfPresent(value *string) semaphoreQueueItemDefaultParam {
+func (r semaphoreQueueItemQueryStepRunIDString) StartsWithIfPresent(value *string) semaphoreQueueItemParamUnique {
 	if value == nil {
-		return semaphoreQueueItemDefaultParam{}
+		return semaphoreQueueItemParamUnique{}
 	}
 	return r.StartsWith(*value)
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) EndsWith(value string) semaphoreQueueItemDefaultParam {
-	return semaphoreQueueItemDefaultParam{
+func (r semaphoreQueueItemQueryStepRunIDString) EndsWith(value string) semaphoreQueueItemParamUnique {
+	return semaphoreQueueItemParamUnique{
 		data: builder.Field{
 			Name: "stepRunId",
 			Fields: []builder.Field{
@@ -160294,15 +159966,15 @@ func (r semaphoreQueueItemQueryStepRunIDString) EndsWith(value string) semaphore
 	}
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) EndsWithIfPresent(value *string) semaphoreQueueItemDefaultParam {
+func (r semaphoreQueueItemQueryStepRunIDString) EndsWithIfPresent(value *string) semaphoreQueueItemParamUnique {
 	if value == nil {
-		return semaphoreQueueItemDefaultParam{}
+		return semaphoreQueueItemParamUnique{}
 	}
 	return r.EndsWith(*value)
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) Mode(value QueryMode) semaphoreQueueItemDefaultParam {
-	return semaphoreQueueItemDefaultParam{
+func (r semaphoreQueueItemQueryStepRunIDString) Mode(value QueryMode) semaphoreQueueItemParamUnique {
+	return semaphoreQueueItemParamUnique{
 		data: builder.Field{
 			Name: "stepRunId",
 			Fields: []builder.Field{
@@ -160315,15 +159987,15 @@ func (r semaphoreQueueItemQueryStepRunIDString) Mode(value QueryMode) semaphoreQ
 	}
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) ModeIfPresent(value *QueryMode) semaphoreQueueItemDefaultParam {
+func (r semaphoreQueueItemQueryStepRunIDString) ModeIfPresent(value *QueryMode) semaphoreQueueItemParamUnique {
 	if value == nil {
-		return semaphoreQueueItemDefaultParam{}
+		return semaphoreQueueItemParamUnique{}
 	}
 	return r.Mode(*value)
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) Not(value string) semaphoreQueueItemDefaultParam {
-	return semaphoreQueueItemDefaultParam{
+func (r semaphoreQueueItemQueryStepRunIDString) Not(value string) semaphoreQueueItemParamUnique {
+	return semaphoreQueueItemParamUnique{
 		data: builder.Field{
 			Name: "stepRunId",
 			Fields: []builder.Field{
@@ -160336,17 +160008,17 @@ func (r semaphoreQueueItemQueryStepRunIDString) Not(value string) semaphoreQueue
 	}
 }
 
-func (r semaphoreQueueItemQueryStepRunIDString) NotIfPresent(value *string) semaphoreQueueItemDefaultParam {
+func (r semaphoreQueueItemQueryStepRunIDString) NotIfPresent(value *string) semaphoreQueueItemParamUnique {
 	if value == nil {
-		return semaphoreQueueItemDefaultParam{}
+		return semaphoreQueueItemParamUnique{}
 	}
 	return r.Not(*value)
 }
 
 // deprecated: Use StartsWith instead.
 
-func (r semaphoreQueueItemQueryStepRunIDString) HasPrefix(value string) semaphoreQueueItemDefaultParam {
-	return semaphoreQueueItemDefaultParam{
+func (r semaphoreQueueItemQueryStepRunIDString) HasPrefix(value string) semaphoreQueueItemParamUnique {
+	return semaphoreQueueItemParamUnique{
 		data: builder.Field{
 			Name: "stepRunId",
 			Fields: []builder.Field{
@@ -160360,17 +160032,17 @@ func (r semaphoreQueueItemQueryStepRunIDString) HasPrefix(value string) semaphor
 }
 
 // deprecated: Use StartsWithIfPresent instead.
-func (r semaphoreQueueItemQueryStepRunIDString) HasPrefixIfPresent(value *string) semaphoreQueueItemDefaultParam {
+func (r semaphoreQueueItemQueryStepRunIDString) HasPrefixIfPresent(value *string) semaphoreQueueItemParamUnique {
 	if value == nil {
-		return semaphoreQueueItemDefaultParam{}
+		return semaphoreQueueItemParamUnique{}
 	}
 	return r.HasPrefix(*value)
 }
 
 // deprecated: Use EndsWith instead.
 
-func (r semaphoreQueueItemQueryStepRunIDString) HasSuffix(value string) semaphoreQueueItemDefaultParam {
-	return semaphoreQueueItemDefaultParam{
+func (r semaphoreQueueItemQueryStepRunIDString) HasSuffix(value string) semaphoreQueueItemParamUnique {
+	return semaphoreQueueItemParamUnique{
 		data: builder.Field{
 			Name: "stepRunId",
 			Fields: []builder.Field{
@@ -160384,9 +160056,9 @@ func (r semaphoreQueueItemQueryStepRunIDString) HasSuffix(value string) semaphor
 }
 
 // deprecated: Use EndsWithIfPresent instead.
-func (r semaphoreQueueItemQueryStepRunIDString) HasSuffixIfPresent(value *string) semaphoreQueueItemDefaultParam {
+func (r semaphoreQueueItemQueryStepRunIDString) HasSuffixIfPresent(value *string) semaphoreQueueItemParamUnique {
 	if value == nil {
-		return semaphoreQueueItemDefaultParam{}
+		return semaphoreQueueItemParamUnique{}
 	}
 	return r.HasSuffix(*value)
 }
@@ -163961,6 +163633,11 @@ type stepRunResultArchiveQuery struct {
 	// @required
 	StepRunID stepRunResultArchiveQueryStepRunIDString
 
+	// RetryCount
+	//
+	// @required
+	RetryCount stepRunResultArchiveQueryRetryCountInt
+
 	// Order
 	//
 	// @required
@@ -165821,6 +165498,405 @@ func (r stepRunResultArchiveQueryStepRunIDString) HasSuffixIfPresent(value *stri
 
 func (r stepRunResultArchiveQueryStepRunIDString) Field() stepRunResultArchivePrismaFields {
 	return stepRunResultArchiveFieldStepRunID
+}
+
+// base struct
+type stepRunResultArchiveQueryRetryCountInt struct{}
+
+// Set the required value of RetryCount
+func (r stepRunResultArchiveQueryRetryCountInt) Set(value int) stepRunResultArchiveSetParam {
+
+	return stepRunResultArchiveSetParam{
+		data: builder.Field{
+			Name:  "retryCount",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of RetryCount dynamically
+func (r stepRunResultArchiveQueryRetryCountInt) SetIfPresent(value *Int) stepRunResultArchiveSetParam {
+	if value == nil {
+		return stepRunResultArchiveSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the required value of RetryCount
+func (r stepRunResultArchiveQueryRetryCountInt) Increment(value int) stepRunResultArchiveSetParam {
+	return stepRunResultArchiveSetParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunResultArchiveQueryRetryCountInt) IncrementIfPresent(value *int) stepRunResultArchiveSetParam {
+	if value == nil {
+		return stepRunResultArchiveSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the required value of RetryCount
+func (r stepRunResultArchiveQueryRetryCountInt) Decrement(value int) stepRunResultArchiveSetParam {
+	return stepRunResultArchiveSetParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunResultArchiveQueryRetryCountInt) DecrementIfPresent(value *int) stepRunResultArchiveSetParam {
+	if value == nil {
+		return stepRunResultArchiveSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the required value of RetryCount
+func (r stepRunResultArchiveQueryRetryCountInt) Multiply(value int) stepRunResultArchiveSetParam {
+	return stepRunResultArchiveSetParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunResultArchiveQueryRetryCountInt) MultiplyIfPresent(value *int) stepRunResultArchiveSetParam {
+	if value == nil {
+		return stepRunResultArchiveSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the required value of RetryCount
+func (r stepRunResultArchiveQueryRetryCountInt) Divide(value int) stepRunResultArchiveSetParam {
+	return stepRunResultArchiveSetParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunResultArchiveQueryRetryCountInt) DivideIfPresent(value *int) stepRunResultArchiveSetParam {
+	if value == nil {
+		return stepRunResultArchiveSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r stepRunResultArchiveQueryRetryCountInt) Equals(value int) stepRunResultArchiveWithPrismaRetryCountEqualsParam {
+
+	return stepRunResultArchiveWithPrismaRetryCountEqualsParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunResultArchiveQueryRetryCountInt) EqualsIfPresent(value *int) stepRunResultArchiveWithPrismaRetryCountEqualsParam {
+	if value == nil {
+		return stepRunResultArchiveWithPrismaRetryCountEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepRunResultArchiveQueryRetryCountInt) Order(direction SortOrder) stepRunResultArchiveDefaultParam {
+	return stepRunResultArchiveDefaultParam{
+		data: builder.Field{
+			Name:  "retryCount",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepRunResultArchiveQueryRetryCountInt) Cursor(cursor int) stepRunResultArchiveCursorParam {
+	return stepRunResultArchiveCursorParam{
+		data: builder.Field{
+			Name:  "retryCount",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepRunResultArchiveQueryRetryCountInt) In(value []int) stepRunResultArchiveDefaultParam {
+	return stepRunResultArchiveDefaultParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunResultArchiveQueryRetryCountInt) InIfPresent(value []int) stepRunResultArchiveDefaultParam {
+	if value == nil {
+		return stepRunResultArchiveDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r stepRunResultArchiveQueryRetryCountInt) NotIn(value []int) stepRunResultArchiveDefaultParam {
+	return stepRunResultArchiveDefaultParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunResultArchiveQueryRetryCountInt) NotInIfPresent(value []int) stepRunResultArchiveDefaultParam {
+	if value == nil {
+		return stepRunResultArchiveDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepRunResultArchiveQueryRetryCountInt) Lt(value int) stepRunResultArchiveDefaultParam {
+	return stepRunResultArchiveDefaultParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunResultArchiveQueryRetryCountInt) LtIfPresent(value *int) stepRunResultArchiveDefaultParam {
+	if value == nil {
+		return stepRunResultArchiveDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r stepRunResultArchiveQueryRetryCountInt) Lte(value int) stepRunResultArchiveDefaultParam {
+	return stepRunResultArchiveDefaultParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunResultArchiveQueryRetryCountInt) LteIfPresent(value *int) stepRunResultArchiveDefaultParam {
+	if value == nil {
+		return stepRunResultArchiveDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r stepRunResultArchiveQueryRetryCountInt) Gt(value int) stepRunResultArchiveDefaultParam {
+	return stepRunResultArchiveDefaultParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunResultArchiveQueryRetryCountInt) GtIfPresent(value *int) stepRunResultArchiveDefaultParam {
+	if value == nil {
+		return stepRunResultArchiveDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r stepRunResultArchiveQueryRetryCountInt) Gte(value int) stepRunResultArchiveDefaultParam {
+	return stepRunResultArchiveDefaultParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunResultArchiveQueryRetryCountInt) GteIfPresent(value *int) stepRunResultArchiveDefaultParam {
+	if value == nil {
+		return stepRunResultArchiveDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r stepRunResultArchiveQueryRetryCountInt) Not(value int) stepRunResultArchiveDefaultParam {
+	return stepRunResultArchiveDefaultParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunResultArchiveQueryRetryCountInt) NotIfPresent(value *int) stepRunResultArchiveDefaultParam {
+	if value == nil {
+		return stepRunResultArchiveDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r stepRunResultArchiveQueryRetryCountInt) LT(value int) stepRunResultArchiveDefaultParam {
+	return stepRunResultArchiveDefaultParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r stepRunResultArchiveQueryRetryCountInt) LTIfPresent(value *int) stepRunResultArchiveDefaultParam {
+	if value == nil {
+		return stepRunResultArchiveDefaultParam{}
+	}
+	return r.LT(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r stepRunResultArchiveQueryRetryCountInt) LTE(value int) stepRunResultArchiveDefaultParam {
+	return stepRunResultArchiveDefaultParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r stepRunResultArchiveQueryRetryCountInt) LTEIfPresent(value *int) stepRunResultArchiveDefaultParam {
+	if value == nil {
+		return stepRunResultArchiveDefaultParam{}
+	}
+	return r.LTE(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r stepRunResultArchiveQueryRetryCountInt) GT(value int) stepRunResultArchiveDefaultParam {
+	return stepRunResultArchiveDefaultParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r stepRunResultArchiveQueryRetryCountInt) GTIfPresent(value *int) stepRunResultArchiveDefaultParam {
+	if value == nil {
+		return stepRunResultArchiveDefaultParam{}
+	}
+	return r.GT(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r stepRunResultArchiveQueryRetryCountInt) GTE(value int) stepRunResultArchiveDefaultParam {
+	return stepRunResultArchiveDefaultParam{
+		data: builder.Field{
+			Name: "retryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r stepRunResultArchiveQueryRetryCountInt) GTEIfPresent(value *int) stepRunResultArchiveDefaultParam {
+	if value == nil {
+		return stepRunResultArchiveDefaultParam{}
+	}
+	return r.GTE(*value)
+}
+
+func (r stepRunResultArchiveQueryRetryCountInt) Field() stepRunResultArchivePrismaFields {
+	return stepRunResultArchiveFieldRetryCount
 }
 
 // base struct
@@ -250247,7 +250323,6 @@ type semaphoreQueueItemActions struct {
 }
 
 var semaphoreQueueItemOutput = []builder.Output{
-	{Name: "id"},
 	{Name: "stepRunId"},
 	{Name: "workerId"},
 	{Name: "tenantId"},
@@ -250416,84 +250491,6 @@ func (p semaphoreQueueItemSetParam) field() builder.Field {
 }
 
 func (p semaphoreQueueItemSetParam) semaphoreQueueItemModel() {}
-
-type SemaphoreQueueItemWithPrismaIDEqualsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	semaphoreQueueItemModel()
-	idField()
-}
-
-type SemaphoreQueueItemWithPrismaIDSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	semaphoreQueueItemModel()
-	idField()
-}
-
-type semaphoreQueueItemWithPrismaIDSetParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p semaphoreQueueItemWithPrismaIDSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p semaphoreQueueItemWithPrismaIDSetParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p semaphoreQueueItemWithPrismaIDSetParam) semaphoreQueueItemModel() {}
-
-func (p semaphoreQueueItemWithPrismaIDSetParam) idField() {}
-
-type SemaphoreQueueItemWithPrismaIDWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	semaphoreQueueItemModel()
-	idField()
-}
-
-type semaphoreQueueItemWithPrismaIDEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p semaphoreQueueItemWithPrismaIDEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p semaphoreQueueItemWithPrismaIDEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p semaphoreQueueItemWithPrismaIDEqualsParam) semaphoreQueueItemModel() {}
-
-func (p semaphoreQueueItemWithPrismaIDEqualsParam) idField() {}
-
-func (semaphoreQueueItemWithPrismaIDSetParam) settable()  {}
-func (semaphoreQueueItemWithPrismaIDEqualsParam) equals() {}
-
-type semaphoreQueueItemWithPrismaIDEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p semaphoreQueueItemWithPrismaIDEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p semaphoreQueueItemWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p semaphoreQueueItemWithPrismaIDEqualsUniqueParam) semaphoreQueueItemModel() {}
-func (p semaphoreQueueItemWithPrismaIDEqualsUniqueParam) idField()                 {}
-
-func (semaphoreQueueItemWithPrismaIDEqualsUniqueParam) unique() {}
-func (semaphoreQueueItemWithPrismaIDEqualsUniqueParam) equals() {}
 
 type SemaphoreQueueItemWithPrismaStepRunIDEqualsSetParam interface {
 	field() builder.Field
@@ -251701,6 +251698,7 @@ var stepRunResultArchiveOutput = []builder.Output{
 	{Name: "updatedAt"},
 	{Name: "deletedAt"},
 	{Name: "stepRunId"},
+	{Name: "retryCount"},
 	{Name: "order"},
 	{Name: "input"},
 	{Name: "output"},
@@ -252344,6 +252342,84 @@ func (p stepRunResultArchiveWithPrismaStepRunIDEqualsUniqueParam) stepRunIDField
 
 func (stepRunResultArchiveWithPrismaStepRunIDEqualsUniqueParam) unique() {}
 func (stepRunResultArchiveWithPrismaStepRunIDEqualsUniqueParam) equals() {}
+
+type StepRunResultArchiveWithPrismaRetryCountEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepRunResultArchiveModel()
+	retryCountField()
+}
+
+type StepRunResultArchiveWithPrismaRetryCountSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRunResultArchiveModel()
+	retryCountField()
+}
+
+type stepRunResultArchiveWithPrismaRetryCountSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunResultArchiveWithPrismaRetryCountSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunResultArchiveWithPrismaRetryCountSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunResultArchiveWithPrismaRetryCountSetParam) stepRunResultArchiveModel() {}
+
+func (p stepRunResultArchiveWithPrismaRetryCountSetParam) retryCountField() {}
+
+type StepRunResultArchiveWithPrismaRetryCountWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRunResultArchiveModel()
+	retryCountField()
+}
+
+type stepRunResultArchiveWithPrismaRetryCountEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunResultArchiveWithPrismaRetryCountEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunResultArchiveWithPrismaRetryCountEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunResultArchiveWithPrismaRetryCountEqualsParam) stepRunResultArchiveModel() {}
+
+func (p stepRunResultArchiveWithPrismaRetryCountEqualsParam) retryCountField() {}
+
+func (stepRunResultArchiveWithPrismaRetryCountSetParam) settable()  {}
+func (stepRunResultArchiveWithPrismaRetryCountEqualsParam) equals() {}
+
+type stepRunResultArchiveWithPrismaRetryCountEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunResultArchiveWithPrismaRetryCountEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunResultArchiveWithPrismaRetryCountEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunResultArchiveWithPrismaRetryCountEqualsUniqueParam) stepRunResultArchiveModel() {}
+func (p stepRunResultArchiveWithPrismaRetryCountEqualsUniqueParam) retryCountField()           {}
+
+func (stepRunResultArchiveWithPrismaRetryCountEqualsUniqueParam) unique() {}
+func (stepRunResultArchiveWithPrismaRetryCountEqualsUniqueParam) equals() {}
 
 type StepRunResultArchiveWithPrismaOrderEqualsSetParam interface {
 	field() builder.Field
