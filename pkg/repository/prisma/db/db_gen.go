@@ -667,6 +667,9 @@ model WorkflowConcurrency {
   getConcurrencyGroup   Action? @relation(fields: [getConcurrencyGroupId], references: [id])
   getConcurrencyGroupId String? @db.Uuid
 
+  // A CEL expression for getting the concurrency group based on the input to the workflow.
+  concurrencyGroupExpression String?
+
   // the maximum number of concurrent workflow runs
   maxRuns Int @default(1)
 
@@ -1373,8 +1376,6 @@ model StepRun {
   childWorkflowRuns WorkflowRun[]
   childSchedules    WorkflowTriggerScheduledRef[]
 
-  events StepRunEvent[]
-
   @@index([tenantId])
   @@index([workerId])
   @@index([createdAt])
@@ -1426,6 +1427,7 @@ model QueueItem {
 enum InternalQueue {
   WORKER_SEMAPHORE_COUNT
   STEP_RUN_UPDATE
+  WORKFLOW_RUN_UPDATE
 }
 
 model InternalQueueItem {
@@ -1493,6 +1495,10 @@ enum StepRunEventReason {
   CANCELLED
   TIMEOUT_REFRESHED
   SLOT_RELEASED
+
+  // NOTE: not actually step run events, but the table is currently named StepRunEvent
+  WORKFLOW_RUN_GROUP_KEY_SUCCEEDED
+  WORKFLOW_RUN_GROUP_KEY_FAILED
 }
 
 enum StepRunEventSeverity {
@@ -1507,8 +1513,10 @@ model StepRunEvent {
   timeLastSeen  DateTime @default(now())
 
   // the parent step run
-  stepRun   StepRun @relation(fields: [stepRunId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  stepRunId String  @db.Uuid
+  stepRunId String? @db.Uuid
+
+  // the parent workflow run
+  workflowRunId String? @db.Uuid
 
   // the event reason
   reason StepRunEventReason
@@ -1522,9 +1530,8 @@ model StepRunEvent {
 
   data Json?
 
-  // id - timeFirstSeen uniue index
-
-  @@index([stepRunId]) // only on wfr id
+  @@index([stepRunId])
+  @@index([workflowRunId])
 }
 
 model StepRunResultArchive {
@@ -2251,27 +2258,30 @@ type InternalQueue string
 const (
 	InternalQueueWorkerSemaphoreCount InternalQueue = "WORKER_SEMAPHORE_COUNT"
 	InternalQueueStepRunUpdate        InternalQueue = "STEP_RUN_UPDATE"
+	InternalQueueWorkflowRunUpdate    InternalQueue = "WORKFLOW_RUN_UPDATE"
 )
 
 type RawInternalQueue InternalQueue
 type StepRunEventReason string
 
 const (
-	StepRunEventReasonRequeuedNoWorker   StepRunEventReason = "REQUEUED_NO_WORKER"
-	StepRunEventReasonRequeuedRateLimit  StepRunEventReason = "REQUEUED_RATE_LIMIT"
-	StepRunEventReasonSchedulingTimedOut StepRunEventReason = "SCHEDULING_TIMED_OUT"
-	StepRunEventReasonTimedOut           StepRunEventReason = "TIMED_OUT"
-	StepRunEventReasonReassigned         StepRunEventReason = "REASSIGNED"
-	StepRunEventReasonAssigned           StepRunEventReason = "ASSIGNED"
-	StepRunEventReasonSentToWorker       StepRunEventReason = "SENT_TO_WORKER"
-	StepRunEventReasonStarted            StepRunEventReason = "STARTED"
-	StepRunEventReasonFinished           StepRunEventReason = "FINISHED"
-	StepRunEventReasonFailed             StepRunEventReason = "FAILED"
-	StepRunEventReasonRetrying           StepRunEventReason = "RETRYING"
-	StepRunEventReasonRetriedByUser      StepRunEventReason = "RETRIED_BY_USER"
-	StepRunEventReasonCancelled          StepRunEventReason = "CANCELLED"
-	StepRunEventReasonTimeoutRefreshed   StepRunEventReason = "TIMEOUT_REFRESHED"
-	StepRunEventReasonSlotReleased       StepRunEventReason = "SLOT_RELEASED"
+	StepRunEventReasonRequeuedNoWorker             StepRunEventReason = "REQUEUED_NO_WORKER"
+	StepRunEventReasonRequeuedRateLimit            StepRunEventReason = "REQUEUED_RATE_LIMIT"
+	StepRunEventReasonSchedulingTimedOut           StepRunEventReason = "SCHEDULING_TIMED_OUT"
+	StepRunEventReasonTimedOut                     StepRunEventReason = "TIMED_OUT"
+	StepRunEventReasonReassigned                   StepRunEventReason = "REASSIGNED"
+	StepRunEventReasonAssigned                     StepRunEventReason = "ASSIGNED"
+	StepRunEventReasonSentToWorker                 StepRunEventReason = "SENT_TO_WORKER"
+	StepRunEventReasonStarted                      StepRunEventReason = "STARTED"
+	StepRunEventReasonFinished                     StepRunEventReason = "FINISHED"
+	StepRunEventReasonFailed                       StepRunEventReason = "FAILED"
+	StepRunEventReasonRetrying                     StepRunEventReason = "RETRYING"
+	StepRunEventReasonRetriedByUser                StepRunEventReason = "RETRIED_BY_USER"
+	StepRunEventReasonCancelled                    StepRunEventReason = "CANCELLED"
+	StepRunEventReasonTimeoutRefreshed             StepRunEventReason = "TIMEOUT_REFRESHED"
+	StepRunEventReasonSlotReleased                 StepRunEventReason = "SLOT_RELEASED"
+	StepRunEventReasonWorkflowRunGroupKeySucceeded StepRunEventReason = "WORKFLOW_RUN_GROUP_KEY_SUCCEEDED"
+	StepRunEventReasonWorkflowRunGroupKeyFailed    StepRunEventReason = "WORKFLOW_RUN_GROUP_KEY_FAILED"
 )
 
 type RawStepRunEventReason StepRunEventReason
@@ -2588,13 +2598,14 @@ const (
 type WorkflowConcurrencyScalarFieldEnum string
 
 const (
-	WorkflowConcurrencyScalarFieldEnumID                    WorkflowConcurrencyScalarFieldEnum = "id"
-	WorkflowConcurrencyScalarFieldEnumCreatedAt             WorkflowConcurrencyScalarFieldEnum = "createdAt"
-	WorkflowConcurrencyScalarFieldEnumUpdatedAt             WorkflowConcurrencyScalarFieldEnum = "updatedAt"
-	WorkflowConcurrencyScalarFieldEnumWorkflowVersionID     WorkflowConcurrencyScalarFieldEnum = "workflowVersionId"
-	WorkflowConcurrencyScalarFieldEnumGetConcurrencyGroupID WorkflowConcurrencyScalarFieldEnum = "getConcurrencyGroupId"
-	WorkflowConcurrencyScalarFieldEnumMaxRuns               WorkflowConcurrencyScalarFieldEnum = "maxRuns"
-	WorkflowConcurrencyScalarFieldEnumLimitStrategy         WorkflowConcurrencyScalarFieldEnum = "limitStrategy"
+	WorkflowConcurrencyScalarFieldEnumID                         WorkflowConcurrencyScalarFieldEnum = "id"
+	WorkflowConcurrencyScalarFieldEnumCreatedAt                  WorkflowConcurrencyScalarFieldEnum = "createdAt"
+	WorkflowConcurrencyScalarFieldEnumUpdatedAt                  WorkflowConcurrencyScalarFieldEnum = "updatedAt"
+	WorkflowConcurrencyScalarFieldEnumWorkflowVersionID          WorkflowConcurrencyScalarFieldEnum = "workflowVersionId"
+	WorkflowConcurrencyScalarFieldEnumGetConcurrencyGroupID      WorkflowConcurrencyScalarFieldEnum = "getConcurrencyGroupId"
+	WorkflowConcurrencyScalarFieldEnumConcurrencyGroupExpression WorkflowConcurrencyScalarFieldEnum = "concurrencyGroupExpression"
+	WorkflowConcurrencyScalarFieldEnumMaxRuns                    WorkflowConcurrencyScalarFieldEnum = "maxRuns"
+	WorkflowConcurrencyScalarFieldEnumLimitStrategy              WorkflowConcurrencyScalarFieldEnum = "limitStrategy"
 )
 
 type WorkflowTriggersScalarFieldEnum string
@@ -2934,6 +2945,7 @@ const (
 	StepRunEventScalarFieldEnumTimeFirstSeen StepRunEventScalarFieldEnum = "timeFirstSeen"
 	StepRunEventScalarFieldEnumTimeLastSeen  StepRunEventScalarFieldEnum = "timeLastSeen"
 	StepRunEventScalarFieldEnumStepRunID     StepRunEventScalarFieldEnum = "stepRunId"
+	StepRunEventScalarFieldEnumWorkflowRunID StepRunEventScalarFieldEnum = "workflowRunId"
 	StepRunEventScalarFieldEnumReason        StepRunEventScalarFieldEnum = "reason"
 	StepRunEventScalarFieldEnumSeverity      StepRunEventScalarFieldEnum = "severity"
 	StepRunEventScalarFieldEnumMessage       StepRunEventScalarFieldEnum = "message"
@@ -3696,6 +3708,8 @@ const workflowConcurrencyFieldGetConcurrencyGroup workflowConcurrencyPrismaField
 
 const workflowConcurrencyFieldGetConcurrencyGroupID workflowConcurrencyPrismaFields = "getConcurrencyGroupId"
 
+const workflowConcurrencyFieldConcurrencyGroupExpression workflowConcurrencyPrismaFields = "concurrencyGroupExpression"
+
 const workflowConcurrencyFieldMaxRuns workflowConcurrencyPrismaFields = "maxRuns"
 
 const workflowConcurrencyFieldLimitStrategy workflowConcurrencyPrismaFields = "limitStrategy"
@@ -4258,8 +4272,6 @@ const stepRunFieldChildWorkflowRuns stepRunPrismaFields = "childWorkflowRuns"
 
 const stepRunFieldChildSchedules stepRunPrismaFields = "childSchedules"
 
-const stepRunFieldEvents stepRunPrismaFields = "events"
-
 type queuePrismaFields = prismaFields
 
 const queueFieldID queuePrismaFields = "id"
@@ -4340,9 +4352,9 @@ const stepRunEventFieldTimeFirstSeen stepRunEventPrismaFields = "timeFirstSeen"
 
 const stepRunEventFieldTimeLastSeen stepRunEventPrismaFields = "timeLastSeen"
 
-const stepRunEventFieldStepRun stepRunEventPrismaFields = "stepRun"
-
 const stepRunEventFieldStepRunID stepRunEventPrismaFields = "stepRunId"
+
+const stepRunEventFieldWorkflowRunID stepRunEventPrismaFields = "workflowRunId"
 
 const stepRunEventFieldReason stepRunEventPrismaFields = "reason"
 
@@ -9034,24 +9046,26 @@ type WorkflowConcurrencyModel struct {
 
 // InnerWorkflowConcurrency holds the actual data
 type InnerWorkflowConcurrency struct {
-	ID                    string                   `json:"id"`
-	CreatedAt             DateTime                 `json:"createdAt"`
-	UpdatedAt             DateTime                 `json:"updatedAt"`
-	WorkflowVersionID     string                   `json:"workflowVersionId"`
-	GetConcurrencyGroupID *string                  `json:"getConcurrencyGroupId,omitempty"`
-	MaxRuns               int                      `json:"maxRuns"`
-	LimitStrategy         ConcurrencyLimitStrategy `json:"limitStrategy"`
+	ID                         string                   `json:"id"`
+	CreatedAt                  DateTime                 `json:"createdAt"`
+	UpdatedAt                  DateTime                 `json:"updatedAt"`
+	WorkflowVersionID          string                   `json:"workflowVersionId"`
+	GetConcurrencyGroupID      *string                  `json:"getConcurrencyGroupId,omitempty"`
+	ConcurrencyGroupExpression *string                  `json:"concurrencyGroupExpression,omitempty"`
+	MaxRuns                    int                      `json:"maxRuns"`
+	LimitStrategy              ConcurrencyLimitStrategy `json:"limitStrategy"`
 }
 
 // RawWorkflowConcurrencyModel is a struct for WorkflowConcurrency when used in raw queries
 type RawWorkflowConcurrencyModel struct {
-	ID                    RawString                   `json:"id"`
-	CreatedAt             RawDateTime                 `json:"createdAt"`
-	UpdatedAt             RawDateTime                 `json:"updatedAt"`
-	WorkflowVersionID     RawString                   `json:"workflowVersionId"`
-	GetConcurrencyGroupID *RawString                  `json:"getConcurrencyGroupId,omitempty"`
-	MaxRuns               RawInt                      `json:"maxRuns"`
-	LimitStrategy         RawConcurrencyLimitStrategy `json:"limitStrategy"`
+	ID                         RawString                   `json:"id"`
+	CreatedAt                  RawDateTime                 `json:"createdAt"`
+	UpdatedAt                  RawDateTime                 `json:"updatedAt"`
+	WorkflowVersionID          RawString                   `json:"workflowVersionId"`
+	GetConcurrencyGroupID      *RawString                  `json:"getConcurrencyGroupId,omitempty"`
+	ConcurrencyGroupExpression *RawString                  `json:"concurrencyGroupExpression,omitempty"`
+	MaxRuns                    RawInt                      `json:"maxRuns"`
+	LimitStrategy              RawConcurrencyLimitStrategy `json:"limitStrategy"`
 }
 
 // RelationsWorkflowConcurrency holds the relation data separately
@@ -9079,6 +9093,13 @@ func (r WorkflowConcurrencyModel) GetConcurrencyGroupID() (value String, ok bool
 		return value, false
 	}
 	return *r.InnerWorkflowConcurrency.GetConcurrencyGroupID, true
+}
+
+func (r WorkflowConcurrencyModel) ConcurrencyGroupExpression() (value String, ok bool) {
+	if r.InnerWorkflowConcurrency.ConcurrencyGroupExpression == nil {
+		return value, false
+	}
+	return *r.InnerWorkflowConcurrency.ConcurrencyGroupExpression, true
 }
 
 // WorkflowTriggersModel represents the WorkflowTriggers model and is a wrapper for accessing fields and methods
@@ -10751,7 +10772,6 @@ type RelationsStepRun struct {
 	Logs              []LogLineModel                     `json:"logs,omitempty"`
 	ChildWorkflowRuns []WorkflowRunModel                 `json:"childWorkflowRuns,omitempty"`
 	ChildSchedules    []WorkflowTriggerScheduledRefModel `json:"childSchedules,omitempty"`
-	Events            []StepRunEventModel                `json:"events,omitempty"`
 }
 
 func (r StepRunModel) DeletedAt() (value DateTime, ok bool) {
@@ -10962,13 +10982,6 @@ func (r StepRunModel) ChildSchedules() (value []WorkflowTriggerScheduledRefModel
 		panic("attempted to access childSchedules but did not fetch it using the .With() syntax")
 	}
 	return r.RelationsStepRun.ChildSchedules
-}
-
-func (r StepRunModel) Events() (value []StepRunEventModel) {
-	if r.RelationsStepRun.Events == nil {
-		panic("attempted to access events but did not fetch it using the .With() syntax")
-	}
-	return r.RelationsStepRun.Events
 }
 
 // QueueModel represents the Queue model and is a wrapper for accessing fields and methods
@@ -11197,7 +11210,8 @@ type InnerStepRunEvent struct {
 	ID            BigInt               `json:"id"`
 	TimeFirstSeen DateTime             `json:"timeFirstSeen"`
 	TimeLastSeen  DateTime             `json:"timeLastSeen"`
-	StepRunID     string               `json:"stepRunId"`
+	StepRunID     *string              `json:"stepRunId,omitempty"`
+	WorkflowRunID *string              `json:"workflowRunId,omitempty"`
 	Reason        StepRunEventReason   `json:"reason"`
 	Severity      StepRunEventSeverity `json:"severity"`
 	Message       string               `json:"message"`
@@ -11210,7 +11224,8 @@ type RawStepRunEventModel struct {
 	ID            RawBigInt               `json:"id"`
 	TimeFirstSeen RawDateTime             `json:"timeFirstSeen"`
 	TimeLastSeen  RawDateTime             `json:"timeLastSeen"`
-	StepRunID     RawString               `json:"stepRunId"`
+	StepRunID     *RawString              `json:"stepRunId,omitempty"`
+	WorkflowRunID *RawString              `json:"workflowRunId,omitempty"`
 	Reason        RawStepRunEventReason   `json:"reason"`
 	Severity      RawStepRunEventSeverity `json:"severity"`
 	Message       RawString               `json:"message"`
@@ -11220,14 +11235,20 @@ type RawStepRunEventModel struct {
 
 // RelationsStepRunEvent holds the relation data separately
 type RelationsStepRunEvent struct {
-	StepRun *StepRunModel `json:"stepRun,omitempty"`
 }
 
-func (r StepRunEventModel) StepRun() (value *StepRunModel) {
-	if r.RelationsStepRunEvent.StepRun == nil {
-		panic("attempted to access stepRun but did not fetch it using the .With() syntax")
+func (r StepRunEventModel) StepRunID() (value String, ok bool) {
+	if r.InnerStepRunEvent.StepRunID == nil {
+		return value, false
 	}
-	return r.RelationsStepRunEvent.StepRun
+	return *r.InnerStepRunEvent.StepRunID, true
+}
+
+func (r StepRunEventModel) WorkflowRunID() (value String, ok bool) {
+	if r.InnerStepRunEvent.WorkflowRunID == nil {
+		return value, false
+	}
+	return *r.InnerStepRunEvent.WorkflowRunID, true
 }
 
 func (r StepRunEventModel) Data() (value JSON, ok bool) {
@@ -73207,6 +73228,11 @@ type workflowConcurrencyQuery struct {
 	// @optional
 	GetConcurrencyGroupID workflowConcurrencyQueryGetConcurrencyGroupIDString
 
+	// ConcurrencyGroupExpression
+	//
+	// @optional
+	ConcurrencyGroupExpression workflowConcurrencyQueryConcurrencyGroupExpressionString
+
 	// MaxRuns
 	//
 	// @required
@@ -75151,6 +75177,398 @@ func (r workflowConcurrencyQueryGetConcurrencyGroupIDString) HasSuffixIfPresent(
 
 func (r workflowConcurrencyQueryGetConcurrencyGroupIDString) Field() workflowConcurrencyPrismaFields {
 	return workflowConcurrencyFieldGetConcurrencyGroupID
+}
+
+// base struct
+type workflowConcurrencyQueryConcurrencyGroupExpressionString struct{}
+
+// Set the optional value of ConcurrencyGroupExpression
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) Set(value string) workflowConcurrencySetParam {
+
+	return workflowConcurrencySetParam{
+		data: builder.Field{
+			Name:  "concurrencyGroupExpression",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ConcurrencyGroupExpression dynamically
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) SetIfPresent(value *String) workflowConcurrencySetParam {
+	if value == nil {
+		return workflowConcurrencySetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of ConcurrencyGroupExpression dynamically
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) SetOptional(value *String) workflowConcurrencySetParam {
+	if value == nil {
+
+		var v *string
+		return workflowConcurrencySetParam{
+			data: builder.Field{
+				Name:  "concurrencyGroupExpression",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) Equals(value string) workflowConcurrencyWithPrismaConcurrencyGroupExpressionEqualsParam {
+
+	return workflowConcurrencyWithPrismaConcurrencyGroupExpressionEqualsParam{
+		data: builder.Field{
+			Name: "concurrencyGroupExpression",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) EqualsIfPresent(value *string) workflowConcurrencyWithPrismaConcurrencyGroupExpressionEqualsParam {
+	if value == nil {
+		return workflowConcurrencyWithPrismaConcurrencyGroupExpressionEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) EqualsOptional(value *String) workflowConcurrencyDefaultParam {
+	return workflowConcurrencyDefaultParam{
+		data: builder.Field{
+			Name: "concurrencyGroupExpression",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) IsNull() workflowConcurrencyDefaultParam {
+	var str *string = nil
+	return workflowConcurrencyDefaultParam{
+		data: builder.Field{
+			Name: "concurrencyGroupExpression",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) Order(direction SortOrder) workflowConcurrencyDefaultParam {
+	return workflowConcurrencyDefaultParam{
+		data: builder.Field{
+			Name:  "concurrencyGroupExpression",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) Cursor(cursor string) workflowConcurrencyCursorParam {
+	return workflowConcurrencyCursorParam{
+		data: builder.Field{
+			Name:  "concurrencyGroupExpression",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) In(value []string) workflowConcurrencyDefaultParam {
+	return workflowConcurrencyDefaultParam{
+		data: builder.Field{
+			Name: "concurrencyGroupExpression",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) InIfPresent(value []string) workflowConcurrencyDefaultParam {
+	if value == nil {
+		return workflowConcurrencyDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) NotIn(value []string) workflowConcurrencyDefaultParam {
+	return workflowConcurrencyDefaultParam{
+		data: builder.Field{
+			Name: "concurrencyGroupExpression",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) NotInIfPresent(value []string) workflowConcurrencyDefaultParam {
+	if value == nil {
+		return workflowConcurrencyDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) Lt(value string) workflowConcurrencyDefaultParam {
+	return workflowConcurrencyDefaultParam{
+		data: builder.Field{
+			Name: "concurrencyGroupExpression",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) LtIfPresent(value *string) workflowConcurrencyDefaultParam {
+	if value == nil {
+		return workflowConcurrencyDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) Lte(value string) workflowConcurrencyDefaultParam {
+	return workflowConcurrencyDefaultParam{
+		data: builder.Field{
+			Name: "concurrencyGroupExpression",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) LteIfPresent(value *string) workflowConcurrencyDefaultParam {
+	if value == nil {
+		return workflowConcurrencyDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) Gt(value string) workflowConcurrencyDefaultParam {
+	return workflowConcurrencyDefaultParam{
+		data: builder.Field{
+			Name: "concurrencyGroupExpression",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) GtIfPresent(value *string) workflowConcurrencyDefaultParam {
+	if value == nil {
+		return workflowConcurrencyDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) Gte(value string) workflowConcurrencyDefaultParam {
+	return workflowConcurrencyDefaultParam{
+		data: builder.Field{
+			Name: "concurrencyGroupExpression",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) GteIfPresent(value *string) workflowConcurrencyDefaultParam {
+	if value == nil {
+		return workflowConcurrencyDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) Contains(value string) workflowConcurrencyDefaultParam {
+	return workflowConcurrencyDefaultParam{
+		data: builder.Field{
+			Name: "concurrencyGroupExpression",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) ContainsIfPresent(value *string) workflowConcurrencyDefaultParam {
+	if value == nil {
+		return workflowConcurrencyDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) StartsWith(value string) workflowConcurrencyDefaultParam {
+	return workflowConcurrencyDefaultParam{
+		data: builder.Field{
+			Name: "concurrencyGroupExpression",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) StartsWithIfPresent(value *string) workflowConcurrencyDefaultParam {
+	if value == nil {
+		return workflowConcurrencyDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) EndsWith(value string) workflowConcurrencyDefaultParam {
+	return workflowConcurrencyDefaultParam{
+		data: builder.Field{
+			Name: "concurrencyGroupExpression",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) EndsWithIfPresent(value *string) workflowConcurrencyDefaultParam {
+	if value == nil {
+		return workflowConcurrencyDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) Mode(value QueryMode) workflowConcurrencyDefaultParam {
+	return workflowConcurrencyDefaultParam{
+		data: builder.Field{
+			Name: "concurrencyGroupExpression",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) ModeIfPresent(value *QueryMode) workflowConcurrencyDefaultParam {
+	if value == nil {
+		return workflowConcurrencyDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) Not(value string) workflowConcurrencyDefaultParam {
+	return workflowConcurrencyDefaultParam{
+		data: builder.Field{
+			Name: "concurrencyGroupExpression",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) NotIfPresent(value *string) workflowConcurrencyDefaultParam {
+	if value == nil {
+		return workflowConcurrencyDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) HasPrefix(value string) workflowConcurrencyDefaultParam {
+	return workflowConcurrencyDefaultParam{
+		data: builder.Field{
+			Name: "concurrencyGroupExpression",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) HasPrefixIfPresent(value *string) workflowConcurrencyDefaultParam {
+	if value == nil {
+		return workflowConcurrencyDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) HasSuffix(value string) workflowConcurrencyDefaultParam {
+	return workflowConcurrencyDefaultParam{
+		data: builder.Field{
+			Name: "concurrencyGroupExpression",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) HasSuffixIfPresent(value *string) workflowConcurrencyDefaultParam {
+	if value == nil {
+		return workflowConcurrencyDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r workflowConcurrencyQueryConcurrencyGroupExpressionString) Field() workflowConcurrencyPrismaFields {
+	return workflowConcurrencyFieldConcurrencyGroupExpression
 }
 
 // base struct
@@ -138608,8 +139026,6 @@ type stepRunQuery struct {
 	ChildWorkflowRuns stepRunQueryChildWorkflowRunsRelations
 
 	ChildSchedules stepRunQueryChildSchedulesRelations
-
-	Events stepRunQueryEventsRelations
 }
 
 func (stepRunQuery) Not(params ...StepRunWhereParam) stepRunDefaultParam {
@@ -150313,178 +150729,6 @@ func (r stepRunQueryChildSchedulesWorkflowTriggerScheduledRef) Field() stepRunPr
 	return stepRunFieldChildSchedules
 }
 
-// base struct
-type stepRunQueryEventsStepRunEvent struct{}
-
-type stepRunQueryEventsRelations struct{}
-
-// StepRun -> Events
-//
-// @relation
-// @required
-func (stepRunQueryEventsRelations) Some(
-	params ...StepRunEventWhereParam,
-) stepRunDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return stepRunDefaultParam{
-		data: builder.Field{
-			Name: "events",
-			Fields: []builder.Field{
-				{
-					Name:   "some",
-					Fields: fields,
-				},
-			},
-		},
-	}
-}
-
-// StepRun -> Events
-//
-// @relation
-// @required
-func (stepRunQueryEventsRelations) Every(
-	params ...StepRunEventWhereParam,
-) stepRunDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return stepRunDefaultParam{
-		data: builder.Field{
-			Name: "events",
-			Fields: []builder.Field{
-				{
-					Name:   "every",
-					Fields: fields,
-				},
-			},
-		},
-	}
-}
-
-// StepRun -> Events
-//
-// @relation
-// @required
-func (stepRunQueryEventsRelations) None(
-	params ...StepRunEventWhereParam,
-) stepRunDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return stepRunDefaultParam{
-		data: builder.Field{
-			Name: "events",
-			Fields: []builder.Field{
-				{
-					Name:   "none",
-					Fields: fields,
-				},
-			},
-		},
-	}
-}
-
-func (stepRunQueryEventsRelations) Fetch(
-
-	params ...StepRunEventWhereParam,
-
-) stepRunToEventsFindMany {
-	var v stepRunToEventsFindMany
-
-	v.query.Operation = "query"
-	v.query.Method = "events"
-	v.query.Outputs = stepRunEventOutput
-
-	var where []builder.Field
-	for _, q := range params {
-		if query := q.getQuery(); query.Operation != "" {
-			v.query.Outputs = append(v.query.Outputs, builder.Output{
-				Name:    query.Method,
-				Inputs:  query.Inputs,
-				Outputs: query.Outputs,
-			})
-		} else {
-			where = append(where, q.field())
-		}
-	}
-
-	if len(where) > 0 {
-		v.query.Inputs = append(v.query.Inputs, builder.Input{
-			Name:   "where",
-			Fields: where,
-		})
-	}
-
-	return v
-}
-
-func (r stepRunQueryEventsRelations) Link(
-	params ...StepRunEventWhereParam,
-) stepRunSetParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return stepRunSetParam{
-		data: builder.Field{
-			Name: "events",
-			Fields: []builder.Field{
-				{
-					Name:   "connect",
-					Fields: builder.TransformEquals(fields),
-
-					List:     true,
-					WrapList: true,
-				},
-			},
-		},
-	}
-}
-
-func (r stepRunQueryEventsRelations) Unlink(
-	params ...StepRunEventWhereParam,
-) stepRunSetParam {
-	var v stepRunSetParam
-
-	var fields []builder.Field
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-	v = stepRunSetParam{
-		data: builder.Field{
-			Name: "events",
-			Fields: []builder.Field{
-				{
-					Name:     "disconnect",
-					List:     true,
-					WrapList: true,
-					Fields:   builder.TransformEquals(fields),
-				},
-			},
-		},
-	}
-
-	return v
-}
-
-func (r stepRunQueryEventsStepRunEvent) Field() stepRunPrismaFields {
-	return stepRunFieldEvents
-}
-
 // Queue acts as a namespaces to access query methods for the Queue model
 var Queue = queueQuery{}
 
@@ -160783,12 +161027,15 @@ type stepRunEventQuery struct {
 	// @required
 	TimeLastSeen stepRunEventQueryTimeLastSeenDateTime
 
-	StepRun stepRunEventQueryStepRunRelations
-
 	// StepRunID
 	//
-	// @required
+	// @optional
 	StepRunID stepRunEventQueryStepRunIDString
+
+	// WorkflowRunID
+	//
+	// @optional
+	WorkflowRunID stepRunEventQueryWorkflowRunIDString
 
 	// Reason
 	//
@@ -161793,97 +162040,9 @@ func (r stepRunEventQueryTimeLastSeenDateTime) Field() stepRunEventPrismaFields 
 }
 
 // base struct
-type stepRunEventQueryStepRunStepRun struct{}
-
-type stepRunEventQueryStepRunRelations struct{}
-
-// StepRunEvent -> StepRun
-//
-// @relation
-// @required
-func (stepRunEventQueryStepRunRelations) Where(
-	params ...StepRunWhereParam,
-) stepRunEventDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return stepRunEventDefaultParam{
-		data: builder.Field{
-			Name: "stepRun",
-			Fields: []builder.Field{
-				{
-					Name:   "is",
-					Fields: fields,
-				},
-			},
-		},
-	}
-}
-
-func (stepRunEventQueryStepRunRelations) Fetch() stepRunEventToStepRunFindUnique {
-	var v stepRunEventToStepRunFindUnique
-
-	v.query.Operation = "query"
-	v.query.Method = "stepRun"
-	v.query.Outputs = stepRunOutput
-
-	return v
-}
-
-func (r stepRunEventQueryStepRunRelations) Link(
-	params StepRunWhereParam,
-) stepRunEventWithPrismaStepRunSetParam {
-	var fields []builder.Field
-
-	f := params.field()
-	if f.Fields == nil && f.Value == nil {
-		return stepRunEventWithPrismaStepRunSetParam{}
-	}
-
-	fields = append(fields, f)
-
-	return stepRunEventWithPrismaStepRunSetParam{
-		data: builder.Field{
-			Name: "stepRun",
-			Fields: []builder.Field{
-				{
-					Name:   "connect",
-					Fields: builder.TransformEquals(fields),
-				},
-			},
-		},
-	}
-}
-
-func (r stepRunEventQueryStepRunRelations) Unlink() stepRunEventWithPrismaStepRunSetParam {
-	var v stepRunEventWithPrismaStepRunSetParam
-
-	v = stepRunEventWithPrismaStepRunSetParam{
-		data: builder.Field{
-			Name: "stepRun",
-			Fields: []builder.Field{
-				{
-					Name:  "disconnect",
-					Value: true,
-				},
-			},
-		},
-	}
-
-	return v
-}
-
-func (r stepRunEventQueryStepRunStepRun) Field() stepRunEventPrismaFields {
-	return stepRunEventFieldStepRun
-}
-
-// base struct
 type stepRunEventQueryStepRunIDString struct{}
 
-// Set the required value of StepRunID
+// Set the optional value of StepRunID
 func (r stepRunEventQueryStepRunIDString) Set(value string) stepRunEventSetParam {
 
 	return stepRunEventSetParam{
@@ -161899,6 +162058,22 @@ func (r stepRunEventQueryStepRunIDString) Set(value string) stepRunEventSetParam
 func (r stepRunEventQueryStepRunIDString) SetIfPresent(value *String) stepRunEventSetParam {
 	if value == nil {
 		return stepRunEventSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of StepRunID dynamically
+func (r stepRunEventQueryStepRunIDString) SetOptional(value *String) stepRunEventSetParam {
+	if value == nil {
+
+		var v *string
+		return stepRunEventSetParam{
+			data: builder.Field{
+				Name:  "stepRunId",
+				Value: v,
+			},
+		}
 	}
 
 	return r.Set(*value)
@@ -161924,6 +162099,35 @@ func (r stepRunEventQueryStepRunIDString) EqualsIfPresent(value *string) stepRun
 		return stepRunEventWithPrismaStepRunIDEqualsParam{}
 	}
 	return r.Equals(*value)
+}
+
+func (r stepRunEventQueryStepRunIDString) EqualsOptional(value *String) stepRunEventDefaultParam {
+	return stepRunEventDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunEventQueryStepRunIDString) IsNull() stepRunEventDefaultParam {
+	var str *string = nil
+	return stepRunEventDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
 }
 
 func (r stepRunEventQueryStepRunIDString) Order(direction SortOrder) stepRunEventDefaultParam {
@@ -162225,6 +162429,398 @@ func (r stepRunEventQueryStepRunIDString) HasSuffixIfPresent(value *string) step
 
 func (r stepRunEventQueryStepRunIDString) Field() stepRunEventPrismaFields {
 	return stepRunEventFieldStepRunID
+}
+
+// base struct
+type stepRunEventQueryWorkflowRunIDString struct{}
+
+// Set the optional value of WorkflowRunID
+func (r stepRunEventQueryWorkflowRunIDString) Set(value string) stepRunEventSetParam {
+
+	return stepRunEventSetParam{
+		data: builder.Field{
+			Name:  "workflowRunId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of WorkflowRunID dynamically
+func (r stepRunEventQueryWorkflowRunIDString) SetIfPresent(value *String) stepRunEventSetParam {
+	if value == nil {
+		return stepRunEventSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of WorkflowRunID dynamically
+func (r stepRunEventQueryWorkflowRunIDString) SetOptional(value *String) stepRunEventSetParam {
+	if value == nil {
+
+		var v *string
+		return stepRunEventSetParam{
+			data: builder.Field{
+				Name:  "workflowRunId",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) Equals(value string) stepRunEventWithPrismaWorkflowRunIDEqualsParam {
+
+	return stepRunEventWithPrismaWorkflowRunIDEqualsParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) EqualsIfPresent(value *string) stepRunEventWithPrismaWorkflowRunIDEqualsParam {
+	if value == nil {
+		return stepRunEventWithPrismaWorkflowRunIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) EqualsOptional(value *String) stepRunEventDefaultParam {
+	return stepRunEventDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) IsNull() stepRunEventDefaultParam {
+	var str *string = nil
+	return stepRunEventDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) Order(direction SortOrder) stepRunEventDefaultParam {
+	return stepRunEventDefaultParam{
+		data: builder.Field{
+			Name:  "workflowRunId",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) Cursor(cursor string) stepRunEventCursorParam {
+	return stepRunEventCursorParam{
+		data: builder.Field{
+			Name:  "workflowRunId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) In(value []string) stepRunEventDefaultParam {
+	return stepRunEventDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) InIfPresent(value []string) stepRunEventDefaultParam {
+	if value == nil {
+		return stepRunEventDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) NotIn(value []string) stepRunEventDefaultParam {
+	return stepRunEventDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) NotInIfPresent(value []string) stepRunEventDefaultParam {
+	if value == nil {
+		return stepRunEventDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) Lt(value string) stepRunEventDefaultParam {
+	return stepRunEventDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) LtIfPresent(value *string) stepRunEventDefaultParam {
+	if value == nil {
+		return stepRunEventDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) Lte(value string) stepRunEventDefaultParam {
+	return stepRunEventDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) LteIfPresent(value *string) stepRunEventDefaultParam {
+	if value == nil {
+		return stepRunEventDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) Gt(value string) stepRunEventDefaultParam {
+	return stepRunEventDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) GtIfPresent(value *string) stepRunEventDefaultParam {
+	if value == nil {
+		return stepRunEventDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) Gte(value string) stepRunEventDefaultParam {
+	return stepRunEventDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) GteIfPresent(value *string) stepRunEventDefaultParam {
+	if value == nil {
+		return stepRunEventDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) Contains(value string) stepRunEventDefaultParam {
+	return stepRunEventDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) ContainsIfPresent(value *string) stepRunEventDefaultParam {
+	if value == nil {
+		return stepRunEventDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) StartsWith(value string) stepRunEventDefaultParam {
+	return stepRunEventDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) StartsWithIfPresent(value *string) stepRunEventDefaultParam {
+	if value == nil {
+		return stepRunEventDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) EndsWith(value string) stepRunEventDefaultParam {
+	return stepRunEventDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) EndsWithIfPresent(value *string) stepRunEventDefaultParam {
+	if value == nil {
+		return stepRunEventDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) Mode(value QueryMode) stepRunEventDefaultParam {
+	return stepRunEventDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) ModeIfPresent(value *QueryMode) stepRunEventDefaultParam {
+	if value == nil {
+		return stepRunEventDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) Not(value string) stepRunEventDefaultParam {
+	return stepRunEventDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) NotIfPresent(value *string) stepRunEventDefaultParam {
+	if value == nil {
+		return stepRunEventDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r stepRunEventQueryWorkflowRunIDString) HasPrefix(value string) stepRunEventDefaultParam {
+	return stepRunEventDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r stepRunEventQueryWorkflowRunIDString) HasPrefixIfPresent(value *string) stepRunEventDefaultParam {
+	if value == nil {
+		return stepRunEventDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r stepRunEventQueryWorkflowRunIDString) HasSuffix(value string) stepRunEventDefaultParam {
+	return stepRunEventDefaultParam{
+		data: builder.Field{
+			Name: "workflowRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r stepRunEventQueryWorkflowRunIDString) HasSuffixIfPresent(value *string) stepRunEventDefaultParam {
+	if value == nil {
+		return stepRunEventDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r stepRunEventQueryWorkflowRunIDString) Field() stepRunEventPrismaFields {
+	return stepRunEventFieldWorkflowRunID
 }
 
 // base struct
@@ -222790,6 +223386,7 @@ var workflowConcurrencyOutput = []builder.Output{
 	{Name: "updatedAt"},
 	{Name: "workflowVersionId"},
 	{Name: "getConcurrencyGroupId"},
+	{Name: "concurrencyGroupExpression"},
 	{Name: "maxRuns"},
 	{Name: "limitStrategy"},
 }
@@ -223507,6 +224104,89 @@ func (p workflowConcurrencyWithPrismaGetConcurrencyGroupIDEqualsUniqueParam) get
 
 func (workflowConcurrencyWithPrismaGetConcurrencyGroupIDEqualsUniqueParam) unique() {}
 func (workflowConcurrencyWithPrismaGetConcurrencyGroupIDEqualsUniqueParam) equals() {}
+
+type WorkflowConcurrencyWithPrismaConcurrencyGroupExpressionEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowConcurrencyModel()
+	concurrencyGroupExpressionField()
+}
+
+type WorkflowConcurrencyWithPrismaConcurrencyGroupExpressionSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowConcurrencyModel()
+	concurrencyGroupExpressionField()
+}
+
+type workflowConcurrencyWithPrismaConcurrencyGroupExpressionSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowConcurrencyWithPrismaConcurrencyGroupExpressionSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowConcurrencyWithPrismaConcurrencyGroupExpressionSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowConcurrencyWithPrismaConcurrencyGroupExpressionSetParam) workflowConcurrencyModel() {}
+
+func (p workflowConcurrencyWithPrismaConcurrencyGroupExpressionSetParam) concurrencyGroupExpressionField() {
+}
+
+type WorkflowConcurrencyWithPrismaConcurrencyGroupExpressionWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowConcurrencyModel()
+	concurrencyGroupExpressionField()
+}
+
+type workflowConcurrencyWithPrismaConcurrencyGroupExpressionEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowConcurrencyWithPrismaConcurrencyGroupExpressionEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowConcurrencyWithPrismaConcurrencyGroupExpressionEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowConcurrencyWithPrismaConcurrencyGroupExpressionEqualsParam) workflowConcurrencyModel() {
+}
+
+func (p workflowConcurrencyWithPrismaConcurrencyGroupExpressionEqualsParam) concurrencyGroupExpressionField() {
+}
+
+func (workflowConcurrencyWithPrismaConcurrencyGroupExpressionSetParam) settable()  {}
+func (workflowConcurrencyWithPrismaConcurrencyGroupExpressionEqualsParam) equals() {}
+
+type workflowConcurrencyWithPrismaConcurrencyGroupExpressionEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowConcurrencyWithPrismaConcurrencyGroupExpressionEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowConcurrencyWithPrismaConcurrencyGroupExpressionEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowConcurrencyWithPrismaConcurrencyGroupExpressionEqualsUniqueParam) workflowConcurrencyModel() {
+}
+func (p workflowConcurrencyWithPrismaConcurrencyGroupExpressionEqualsUniqueParam) concurrencyGroupExpressionField() {
+}
+
+func (workflowConcurrencyWithPrismaConcurrencyGroupExpressionEqualsUniqueParam) unique() {}
+func (workflowConcurrencyWithPrismaConcurrencyGroupExpressionEqualsUniqueParam) equals() {}
 
 type WorkflowConcurrencyWithPrismaMaxRunsEqualsSetParam interface {
 	field() builder.Field
@@ -247339,84 +248019,6 @@ func (p stepRunWithPrismaChildSchedulesEqualsUniqueParam) childSchedulesField() 
 func (stepRunWithPrismaChildSchedulesEqualsUniqueParam) unique() {}
 func (stepRunWithPrismaChildSchedulesEqualsUniqueParam) equals() {}
 
-type StepRunWithPrismaEventsEqualsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	stepRunModel()
-	eventsField()
-}
-
-type StepRunWithPrismaEventsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	stepRunModel()
-	eventsField()
-}
-
-type stepRunWithPrismaEventsSetParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p stepRunWithPrismaEventsSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p stepRunWithPrismaEventsSetParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p stepRunWithPrismaEventsSetParam) stepRunModel() {}
-
-func (p stepRunWithPrismaEventsSetParam) eventsField() {}
-
-type StepRunWithPrismaEventsWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	stepRunModel()
-	eventsField()
-}
-
-type stepRunWithPrismaEventsEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p stepRunWithPrismaEventsEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p stepRunWithPrismaEventsEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p stepRunWithPrismaEventsEqualsParam) stepRunModel() {}
-
-func (p stepRunWithPrismaEventsEqualsParam) eventsField() {}
-
-func (stepRunWithPrismaEventsSetParam) settable()  {}
-func (stepRunWithPrismaEventsEqualsParam) equals() {}
-
-type stepRunWithPrismaEventsEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p stepRunWithPrismaEventsEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p stepRunWithPrismaEventsEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p stepRunWithPrismaEventsEqualsUniqueParam) stepRunModel() {}
-func (p stepRunWithPrismaEventsEqualsUniqueParam) eventsField()  {}
-
-func (stepRunWithPrismaEventsEqualsUniqueParam) unique() {}
-func (stepRunWithPrismaEventsEqualsUniqueParam) equals() {}
-
 type queueActions struct {
 	// client holds the prisma client
 	client *PrismaClient
@@ -250736,6 +251338,7 @@ var stepRunEventOutput = []builder.Output{
 	{Name: "timeFirstSeen"},
 	{Name: "timeLastSeen"},
 	{Name: "stepRunId"},
+	{Name: "workflowRunId"},
 	{Name: "reason"},
 	{Name: "severity"},
 	{Name: "message"},
@@ -251141,84 +251744,6 @@ func (p stepRunEventWithPrismaTimeLastSeenEqualsUniqueParam) timeLastSeenField()
 func (stepRunEventWithPrismaTimeLastSeenEqualsUniqueParam) unique() {}
 func (stepRunEventWithPrismaTimeLastSeenEqualsUniqueParam) equals() {}
 
-type StepRunEventWithPrismaStepRunEqualsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	stepRunEventModel()
-	stepRunField()
-}
-
-type StepRunEventWithPrismaStepRunSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	stepRunEventModel()
-	stepRunField()
-}
-
-type stepRunEventWithPrismaStepRunSetParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p stepRunEventWithPrismaStepRunSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p stepRunEventWithPrismaStepRunSetParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p stepRunEventWithPrismaStepRunSetParam) stepRunEventModel() {}
-
-func (p stepRunEventWithPrismaStepRunSetParam) stepRunField() {}
-
-type StepRunEventWithPrismaStepRunWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	stepRunEventModel()
-	stepRunField()
-}
-
-type stepRunEventWithPrismaStepRunEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p stepRunEventWithPrismaStepRunEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p stepRunEventWithPrismaStepRunEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p stepRunEventWithPrismaStepRunEqualsParam) stepRunEventModel() {}
-
-func (p stepRunEventWithPrismaStepRunEqualsParam) stepRunField() {}
-
-func (stepRunEventWithPrismaStepRunSetParam) settable()  {}
-func (stepRunEventWithPrismaStepRunEqualsParam) equals() {}
-
-type stepRunEventWithPrismaStepRunEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p stepRunEventWithPrismaStepRunEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p stepRunEventWithPrismaStepRunEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p stepRunEventWithPrismaStepRunEqualsUniqueParam) stepRunEventModel() {}
-func (p stepRunEventWithPrismaStepRunEqualsUniqueParam) stepRunField()      {}
-
-func (stepRunEventWithPrismaStepRunEqualsUniqueParam) unique() {}
-func (stepRunEventWithPrismaStepRunEqualsUniqueParam) equals() {}
-
 type StepRunEventWithPrismaStepRunIDEqualsSetParam interface {
 	field() builder.Field
 	getQuery() builder.Query
@@ -251296,6 +251821,84 @@ func (p stepRunEventWithPrismaStepRunIDEqualsUniqueParam) stepRunIDField()    {}
 
 func (stepRunEventWithPrismaStepRunIDEqualsUniqueParam) unique() {}
 func (stepRunEventWithPrismaStepRunIDEqualsUniqueParam) equals() {}
+
+type StepRunEventWithPrismaWorkflowRunIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepRunEventModel()
+	workflowRunIDField()
+}
+
+type StepRunEventWithPrismaWorkflowRunIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRunEventModel()
+	workflowRunIDField()
+}
+
+type stepRunEventWithPrismaWorkflowRunIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunEventWithPrismaWorkflowRunIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunEventWithPrismaWorkflowRunIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunEventWithPrismaWorkflowRunIDSetParam) stepRunEventModel() {}
+
+func (p stepRunEventWithPrismaWorkflowRunIDSetParam) workflowRunIDField() {}
+
+type StepRunEventWithPrismaWorkflowRunIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRunEventModel()
+	workflowRunIDField()
+}
+
+type stepRunEventWithPrismaWorkflowRunIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunEventWithPrismaWorkflowRunIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunEventWithPrismaWorkflowRunIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunEventWithPrismaWorkflowRunIDEqualsParam) stepRunEventModel() {}
+
+func (p stepRunEventWithPrismaWorkflowRunIDEqualsParam) workflowRunIDField() {}
+
+func (stepRunEventWithPrismaWorkflowRunIDSetParam) settable()  {}
+func (stepRunEventWithPrismaWorkflowRunIDEqualsParam) equals() {}
+
+type stepRunEventWithPrismaWorkflowRunIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunEventWithPrismaWorkflowRunIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunEventWithPrismaWorkflowRunIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunEventWithPrismaWorkflowRunIDEqualsUniqueParam) stepRunEventModel()  {}
+func (p stepRunEventWithPrismaWorkflowRunIDEqualsUniqueParam) workflowRunIDField() {}
+
+func (stepRunEventWithPrismaWorkflowRunIDEqualsUniqueParam) unique() {}
+func (stepRunEventWithPrismaWorkflowRunIDEqualsUniqueParam) equals() {}
 
 type StepRunEventWithPrismaReasonEqualsSetParam interface {
 	field() builder.Field
@@ -267392,7 +267995,6 @@ func (r semaphoreQueueItemCreateOne) Tx() SemaphoreQueueItemUniqueTxResult {
 
 // Creates a single stepRunEvent.
 func (r stepRunEventActions) CreateOne(
-	_stepRun StepRunEventWithPrismaStepRunSetParam,
 	_reason StepRunEventWithPrismaReasonSetParam,
 	_severity StepRunEventWithPrismaSeveritySetParam,
 	_message StepRunEventWithPrismaMessageSetParam,
@@ -267411,7 +268013,6 @@ func (r stepRunEventActions) CreateOne(
 
 	var fields []builder.Field
 
-	fields = append(fields, _stepRun.field())
 	fields = append(fields, _reason.field())
 	fields = append(fields, _severity.field())
 	fields = append(fields, _message.field())
@@ -380123,560 +380724,6 @@ func (r stepRunToChildSchedulesDeleteMany) Tx() StepRunManyTxResult {
 	return v
 }
 
-type stepRunToEventsFindUnique struct {
-	query builder.Query
-}
-
-func (r stepRunToEventsFindUnique) getQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunToEventsFindUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunToEventsFindUnique) with()            {}
-func (r stepRunToEventsFindUnique) stepRunModel()    {}
-func (r stepRunToEventsFindUnique) stepRunRelation() {}
-
-func (r stepRunToEventsFindUnique) With(params ...StepRunEventRelationWith) stepRunToEventsFindUnique {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r stepRunToEventsFindUnique) Select(params ...stepRunPrismaFields) stepRunToEventsFindUnique {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRunToEventsFindUnique) Omit(params ...stepRunPrismaFields) stepRunToEventsFindUnique {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range stepRunOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRunToEventsFindUnique) Exec(ctx context.Context) (
-	*StepRunModel,
-	error,
-) {
-	var v *StepRunModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r stepRunToEventsFindUnique) ExecInner(ctx context.Context) (
-	*InnerStepRun,
-	error,
-) {
-	var v *InnerStepRun
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r stepRunToEventsFindUnique) Update(params ...StepRunSetParam) stepRunToEventsUpdateUnique {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateOne"
-	r.query.Model = "StepRun"
-
-	var v stepRunToEventsUpdateUnique
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type stepRunToEventsUpdateUnique struct {
-	query builder.Query
-}
-
-func (r stepRunToEventsUpdateUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunToEventsUpdateUnique) stepRunModel() {}
-
-func (r stepRunToEventsUpdateUnique) Exec(ctx context.Context) (*StepRunModel, error) {
-	var v StepRunModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r stepRunToEventsUpdateUnique) Tx() StepRunUniqueTxResult {
-	v := newStepRunUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r stepRunToEventsFindUnique) Delete() stepRunToEventsDeleteUnique {
-	var v stepRunToEventsDeleteUnique
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteOne"
-	v.query.Model = "StepRun"
-
-	return v
-}
-
-type stepRunToEventsDeleteUnique struct {
-	query builder.Query
-}
-
-func (r stepRunToEventsDeleteUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p stepRunToEventsDeleteUnique) stepRunModel() {}
-
-func (r stepRunToEventsDeleteUnique) Exec(ctx context.Context) (*StepRunModel, error) {
-	var v StepRunModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r stepRunToEventsDeleteUnique) Tx() StepRunUniqueTxResult {
-	v := newStepRunUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type stepRunToEventsFindFirst struct {
-	query builder.Query
-}
-
-func (r stepRunToEventsFindFirst) getQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunToEventsFindFirst) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunToEventsFindFirst) with()            {}
-func (r stepRunToEventsFindFirst) stepRunModel()    {}
-func (r stepRunToEventsFindFirst) stepRunRelation() {}
-
-func (r stepRunToEventsFindFirst) With(params ...StepRunEventRelationWith) stepRunToEventsFindFirst {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r stepRunToEventsFindFirst) Select(params ...stepRunPrismaFields) stepRunToEventsFindFirst {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRunToEventsFindFirst) Omit(params ...stepRunPrismaFields) stepRunToEventsFindFirst {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range stepRunOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRunToEventsFindFirst) OrderBy(params ...StepRunEventOrderByParam) stepRunToEventsFindFirst {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r stepRunToEventsFindFirst) Skip(count int) stepRunToEventsFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r stepRunToEventsFindFirst) Take(count int) stepRunToEventsFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r stepRunToEventsFindFirst) Cursor(cursor StepRunCursorParam) stepRunToEventsFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r stepRunToEventsFindFirst) Exec(ctx context.Context) (
-	*StepRunModel,
-	error,
-) {
-	var v *StepRunModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r stepRunToEventsFindFirst) ExecInner(ctx context.Context) (
-	*InnerStepRun,
-	error,
-) {
-	var v *InnerStepRun
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-type stepRunToEventsFindMany struct {
-	query builder.Query
-}
-
-func (r stepRunToEventsFindMany) getQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunToEventsFindMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunToEventsFindMany) with()            {}
-func (r stepRunToEventsFindMany) stepRunModel()    {}
-func (r stepRunToEventsFindMany) stepRunRelation() {}
-
-func (r stepRunToEventsFindMany) With(params ...StepRunEventRelationWith) stepRunToEventsFindMany {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r stepRunToEventsFindMany) Select(params ...stepRunPrismaFields) stepRunToEventsFindMany {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRunToEventsFindMany) Omit(params ...stepRunPrismaFields) stepRunToEventsFindMany {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range stepRunOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRunToEventsFindMany) OrderBy(params ...StepRunEventOrderByParam) stepRunToEventsFindMany {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r stepRunToEventsFindMany) Skip(count int) stepRunToEventsFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r stepRunToEventsFindMany) Take(count int) stepRunToEventsFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r stepRunToEventsFindMany) Cursor(cursor StepRunCursorParam) stepRunToEventsFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r stepRunToEventsFindMany) Exec(ctx context.Context) (
-	[]StepRunModel,
-	error,
-) {
-	var v []StepRunModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r stepRunToEventsFindMany) ExecInner(ctx context.Context) (
-	[]InnerStepRun,
-	error,
-) {
-	var v []InnerStepRun
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r stepRunToEventsFindMany) Update(params ...StepRunSetParam) stepRunToEventsUpdateMany {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateMany"
-	r.query.Model = "StepRun"
-
-	r.query.Outputs = countOutput
-
-	var v stepRunToEventsUpdateMany
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type stepRunToEventsUpdateMany struct {
-	query builder.Query
-}
-
-func (r stepRunToEventsUpdateMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunToEventsUpdateMany) stepRunModel() {}
-
-func (r stepRunToEventsUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r stepRunToEventsUpdateMany) Tx() StepRunManyTxResult {
-	v := newStepRunManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r stepRunToEventsFindMany) Delete() stepRunToEventsDeleteMany {
-	var v stepRunToEventsDeleteMany
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteMany"
-	v.query.Model = "StepRun"
-
-	v.query.Outputs = countOutput
-
-	return v
-}
-
-type stepRunToEventsDeleteMany struct {
-	query builder.Query
-}
-
-func (r stepRunToEventsDeleteMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p stepRunToEventsDeleteMany) stepRunModel() {}
-
-func (r stepRunToEventsDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r stepRunToEventsDeleteMany) Tx() StepRunManyTxResult {
-	v := newStepRunManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
 type stepRunFindUnique struct {
 	query builder.Query
 }
@@ -384572,560 +384619,6 @@ func (r semaphoreQueueItemDeleteMany) Exec(ctx context.Context) (*BatchResult, e
 
 func (r semaphoreQueueItemDeleteMany) Tx() SemaphoreQueueItemManyTxResult {
 	v := newSemaphoreQueueItemManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type stepRunEventToStepRunFindUnique struct {
-	query builder.Query
-}
-
-func (r stepRunEventToStepRunFindUnique) getQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunEventToStepRunFindUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunEventToStepRunFindUnique) with()                 {}
-func (r stepRunEventToStepRunFindUnique) stepRunEventModel()    {}
-func (r stepRunEventToStepRunFindUnique) stepRunEventRelation() {}
-
-func (r stepRunEventToStepRunFindUnique) With(params ...StepRunRelationWith) stepRunEventToStepRunFindUnique {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r stepRunEventToStepRunFindUnique) Select(params ...stepRunEventPrismaFields) stepRunEventToStepRunFindUnique {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRunEventToStepRunFindUnique) Omit(params ...stepRunEventPrismaFields) stepRunEventToStepRunFindUnique {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range stepRunEventOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRunEventToStepRunFindUnique) Exec(ctx context.Context) (
-	*StepRunEventModel,
-	error,
-) {
-	var v *StepRunEventModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r stepRunEventToStepRunFindUnique) ExecInner(ctx context.Context) (
-	*InnerStepRunEvent,
-	error,
-) {
-	var v *InnerStepRunEvent
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r stepRunEventToStepRunFindUnique) Update(params ...StepRunEventSetParam) stepRunEventToStepRunUpdateUnique {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateOne"
-	r.query.Model = "StepRunEvent"
-
-	var v stepRunEventToStepRunUpdateUnique
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type stepRunEventToStepRunUpdateUnique struct {
-	query builder.Query
-}
-
-func (r stepRunEventToStepRunUpdateUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunEventToStepRunUpdateUnique) stepRunEventModel() {}
-
-func (r stepRunEventToStepRunUpdateUnique) Exec(ctx context.Context) (*StepRunEventModel, error) {
-	var v StepRunEventModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r stepRunEventToStepRunUpdateUnique) Tx() StepRunEventUniqueTxResult {
-	v := newStepRunEventUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r stepRunEventToStepRunFindUnique) Delete() stepRunEventToStepRunDeleteUnique {
-	var v stepRunEventToStepRunDeleteUnique
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteOne"
-	v.query.Model = "StepRunEvent"
-
-	return v
-}
-
-type stepRunEventToStepRunDeleteUnique struct {
-	query builder.Query
-}
-
-func (r stepRunEventToStepRunDeleteUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p stepRunEventToStepRunDeleteUnique) stepRunEventModel() {}
-
-func (r stepRunEventToStepRunDeleteUnique) Exec(ctx context.Context) (*StepRunEventModel, error) {
-	var v StepRunEventModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r stepRunEventToStepRunDeleteUnique) Tx() StepRunEventUniqueTxResult {
-	v := newStepRunEventUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type stepRunEventToStepRunFindFirst struct {
-	query builder.Query
-}
-
-func (r stepRunEventToStepRunFindFirst) getQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunEventToStepRunFindFirst) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunEventToStepRunFindFirst) with()                 {}
-func (r stepRunEventToStepRunFindFirst) stepRunEventModel()    {}
-func (r stepRunEventToStepRunFindFirst) stepRunEventRelation() {}
-
-func (r stepRunEventToStepRunFindFirst) With(params ...StepRunRelationWith) stepRunEventToStepRunFindFirst {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r stepRunEventToStepRunFindFirst) Select(params ...stepRunEventPrismaFields) stepRunEventToStepRunFindFirst {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRunEventToStepRunFindFirst) Omit(params ...stepRunEventPrismaFields) stepRunEventToStepRunFindFirst {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range stepRunEventOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRunEventToStepRunFindFirst) OrderBy(params ...StepRunOrderByParam) stepRunEventToStepRunFindFirst {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r stepRunEventToStepRunFindFirst) Skip(count int) stepRunEventToStepRunFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r stepRunEventToStepRunFindFirst) Take(count int) stepRunEventToStepRunFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r stepRunEventToStepRunFindFirst) Cursor(cursor StepRunEventCursorParam) stepRunEventToStepRunFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r stepRunEventToStepRunFindFirst) Exec(ctx context.Context) (
-	*StepRunEventModel,
-	error,
-) {
-	var v *StepRunEventModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r stepRunEventToStepRunFindFirst) ExecInner(ctx context.Context) (
-	*InnerStepRunEvent,
-	error,
-) {
-	var v *InnerStepRunEvent
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-type stepRunEventToStepRunFindMany struct {
-	query builder.Query
-}
-
-func (r stepRunEventToStepRunFindMany) getQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunEventToStepRunFindMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunEventToStepRunFindMany) with()                 {}
-func (r stepRunEventToStepRunFindMany) stepRunEventModel()    {}
-func (r stepRunEventToStepRunFindMany) stepRunEventRelation() {}
-
-func (r stepRunEventToStepRunFindMany) With(params ...StepRunRelationWith) stepRunEventToStepRunFindMany {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r stepRunEventToStepRunFindMany) Select(params ...stepRunEventPrismaFields) stepRunEventToStepRunFindMany {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRunEventToStepRunFindMany) Omit(params ...stepRunEventPrismaFields) stepRunEventToStepRunFindMany {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range stepRunEventOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRunEventToStepRunFindMany) OrderBy(params ...StepRunOrderByParam) stepRunEventToStepRunFindMany {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r stepRunEventToStepRunFindMany) Skip(count int) stepRunEventToStepRunFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r stepRunEventToStepRunFindMany) Take(count int) stepRunEventToStepRunFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r stepRunEventToStepRunFindMany) Cursor(cursor StepRunEventCursorParam) stepRunEventToStepRunFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r stepRunEventToStepRunFindMany) Exec(ctx context.Context) (
-	[]StepRunEventModel,
-	error,
-) {
-	var v []StepRunEventModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r stepRunEventToStepRunFindMany) ExecInner(ctx context.Context) (
-	[]InnerStepRunEvent,
-	error,
-) {
-	var v []InnerStepRunEvent
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r stepRunEventToStepRunFindMany) Update(params ...StepRunEventSetParam) stepRunEventToStepRunUpdateMany {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateMany"
-	r.query.Model = "StepRunEvent"
-
-	r.query.Outputs = countOutput
-
-	var v stepRunEventToStepRunUpdateMany
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type stepRunEventToStepRunUpdateMany struct {
-	query builder.Query
-}
-
-func (r stepRunEventToStepRunUpdateMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRunEventToStepRunUpdateMany) stepRunEventModel() {}
-
-func (r stepRunEventToStepRunUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r stepRunEventToStepRunUpdateMany) Tx() StepRunEventManyTxResult {
-	v := newStepRunEventManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r stepRunEventToStepRunFindMany) Delete() stepRunEventToStepRunDeleteMany {
-	var v stepRunEventToStepRunDeleteMany
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteMany"
-	v.query.Model = "StepRunEvent"
-
-	v.query.Outputs = countOutput
-
-	return v
-}
-
-type stepRunEventToStepRunDeleteMany struct {
-	query builder.Query
-}
-
-func (r stepRunEventToStepRunDeleteMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p stepRunEventToStepRunDeleteMany) stepRunEventModel() {}
-
-func (r stepRunEventToStepRunDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r stepRunEventToStepRunDeleteMany) Tx() StepRunEventManyTxResult {
-	v := newStepRunEventManyTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -418800,7 +418293,6 @@ func (r stepRunEventActions) UpsertOne(
 
 func (r stepRunEventUpsertOne) Create(
 
-	_stepRun StepRunEventWithPrismaStepRunSetParam,
 	_reason StepRunEventWithPrismaReasonSetParam,
 	_severity StepRunEventWithPrismaSeveritySetParam,
 	_message StepRunEventWithPrismaMessageSetParam,
@@ -418812,7 +418304,6 @@ func (r stepRunEventUpsertOne) Create(
 	v.query = r.query
 
 	var fields []builder.Field
-	fields = append(fields, _stepRun.field())
 	fields = append(fields, _reason.field())
 	fields = append(fields, _severity.field())
 	fields = append(fields, _message.field())
