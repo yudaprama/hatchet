@@ -904,22 +904,29 @@ model Step {
   // the default amount of time to wait while scheduling a step run
   scheduleTimeout String @default("5m")
 
-  rateLimits StepRateLimit[]
-
   workerLabels StepDesiredWorkerLabel[]
 
   // readable ids are unique per job
   @@unique([jobId, readableId])
 }
 
+enum StepRateLimitKind {
+  // STATIC rate limits are assigned to every step run belonging to these steps
+  STATIC
+
+  // DYNAMIC rate limits are assigned to specific step runs
+  DYNAMIC
+}
+
 model StepRateLimit {
   units Int
 
-  step   Step   @relation(fields: [stepId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   stepId String @db.Uuid
 
   rateLimit    RateLimit @relation(fields: [tenantId, rateLimitKey], references: [tenantId, key])
   rateLimitKey String
+
+  kind StepRateLimitKind @default(STATIC)
 
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   tenantId String @db.Uuid
@@ -1279,6 +1286,35 @@ enum StepRunStatus {
   CANCELLED
 }
 
+enum StepExpressionKind {
+  DYNAMIC_RATE_LIMIT_KEY
+  DYNAMIC_RATE_LIMIT_VALUE
+  DYNAMIC_RATE_LIMIT_UNITS
+  DYNAMIC_RATE_LIMIT_WINDOW
+}
+
+model StepExpression {
+  key        String
+  stepId     String             @db.Uuid
+  expression String
+  kind       StepExpressionKind
+
+  @@id([key, stepId, kind])
+}
+
+// StepRunExpressionEval is an evaluated expression for a step run
+model StepRunExpressionEval {
+  key       String
+  stepRunId String @db.Uuid
+
+  valueStr String?
+  valueInt Int?
+
+  kind StepExpressionKind
+
+  @@id([key, stepRunId, kind])
+}
+
 model StepRun {
   // base fields
   id        String    @id @unique @default(uuid()) @db.Uuid
@@ -1481,6 +1517,7 @@ model SemaphoreQueueItem {
 enum StepRunEventReason {
   REQUEUED_NO_WORKER
   REQUEUED_RATE_LIMIT
+  RATE_LIMIT_ERROR
   SCHEDULING_TIMED_OUT
   TIMED_OUT
   REASSIGNED
@@ -1969,6 +2006,8 @@ func newClient() *PrismaClient {
 	c.WorkflowRunTriggeredBy = workflowRunTriggeredByActions{client: c}
 	c.JobRun = jobRunActions{client: c}
 	c.JobRunLookupData = jobRunLookupDataActions{client: c}
+	c.StepExpression = stepExpressionActions{client: c}
+	c.StepRunExpressionEval = stepRunExpressionEvalActions{client: c}
 	c.StepRun = stepRunActions{client: c}
 	c.Queue = queueActions{client: c}
 	c.QueueItem = queueItemActions{client: c}
@@ -2090,6 +2129,10 @@ type PrismaClient struct {
 	JobRun jobRunActions
 	// JobRunLookupData provides access to CRUD methods.
 	JobRunLookupData jobRunLookupDataActions
+	// StepExpression provides access to CRUD methods.
+	StepExpression stepExpressionActions
+	// StepRunExpressionEval provides access to CRUD methods.
+	StepRunExpressionEval stepRunExpressionEvalActions
 	// StepRun provides access to CRUD methods.
 	StepRun stepRunActions
 	// Queue provides access to CRUD methods.
@@ -2217,6 +2260,14 @@ const (
 )
 
 type RawJobKind JobKind
+type StepRateLimitKind string
+
+const (
+	StepRateLimitKindStatic  StepRateLimitKind = "STATIC"
+	StepRateLimitKindDynamic StepRateLimitKind = "DYNAMIC"
+)
+
+type RawStepRateLimitKind StepRateLimitKind
 type WorkflowRunStatus string
 
 const (
@@ -2253,6 +2304,16 @@ const (
 )
 
 type RawStepRunStatus StepRunStatus
+type StepExpressionKind string
+
+const (
+	StepExpressionKindDynamicRateLimitKey    StepExpressionKind = "DYNAMIC_RATE_LIMIT_KEY"
+	StepExpressionKindDynamicRateLimitValue  StepExpressionKind = "DYNAMIC_RATE_LIMIT_VALUE"
+	StepExpressionKindDynamicRateLimitUnits  StepExpressionKind = "DYNAMIC_RATE_LIMIT_UNITS"
+	StepExpressionKindDynamicRateLimitWindow StepExpressionKind = "DYNAMIC_RATE_LIMIT_WINDOW"
+)
+
+type RawStepExpressionKind StepExpressionKind
 type InternalQueue string
 
 const (
@@ -2267,6 +2328,7 @@ type StepRunEventReason string
 const (
 	StepRunEventReasonRequeuedNoWorker             StepRunEventReason = "REQUEUED_NO_WORKER"
 	StepRunEventReasonRequeuedRateLimit            StepRunEventReason = "REQUEUED_RATE_LIMIT"
+	StepRunEventReasonRateLimitError               StepRunEventReason = "RATE_LIMIT_ERROR"
 	StepRunEventReasonSchedulingTimedOut           StepRunEventReason = "SCHEDULING_TIMED_OUT"
 	StepRunEventReasonTimedOut                     StepRunEventReason = "TIMED_OUT"
 	StepRunEventReasonReassigned                   StepRunEventReason = "REASSIGNED"
@@ -2712,6 +2774,7 @@ const (
 	StepRateLimitScalarFieldEnumUnits        StepRateLimitScalarFieldEnum = "units"
 	StepRateLimitScalarFieldEnumStepID       StepRateLimitScalarFieldEnum = "stepId"
 	StepRateLimitScalarFieldEnumRateLimitKey StepRateLimitScalarFieldEnum = "rateLimitKey"
+	StepRateLimitScalarFieldEnumKind         StepRateLimitScalarFieldEnum = "kind"
 	StepRateLimitScalarFieldEnumTenantID     StepRateLimitScalarFieldEnum = "tenantId"
 )
 
@@ -2846,6 +2909,25 @@ const (
 	JobRunLookupDataScalarFieldEnumJobRunID  JobRunLookupDataScalarFieldEnum = "jobRunId"
 	JobRunLookupDataScalarFieldEnumTenantID  JobRunLookupDataScalarFieldEnum = "tenantId"
 	JobRunLookupDataScalarFieldEnumData      JobRunLookupDataScalarFieldEnum = "data"
+)
+
+type StepExpressionScalarFieldEnum string
+
+const (
+	StepExpressionScalarFieldEnumKey        StepExpressionScalarFieldEnum = "key"
+	StepExpressionScalarFieldEnumStepID     StepExpressionScalarFieldEnum = "stepId"
+	StepExpressionScalarFieldEnumExpression StepExpressionScalarFieldEnum = "expression"
+	StepExpressionScalarFieldEnumKind       StepExpressionScalarFieldEnum = "kind"
+)
+
+type StepRunExpressionEvalScalarFieldEnum string
+
+const (
+	StepRunExpressionEvalScalarFieldEnumKey       StepRunExpressionEvalScalarFieldEnum = "key"
+	StepRunExpressionEvalScalarFieldEnumStepRunID StepRunExpressionEvalScalarFieldEnum = "stepRunId"
+	StepRunExpressionEvalScalarFieldEnumValueStr  StepRunExpressionEvalScalarFieldEnum = "valueStr"
+	StepRunExpressionEvalScalarFieldEnumValueInt  StepRunExpressionEvalScalarFieldEnum = "valueInt"
+	StepRunExpressionEvalScalarFieldEnumKind      StepRunExpressionEvalScalarFieldEnum = "kind"
 )
 
 type StepRunScalarFieldEnum string
@@ -3904,21 +3986,19 @@ const stepFieldStepRuns stepPrismaFields = "stepRuns"
 
 const stepFieldScheduleTimeout stepPrismaFields = "scheduleTimeout"
 
-const stepFieldRateLimits stepPrismaFields = "rateLimits"
-
 const stepFieldWorkerLabels stepPrismaFields = "workerLabels"
 
 type stepRateLimitPrismaFields = prismaFields
 
 const stepRateLimitFieldUnits stepRateLimitPrismaFields = "units"
 
-const stepRateLimitFieldStep stepRateLimitPrismaFields = "step"
-
 const stepRateLimitFieldStepID stepRateLimitPrismaFields = "stepId"
 
 const stepRateLimitFieldRateLimit stepRateLimitPrismaFields = "rateLimit"
 
 const stepRateLimitFieldRateLimitKey stepRateLimitPrismaFields = "rateLimitKey"
+
+const stepRateLimitFieldKind stepRateLimitPrismaFields = "kind"
 
 const stepRateLimitFieldTenant stepRateLimitPrismaFields = "tenant"
 
@@ -4187,6 +4267,28 @@ const jobRunLookupDataFieldTenant jobRunLookupDataPrismaFields = "tenant"
 const jobRunLookupDataFieldTenantID jobRunLookupDataPrismaFields = "tenantId"
 
 const jobRunLookupDataFieldData jobRunLookupDataPrismaFields = "data"
+
+type stepExpressionPrismaFields = prismaFields
+
+const stepExpressionFieldKey stepExpressionPrismaFields = "key"
+
+const stepExpressionFieldStepID stepExpressionPrismaFields = "stepId"
+
+const stepExpressionFieldExpression stepExpressionPrismaFields = "expression"
+
+const stepExpressionFieldKind stepExpressionPrismaFields = "kind"
+
+type stepRunExpressionEvalPrismaFields = prismaFields
+
+const stepRunExpressionEvalFieldKey stepRunExpressionEvalPrismaFields = "key"
+
+const stepRunExpressionEvalFieldStepRunID stepRunExpressionEvalPrismaFields = "stepRunId"
+
+const stepRunExpressionEvalFieldValueStr stepRunExpressionEvalPrismaFields = "valueStr"
+
+const stepRunExpressionEvalFieldValueInt stepRunExpressionEvalPrismaFields = "valueInt"
+
+const stepRunExpressionEvalFieldKind stepRunExpressionEvalPrismaFields = "kind"
 
 type stepRunPrismaFields = prismaFields
 
@@ -4814,6 +4916,14 @@ func NewMock() (*PrismaClient, *Mock, func(t *testing.T)) {
 		mock: m,
 	}
 
+	m.StepExpression = stepExpressionMock{
+		mock: m,
+	}
+
+	m.StepRunExpressionEval = stepRunExpressionEvalMock{
+		mock: m,
+	}
+
 	m.StepRun = stepRunMock{
 		mock: m,
 	}
@@ -4979,6 +5089,10 @@ type Mock struct {
 	JobRun jobRunMock
 
 	JobRunLookupData jobRunLookupDataMock
+
+	StepExpression stepExpressionMock
+
+	StepRunExpressionEval stepRunExpressionEvalMock
 
 	StepRun stepRunMock
 
@@ -6613,6 +6727,90 @@ func (m *jobRunLookupDataMockExec) ReturnsMany(v []JobRunLookupDataModel) {
 }
 
 func (m *jobRunLookupDataMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
+type stepExpressionMock struct {
+	mock *Mock
+}
+
+type StepExpressionMockExpectParam interface {
+	ExtractQuery() builder.Query
+	stepExpressionModel()
+}
+
+func (m *stepExpressionMock) Expect(query StepExpressionMockExpectParam) *stepExpressionMockExec {
+	return &stepExpressionMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type stepExpressionMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *stepExpressionMockExec) Returns(v StepExpressionModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *stepExpressionMockExec) ReturnsMany(v []StepExpressionModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *stepExpressionMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
+type stepRunExpressionEvalMock struct {
+	mock *Mock
+}
+
+type StepRunExpressionEvalMockExpectParam interface {
+	ExtractQuery() builder.Query
+	stepRunExpressionEvalModel()
+}
+
+func (m *stepRunExpressionEvalMock) Expect(query StepRunExpressionEvalMockExpectParam) *stepRunExpressionEvalMockExec {
+	return &stepRunExpressionEvalMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type stepRunExpressionEvalMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *stepRunExpressionEvalMockExec) Returns(v StepRunExpressionEvalModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *stepRunExpressionEvalMockExec) ReturnsMany(v []StepRunExpressionEvalModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *stepRunExpressionEvalMockExec) Errors(err error) {
 	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
 		Query:   m.query,
 		WantErr: err,
@@ -9655,7 +9853,6 @@ type RelationsStep struct {
 	Children     []StepModel                   `json:"children,omitempty"`
 	Parents      []StepModel                   `json:"parents,omitempty"`
 	StepRuns     []StepRunModel                `json:"stepRuns,omitempty"`
-	RateLimits   []StepRateLimitModel          `json:"rateLimits,omitempty"`
 	WorkerLabels []StepDesiredWorkerLabelModel `json:"workerLabels,omitempty"`
 }
 
@@ -9729,13 +9926,6 @@ func (r StepModel) StepRuns() (value []StepRunModel) {
 	return r.RelationsStep.StepRuns
 }
 
-func (r StepModel) RateLimits() (value []StepRateLimitModel) {
-	if r.RelationsStep.RateLimits == nil {
-		panic("attempted to access rateLimits but did not fetch it using the .With() syntax")
-	}
-	return r.RelationsStep.RateLimits
-}
-
 func (r StepModel) WorkerLabels() (value []StepDesiredWorkerLabelModel) {
 	if r.RelationsStep.WorkerLabels == nil {
 		panic("attempted to access workerLabels but did not fetch it using the .With() syntax")
@@ -9751,32 +9941,26 @@ type StepRateLimitModel struct {
 
 // InnerStepRateLimit holds the actual data
 type InnerStepRateLimit struct {
-	Units        int    `json:"units"`
-	StepID       string `json:"stepId"`
-	RateLimitKey string `json:"rateLimitKey"`
-	TenantID     string `json:"tenantId"`
+	Units        int               `json:"units"`
+	StepID       string            `json:"stepId"`
+	RateLimitKey string            `json:"rateLimitKey"`
+	Kind         StepRateLimitKind `json:"kind"`
+	TenantID     string            `json:"tenantId"`
 }
 
 // RawStepRateLimitModel is a struct for StepRateLimit when used in raw queries
 type RawStepRateLimitModel struct {
-	Units        RawInt    `json:"units"`
-	StepID       RawString `json:"stepId"`
-	RateLimitKey RawString `json:"rateLimitKey"`
-	TenantID     RawString `json:"tenantId"`
+	Units        RawInt               `json:"units"`
+	StepID       RawString            `json:"stepId"`
+	RateLimitKey RawString            `json:"rateLimitKey"`
+	Kind         RawStepRateLimitKind `json:"kind"`
+	TenantID     RawString            `json:"tenantId"`
 }
 
 // RelationsStepRateLimit holds the relation data separately
 type RelationsStepRateLimit struct {
-	Step      *StepModel      `json:"step,omitempty"`
 	RateLimit *RateLimitModel `json:"rateLimit,omitempty"`
 	Tenant    *TenantModel    `json:"tenant,omitempty"`
-}
-
-func (r StepRateLimitModel) Step() (value *StepModel) {
-	if r.RelationsStepRateLimit.Step == nil {
-		panic("attempted to access step but did not fetch it using the .With() syntax")
-	}
-	return r.RelationsStepRateLimit.Step
 }
 
 func (r StepRateLimitModel) RateLimit() (value *RateLimitModel) {
@@ -10684,6 +10868,74 @@ func (r JobRunLookupDataModel) Data() (value JSON, ok bool) {
 		return value, false
 	}
 	return *r.InnerJobRunLookupData.Data, true
+}
+
+// StepExpressionModel represents the StepExpression model and is a wrapper for accessing fields and methods
+type StepExpressionModel struct {
+	InnerStepExpression
+	RelationsStepExpression
+}
+
+// InnerStepExpression holds the actual data
+type InnerStepExpression struct {
+	Key        string             `json:"key"`
+	StepID     string             `json:"stepId"`
+	Expression string             `json:"expression"`
+	Kind       StepExpressionKind `json:"kind"`
+}
+
+// RawStepExpressionModel is a struct for StepExpression when used in raw queries
+type RawStepExpressionModel struct {
+	Key        RawString             `json:"key"`
+	StepID     RawString             `json:"stepId"`
+	Expression RawString             `json:"expression"`
+	Kind       RawStepExpressionKind `json:"kind"`
+}
+
+// RelationsStepExpression holds the relation data separately
+type RelationsStepExpression struct {
+}
+
+// StepRunExpressionEvalModel represents the StepRunExpressionEval model and is a wrapper for accessing fields and methods
+type StepRunExpressionEvalModel struct {
+	InnerStepRunExpressionEval
+	RelationsStepRunExpressionEval
+}
+
+// InnerStepRunExpressionEval holds the actual data
+type InnerStepRunExpressionEval struct {
+	Key       string             `json:"key"`
+	StepRunID string             `json:"stepRunId"`
+	ValueStr  *string            `json:"valueStr,omitempty"`
+	ValueInt  *int               `json:"valueInt,omitempty"`
+	Kind      StepExpressionKind `json:"kind"`
+}
+
+// RawStepRunExpressionEvalModel is a struct for StepRunExpressionEval when used in raw queries
+type RawStepRunExpressionEvalModel struct {
+	Key       RawString             `json:"key"`
+	StepRunID RawString             `json:"stepRunId"`
+	ValueStr  *RawString            `json:"valueStr,omitempty"`
+	ValueInt  *RawInt               `json:"valueInt,omitempty"`
+	Kind      RawStepExpressionKind `json:"kind"`
+}
+
+// RelationsStepRunExpressionEval holds the relation data separately
+type RelationsStepRunExpressionEval struct {
+}
+
+func (r StepRunExpressionEvalModel) ValueStr() (value String, ok bool) {
+	if r.InnerStepRunExpressionEval.ValueStr == nil {
+		return value, false
+	}
+	return *r.InnerStepRunExpressionEval.ValueStr, true
+}
+
+func (r StepRunExpressionEvalModel) ValueInt() (value Int, ok bool) {
+	if r.InnerStepRunExpressionEval.ValueInt == nil {
+		return value, false
+	}
+	return *r.InnerStepRunExpressionEval.ValueInt, true
 }
 
 // StepRunModel represents the StepRun model and is a wrapper for accessing fields and methods
@@ -95048,8 +95300,6 @@ type stepQuery struct {
 	// @required
 	ScheduleTimeout stepQueryScheduleTimeoutString
 
-	RateLimits stepQueryRateLimitsRelations
-
 	WorkerLabels stepQueryWorkerLabelsRelations
 }
 
@@ -100164,178 +100414,6 @@ func (r stepQueryScheduleTimeoutString) Field() stepPrismaFields {
 }
 
 // base struct
-type stepQueryRateLimitsStepRateLimit struct{}
-
-type stepQueryRateLimitsRelations struct{}
-
-// Step -> RateLimits
-//
-// @relation
-// @required
-func (stepQueryRateLimitsRelations) Some(
-	params ...StepRateLimitWhereParam,
-) stepDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return stepDefaultParam{
-		data: builder.Field{
-			Name: "rateLimits",
-			Fields: []builder.Field{
-				{
-					Name:   "some",
-					Fields: fields,
-				},
-			},
-		},
-	}
-}
-
-// Step -> RateLimits
-//
-// @relation
-// @required
-func (stepQueryRateLimitsRelations) Every(
-	params ...StepRateLimitWhereParam,
-) stepDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return stepDefaultParam{
-		data: builder.Field{
-			Name: "rateLimits",
-			Fields: []builder.Field{
-				{
-					Name:   "every",
-					Fields: fields,
-				},
-			},
-		},
-	}
-}
-
-// Step -> RateLimits
-//
-// @relation
-// @required
-func (stepQueryRateLimitsRelations) None(
-	params ...StepRateLimitWhereParam,
-) stepDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return stepDefaultParam{
-		data: builder.Field{
-			Name: "rateLimits",
-			Fields: []builder.Field{
-				{
-					Name:   "none",
-					Fields: fields,
-				},
-			},
-		},
-	}
-}
-
-func (stepQueryRateLimitsRelations) Fetch(
-
-	params ...StepRateLimitWhereParam,
-
-) stepToRateLimitsFindMany {
-	var v stepToRateLimitsFindMany
-
-	v.query.Operation = "query"
-	v.query.Method = "rateLimits"
-	v.query.Outputs = stepRateLimitOutput
-
-	var where []builder.Field
-	for _, q := range params {
-		if query := q.getQuery(); query.Operation != "" {
-			v.query.Outputs = append(v.query.Outputs, builder.Output{
-				Name:    query.Method,
-				Inputs:  query.Inputs,
-				Outputs: query.Outputs,
-			})
-		} else {
-			where = append(where, q.field())
-		}
-	}
-
-	if len(where) > 0 {
-		v.query.Inputs = append(v.query.Inputs, builder.Input{
-			Name:   "where",
-			Fields: where,
-		})
-	}
-
-	return v
-}
-
-func (r stepQueryRateLimitsRelations) Link(
-	params ...StepRateLimitWhereParam,
-) stepSetParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return stepSetParam{
-		data: builder.Field{
-			Name: "rateLimits",
-			Fields: []builder.Field{
-				{
-					Name:   "connect",
-					Fields: builder.TransformEquals(fields),
-
-					List:     true,
-					WrapList: true,
-				},
-			},
-		},
-	}
-}
-
-func (r stepQueryRateLimitsRelations) Unlink(
-	params ...StepRateLimitWhereParam,
-) stepSetParam {
-	var v stepSetParam
-
-	var fields []builder.Field
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-	v = stepSetParam{
-		data: builder.Field{
-			Name: "rateLimits",
-			Fields: []builder.Field{
-				{
-					Name:     "disconnect",
-					List:     true,
-					WrapList: true,
-					Fields:   builder.TransformEquals(fields),
-				},
-			},
-		},
-	}
-
-	return v
-}
-
-func (r stepQueryRateLimitsStepRateLimit) Field() stepPrismaFields {
-	return stepFieldRateLimits
-}
-
-// base struct
 type stepQueryWorkerLabelsStepDesiredWorkerLabel struct{}
 
 type stepQueryWorkerLabelsRelations struct{}
@@ -100518,8 +100596,6 @@ type stepRateLimitQuery struct {
 	// @required
 	Units stepRateLimitQueryUnitsInt
 
-	Step stepRateLimitQueryStepRelations
-
 	// StepID
 	//
 	// @required
@@ -100531,6 +100607,11 @@ type stepRateLimitQuery struct {
 	//
 	// @required
 	RateLimitKey stepRateLimitQueryRateLimitKeyString
+
+	// Kind
+	//
+	// @required
+	Kind stepRateLimitQueryKindStepRateLimitKind
 
 	Tenant stepRateLimitQueryTenantRelations
 
@@ -101009,100 +101090,12 @@ func (r stepRateLimitQueryUnitsInt) Field() stepRateLimitPrismaFields {
 }
 
 // base struct
-type stepRateLimitQueryStepStep struct{}
-
-type stepRateLimitQueryStepRelations struct{}
-
-// StepRateLimit -> Step
-//
-// @relation
-// @required
-func (stepRateLimitQueryStepRelations) Where(
-	params ...StepWhereParam,
-) stepRateLimitDefaultParam {
-	var fields []builder.Field
-
-	for _, q := range params {
-		fields = append(fields, q.field())
-	}
-
-	return stepRateLimitDefaultParam{
-		data: builder.Field{
-			Name: "step",
-			Fields: []builder.Field{
-				{
-					Name:   "is",
-					Fields: fields,
-				},
-			},
-		},
-	}
-}
-
-func (stepRateLimitQueryStepRelations) Fetch() stepRateLimitToStepFindUnique {
-	var v stepRateLimitToStepFindUnique
-
-	v.query.Operation = "query"
-	v.query.Method = "step"
-	v.query.Outputs = stepOutput
-
-	return v
-}
-
-func (r stepRateLimitQueryStepRelations) Link(
-	params StepWhereParam,
-) stepRateLimitWithPrismaStepSetParam {
-	var fields []builder.Field
-
-	f := params.field()
-	if f.Fields == nil && f.Value == nil {
-		return stepRateLimitWithPrismaStepSetParam{}
-	}
-
-	fields = append(fields, f)
-
-	return stepRateLimitWithPrismaStepSetParam{
-		data: builder.Field{
-			Name: "step",
-			Fields: []builder.Field{
-				{
-					Name:   "connect",
-					Fields: builder.TransformEquals(fields),
-				},
-			},
-		},
-	}
-}
-
-func (r stepRateLimitQueryStepRelations) Unlink() stepRateLimitWithPrismaStepSetParam {
-	var v stepRateLimitWithPrismaStepSetParam
-
-	v = stepRateLimitWithPrismaStepSetParam{
-		data: builder.Field{
-			Name: "step",
-			Fields: []builder.Field{
-				{
-					Name:  "disconnect",
-					Value: true,
-				},
-			},
-		},
-	}
-
-	return v
-}
-
-func (r stepRateLimitQueryStepStep) Field() stepRateLimitPrismaFields {
-	return stepRateLimitFieldStep
-}
-
-// base struct
 type stepRateLimitQueryStepIDString struct{}
 
 // Set the required value of StepID
-func (r stepRateLimitQueryStepIDString) Set(value string) stepRateLimitSetParam {
+func (r stepRateLimitQueryStepIDString) Set(value string) stepRateLimitWithPrismaStepIDSetParam {
 
-	return stepRateLimitSetParam{
+	return stepRateLimitWithPrismaStepIDSetParam{
 		data: builder.Field{
 			Name:  "stepId",
 			Value: value,
@@ -101112,9 +101105,9 @@ func (r stepRateLimitQueryStepIDString) Set(value string) stepRateLimitSetParam 
 }
 
 // Set the optional value of StepID dynamically
-func (r stepRateLimitQueryStepIDString) SetIfPresent(value *String) stepRateLimitSetParam {
+func (r stepRateLimitQueryStepIDString) SetIfPresent(value *String) stepRateLimitWithPrismaStepIDSetParam {
 	if value == nil {
-		return stepRateLimitSetParam{}
+		return stepRateLimitWithPrismaStepIDSetParam{}
 	}
 
 	return r.Set(*value)
@@ -101876,6 +101869,137 @@ func (r stepRateLimitQueryRateLimitKeyString) HasSuffixIfPresent(value *string) 
 
 func (r stepRateLimitQueryRateLimitKeyString) Field() stepRateLimitPrismaFields {
 	return stepRateLimitFieldRateLimitKey
+}
+
+// base struct
+type stepRateLimitQueryKindStepRateLimitKind struct{}
+
+// Set the required value of Kind
+func (r stepRateLimitQueryKindStepRateLimitKind) Set(value StepRateLimitKind) stepRateLimitSetParam {
+
+	return stepRateLimitSetParam{
+		data: builder.Field{
+			Name:  "kind",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Kind dynamically
+func (r stepRateLimitQueryKindStepRateLimitKind) SetIfPresent(value *StepRateLimitKind) stepRateLimitSetParam {
+	if value == nil {
+		return stepRateLimitSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r stepRateLimitQueryKindStepRateLimitKind) Equals(value StepRateLimitKind) stepRateLimitWithPrismaKindEqualsParam {
+
+	return stepRateLimitWithPrismaKindEqualsParam{
+		data: builder.Field{
+			Name: "kind",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRateLimitQueryKindStepRateLimitKind) EqualsIfPresent(value *StepRateLimitKind) stepRateLimitWithPrismaKindEqualsParam {
+	if value == nil {
+		return stepRateLimitWithPrismaKindEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepRateLimitQueryKindStepRateLimitKind) Order(direction SortOrder) stepRateLimitDefaultParam {
+	return stepRateLimitDefaultParam{
+		data: builder.Field{
+			Name:  "kind",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepRateLimitQueryKindStepRateLimitKind) Cursor(cursor StepRateLimitKind) stepRateLimitCursorParam {
+	return stepRateLimitCursorParam{
+		data: builder.Field{
+			Name:  "kind",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepRateLimitQueryKindStepRateLimitKind) In(value []StepRateLimitKind) stepRateLimitDefaultParam {
+	return stepRateLimitDefaultParam{
+		data: builder.Field{
+			Name: "kind",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRateLimitQueryKindStepRateLimitKind) InIfPresent(value []StepRateLimitKind) stepRateLimitDefaultParam {
+	if value == nil {
+		return stepRateLimitDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r stepRateLimitQueryKindStepRateLimitKind) NotIn(value []StepRateLimitKind) stepRateLimitDefaultParam {
+	return stepRateLimitDefaultParam{
+		data: builder.Field{
+			Name: "kind",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRateLimitQueryKindStepRateLimitKind) NotInIfPresent(value []StepRateLimitKind) stepRateLimitDefaultParam {
+	if value == nil {
+		return stepRateLimitDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepRateLimitQueryKindStepRateLimitKind) Not(value StepRateLimitKind) stepRateLimitDefaultParam {
+	return stepRateLimitDefaultParam{
+		data: builder.Field{
+			Name: "kind",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRateLimitQueryKindStepRateLimitKind) NotIfPresent(value *StepRateLimitKind) stepRateLimitDefaultParam {
+	if value == nil {
+		return stepRateLimitDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+func (r stepRateLimitQueryKindStepRateLimitKind) Field() stepRateLimitPrismaFields {
+	return stepRateLimitFieldKind
 }
 
 // base struct
@@ -138754,6 +138878,3042 @@ func (r jobRunLookupDataQueryDataJson) NotIfPresent(value *JSONNullValueFilter) 
 
 func (r jobRunLookupDataQueryDataJson) Field() jobRunLookupDataPrismaFields {
 	return jobRunLookupDataFieldData
+}
+
+// StepExpression acts as a namespaces to access query methods for the StepExpression model
+var StepExpression = stepExpressionQuery{}
+
+// stepExpressionQuery exposes query functions for the stepExpression model
+type stepExpressionQuery struct {
+
+	// Key
+	//
+	// @required
+	Key stepExpressionQueryKeyString
+
+	// StepID
+	//
+	// @required
+	StepID stepExpressionQueryStepIDString
+
+	// Expression
+	//
+	// @required
+	Expression stepExpressionQueryExpressionString
+
+	// Kind
+	//
+	// @required
+	Kind stepExpressionQueryKindStepExpressionKind
+}
+
+func (stepExpressionQuery) Not(params ...StepExpressionWhereParam) stepExpressionDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (stepExpressionQuery) Or(params ...StepExpressionWhereParam) stepExpressionDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (stepExpressionQuery) And(params ...StepExpressionWhereParam) stepExpressionDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (stepExpressionQuery) KeyStepIDKind(
+	_key StepExpressionWithPrismaKeyWhereParam,
+
+	_stepID StepExpressionWithPrismaStepIDWhereParam,
+
+	_kind StepExpressionWithPrismaKindWhereParam,
+) StepExpressionEqualsUniqueWhereParam {
+	var fields []builder.Field
+
+	fields = append(fields, _key.field())
+	fields = append(fields, _stepID.field())
+	fields = append(fields, _kind.field())
+
+	return stepExpressionEqualsUniqueParam{
+		data: builder.Field{
+			Name:   "key_stepId_kind",
+			Fields: builder.TransformEquals(fields),
+		},
+	}
+}
+
+// base struct
+type stepExpressionQueryKeyString struct{}
+
+// Set the required value of Key
+func (r stepExpressionQueryKeyString) Set(value string) stepExpressionWithPrismaKeySetParam {
+
+	return stepExpressionWithPrismaKeySetParam{
+		data: builder.Field{
+			Name:  "key",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Key dynamically
+func (r stepExpressionQueryKeyString) SetIfPresent(value *String) stepExpressionWithPrismaKeySetParam {
+	if value == nil {
+		return stepExpressionWithPrismaKeySetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r stepExpressionQueryKeyString) Equals(value string) stepExpressionWithPrismaKeyEqualsParam {
+
+	return stepExpressionWithPrismaKeyEqualsParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryKeyString) EqualsIfPresent(value *string) stepExpressionWithPrismaKeyEqualsParam {
+	if value == nil {
+		return stepExpressionWithPrismaKeyEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepExpressionQueryKeyString) Order(direction SortOrder) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name:  "key",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepExpressionQueryKeyString) Cursor(cursor string) stepExpressionCursorParam {
+	return stepExpressionCursorParam{
+		data: builder.Field{
+			Name:  "key",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepExpressionQueryKeyString) In(value []string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryKeyString) InIfPresent(value []string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r stepExpressionQueryKeyString) NotIn(value []string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryKeyString) NotInIfPresent(value []string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepExpressionQueryKeyString) Lt(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryKeyString) LtIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r stepExpressionQueryKeyString) Lte(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryKeyString) LteIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r stepExpressionQueryKeyString) Gt(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryKeyString) GtIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r stepExpressionQueryKeyString) Gte(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryKeyString) GteIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r stepExpressionQueryKeyString) Contains(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryKeyString) ContainsIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r stepExpressionQueryKeyString) StartsWith(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryKeyString) StartsWithIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r stepExpressionQueryKeyString) EndsWith(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryKeyString) EndsWithIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r stepExpressionQueryKeyString) Mode(value QueryMode) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryKeyString) ModeIfPresent(value *QueryMode) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r stepExpressionQueryKeyString) Not(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryKeyString) NotIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r stepExpressionQueryKeyString) HasPrefix(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r stepExpressionQueryKeyString) HasPrefixIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r stepExpressionQueryKeyString) HasSuffix(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r stepExpressionQueryKeyString) HasSuffixIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r stepExpressionQueryKeyString) Field() stepExpressionPrismaFields {
+	return stepExpressionFieldKey
+}
+
+// base struct
+type stepExpressionQueryStepIDString struct{}
+
+// Set the required value of StepID
+func (r stepExpressionQueryStepIDString) Set(value string) stepExpressionWithPrismaStepIDSetParam {
+
+	return stepExpressionWithPrismaStepIDSetParam{
+		data: builder.Field{
+			Name:  "stepId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of StepID dynamically
+func (r stepExpressionQueryStepIDString) SetIfPresent(value *String) stepExpressionWithPrismaStepIDSetParam {
+	if value == nil {
+		return stepExpressionWithPrismaStepIDSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r stepExpressionQueryStepIDString) Equals(value string) stepExpressionWithPrismaStepIDEqualsParam {
+
+	return stepExpressionWithPrismaStepIDEqualsParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryStepIDString) EqualsIfPresent(value *string) stepExpressionWithPrismaStepIDEqualsParam {
+	if value == nil {
+		return stepExpressionWithPrismaStepIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepExpressionQueryStepIDString) Order(direction SortOrder) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name:  "stepId",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepExpressionQueryStepIDString) Cursor(cursor string) stepExpressionCursorParam {
+	return stepExpressionCursorParam{
+		data: builder.Field{
+			Name:  "stepId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepExpressionQueryStepIDString) In(value []string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryStepIDString) InIfPresent(value []string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r stepExpressionQueryStepIDString) NotIn(value []string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryStepIDString) NotInIfPresent(value []string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepExpressionQueryStepIDString) Lt(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryStepIDString) LtIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r stepExpressionQueryStepIDString) Lte(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryStepIDString) LteIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r stepExpressionQueryStepIDString) Gt(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryStepIDString) GtIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r stepExpressionQueryStepIDString) Gte(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryStepIDString) GteIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r stepExpressionQueryStepIDString) Contains(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryStepIDString) ContainsIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r stepExpressionQueryStepIDString) StartsWith(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryStepIDString) StartsWithIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r stepExpressionQueryStepIDString) EndsWith(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryStepIDString) EndsWithIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r stepExpressionQueryStepIDString) Mode(value QueryMode) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryStepIDString) ModeIfPresent(value *QueryMode) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r stepExpressionQueryStepIDString) Not(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryStepIDString) NotIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r stepExpressionQueryStepIDString) HasPrefix(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r stepExpressionQueryStepIDString) HasPrefixIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r stepExpressionQueryStepIDString) HasSuffix(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "stepId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r stepExpressionQueryStepIDString) HasSuffixIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r stepExpressionQueryStepIDString) Field() stepExpressionPrismaFields {
+	return stepExpressionFieldStepID
+}
+
+// base struct
+type stepExpressionQueryExpressionString struct{}
+
+// Set the required value of Expression
+func (r stepExpressionQueryExpressionString) Set(value string) stepExpressionWithPrismaExpressionSetParam {
+
+	return stepExpressionWithPrismaExpressionSetParam{
+		data: builder.Field{
+			Name:  "expression",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Expression dynamically
+func (r stepExpressionQueryExpressionString) SetIfPresent(value *String) stepExpressionWithPrismaExpressionSetParam {
+	if value == nil {
+		return stepExpressionWithPrismaExpressionSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r stepExpressionQueryExpressionString) Equals(value string) stepExpressionWithPrismaExpressionEqualsParam {
+
+	return stepExpressionWithPrismaExpressionEqualsParam{
+		data: builder.Field{
+			Name: "expression",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryExpressionString) EqualsIfPresent(value *string) stepExpressionWithPrismaExpressionEqualsParam {
+	if value == nil {
+		return stepExpressionWithPrismaExpressionEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepExpressionQueryExpressionString) Order(direction SortOrder) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name:  "expression",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepExpressionQueryExpressionString) Cursor(cursor string) stepExpressionCursorParam {
+	return stepExpressionCursorParam{
+		data: builder.Field{
+			Name:  "expression",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepExpressionQueryExpressionString) In(value []string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "expression",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryExpressionString) InIfPresent(value []string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r stepExpressionQueryExpressionString) NotIn(value []string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "expression",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryExpressionString) NotInIfPresent(value []string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepExpressionQueryExpressionString) Lt(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "expression",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryExpressionString) LtIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r stepExpressionQueryExpressionString) Lte(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "expression",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryExpressionString) LteIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r stepExpressionQueryExpressionString) Gt(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "expression",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryExpressionString) GtIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r stepExpressionQueryExpressionString) Gte(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "expression",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryExpressionString) GteIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r stepExpressionQueryExpressionString) Contains(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "expression",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryExpressionString) ContainsIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r stepExpressionQueryExpressionString) StartsWith(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "expression",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryExpressionString) StartsWithIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r stepExpressionQueryExpressionString) EndsWith(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "expression",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryExpressionString) EndsWithIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r stepExpressionQueryExpressionString) Mode(value QueryMode) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "expression",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryExpressionString) ModeIfPresent(value *QueryMode) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r stepExpressionQueryExpressionString) Not(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "expression",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryExpressionString) NotIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r stepExpressionQueryExpressionString) HasPrefix(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "expression",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r stepExpressionQueryExpressionString) HasPrefixIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r stepExpressionQueryExpressionString) HasSuffix(value string) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "expression",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r stepExpressionQueryExpressionString) HasSuffixIfPresent(value *string) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r stepExpressionQueryExpressionString) Field() stepExpressionPrismaFields {
+	return stepExpressionFieldExpression
+}
+
+// base struct
+type stepExpressionQueryKindStepExpressionKind struct{}
+
+// Set the required value of Kind
+func (r stepExpressionQueryKindStepExpressionKind) Set(value StepExpressionKind) stepExpressionWithPrismaKindSetParam {
+
+	return stepExpressionWithPrismaKindSetParam{
+		data: builder.Field{
+			Name:  "kind",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Kind dynamically
+func (r stepExpressionQueryKindStepExpressionKind) SetIfPresent(value *StepExpressionKind) stepExpressionWithPrismaKindSetParam {
+	if value == nil {
+		return stepExpressionWithPrismaKindSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r stepExpressionQueryKindStepExpressionKind) Equals(value StepExpressionKind) stepExpressionWithPrismaKindEqualsParam {
+
+	return stepExpressionWithPrismaKindEqualsParam{
+		data: builder.Field{
+			Name: "kind",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryKindStepExpressionKind) EqualsIfPresent(value *StepExpressionKind) stepExpressionWithPrismaKindEqualsParam {
+	if value == nil {
+		return stepExpressionWithPrismaKindEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepExpressionQueryKindStepExpressionKind) Order(direction SortOrder) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name:  "kind",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepExpressionQueryKindStepExpressionKind) Cursor(cursor StepExpressionKind) stepExpressionCursorParam {
+	return stepExpressionCursorParam{
+		data: builder.Field{
+			Name:  "kind",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepExpressionQueryKindStepExpressionKind) In(value []StepExpressionKind) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "kind",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryKindStepExpressionKind) InIfPresent(value []StepExpressionKind) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r stepExpressionQueryKindStepExpressionKind) NotIn(value []StepExpressionKind) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "kind",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryKindStepExpressionKind) NotInIfPresent(value []StepExpressionKind) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepExpressionQueryKindStepExpressionKind) Not(value StepExpressionKind) stepExpressionDefaultParam {
+	return stepExpressionDefaultParam{
+		data: builder.Field{
+			Name: "kind",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepExpressionQueryKindStepExpressionKind) NotIfPresent(value *StepExpressionKind) stepExpressionDefaultParam {
+	if value == nil {
+		return stepExpressionDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+func (r stepExpressionQueryKindStepExpressionKind) Field() stepExpressionPrismaFields {
+	return stepExpressionFieldKind
+}
+
+// StepRunExpressionEval acts as a namespaces to access query methods for the StepRunExpressionEval model
+var StepRunExpressionEval = stepRunExpressionEvalQuery{}
+
+// stepRunExpressionEvalQuery exposes query functions for the stepRunExpressionEval model
+type stepRunExpressionEvalQuery struct {
+
+	// Key
+	//
+	// @required
+	Key stepRunExpressionEvalQueryKeyString
+
+	// StepRunID
+	//
+	// @required
+	StepRunID stepRunExpressionEvalQueryStepRunIDString
+
+	// ValueStr
+	//
+	// @optional
+	ValueStr stepRunExpressionEvalQueryValueStrString
+
+	// ValueInt
+	//
+	// @optional
+	ValueInt stepRunExpressionEvalQueryValueIntInt
+
+	// Kind
+	//
+	// @required
+	Kind stepRunExpressionEvalQueryKindStepExpressionKind
+}
+
+func (stepRunExpressionEvalQuery) Not(params ...StepRunExpressionEvalWhereParam) stepRunExpressionEvalDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (stepRunExpressionEvalQuery) Or(params ...StepRunExpressionEvalWhereParam) stepRunExpressionEvalDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (stepRunExpressionEvalQuery) And(params ...StepRunExpressionEvalWhereParam) stepRunExpressionEvalDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (stepRunExpressionEvalQuery) KeyStepRunIDKind(
+	_key StepRunExpressionEvalWithPrismaKeyWhereParam,
+
+	_stepRunID StepRunExpressionEvalWithPrismaStepRunIDWhereParam,
+
+	_kind StepRunExpressionEvalWithPrismaKindWhereParam,
+) StepRunExpressionEvalEqualsUniqueWhereParam {
+	var fields []builder.Field
+
+	fields = append(fields, _key.field())
+	fields = append(fields, _stepRunID.field())
+	fields = append(fields, _kind.field())
+
+	return stepRunExpressionEvalEqualsUniqueParam{
+		data: builder.Field{
+			Name:   "key_stepRunId_kind",
+			Fields: builder.TransformEquals(fields),
+		},
+	}
+}
+
+// base struct
+type stepRunExpressionEvalQueryKeyString struct{}
+
+// Set the required value of Key
+func (r stepRunExpressionEvalQueryKeyString) Set(value string) stepRunExpressionEvalWithPrismaKeySetParam {
+
+	return stepRunExpressionEvalWithPrismaKeySetParam{
+		data: builder.Field{
+			Name:  "key",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Key dynamically
+func (r stepRunExpressionEvalQueryKeyString) SetIfPresent(value *String) stepRunExpressionEvalWithPrismaKeySetParam {
+	if value == nil {
+		return stepRunExpressionEvalWithPrismaKeySetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r stepRunExpressionEvalQueryKeyString) Equals(value string) stepRunExpressionEvalWithPrismaKeyEqualsParam {
+
+	return stepRunExpressionEvalWithPrismaKeyEqualsParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryKeyString) EqualsIfPresent(value *string) stepRunExpressionEvalWithPrismaKeyEqualsParam {
+	if value == nil {
+		return stepRunExpressionEvalWithPrismaKeyEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepRunExpressionEvalQueryKeyString) Order(direction SortOrder) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name:  "key",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryKeyString) Cursor(cursor string) stepRunExpressionEvalCursorParam {
+	return stepRunExpressionEvalCursorParam{
+		data: builder.Field{
+			Name:  "key",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryKeyString) In(value []string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryKeyString) InIfPresent(value []string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r stepRunExpressionEvalQueryKeyString) NotIn(value []string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryKeyString) NotInIfPresent(value []string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepRunExpressionEvalQueryKeyString) Lt(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryKeyString) LtIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r stepRunExpressionEvalQueryKeyString) Lte(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryKeyString) LteIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r stepRunExpressionEvalQueryKeyString) Gt(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryKeyString) GtIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r stepRunExpressionEvalQueryKeyString) Gte(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryKeyString) GteIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r stepRunExpressionEvalQueryKeyString) Contains(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryKeyString) ContainsIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r stepRunExpressionEvalQueryKeyString) StartsWith(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryKeyString) StartsWithIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r stepRunExpressionEvalQueryKeyString) EndsWith(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryKeyString) EndsWithIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r stepRunExpressionEvalQueryKeyString) Mode(value QueryMode) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryKeyString) ModeIfPresent(value *QueryMode) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r stepRunExpressionEvalQueryKeyString) Not(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryKeyString) NotIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r stepRunExpressionEvalQueryKeyString) HasPrefix(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r stepRunExpressionEvalQueryKeyString) HasPrefixIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r stepRunExpressionEvalQueryKeyString) HasSuffix(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r stepRunExpressionEvalQueryKeyString) HasSuffixIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r stepRunExpressionEvalQueryKeyString) Field() stepRunExpressionEvalPrismaFields {
+	return stepRunExpressionEvalFieldKey
+}
+
+// base struct
+type stepRunExpressionEvalQueryStepRunIDString struct{}
+
+// Set the required value of StepRunID
+func (r stepRunExpressionEvalQueryStepRunIDString) Set(value string) stepRunExpressionEvalWithPrismaStepRunIDSetParam {
+
+	return stepRunExpressionEvalWithPrismaStepRunIDSetParam{
+		data: builder.Field{
+			Name:  "stepRunId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of StepRunID dynamically
+func (r stepRunExpressionEvalQueryStepRunIDString) SetIfPresent(value *String) stepRunExpressionEvalWithPrismaStepRunIDSetParam {
+	if value == nil {
+		return stepRunExpressionEvalWithPrismaStepRunIDSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) Equals(value string) stepRunExpressionEvalWithPrismaStepRunIDEqualsParam {
+
+	return stepRunExpressionEvalWithPrismaStepRunIDEqualsParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) EqualsIfPresent(value *string) stepRunExpressionEvalWithPrismaStepRunIDEqualsParam {
+	if value == nil {
+		return stepRunExpressionEvalWithPrismaStepRunIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) Order(direction SortOrder) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name:  "stepRunId",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) Cursor(cursor string) stepRunExpressionEvalCursorParam {
+	return stepRunExpressionEvalCursorParam{
+		data: builder.Field{
+			Name:  "stepRunId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) In(value []string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) InIfPresent(value []string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) NotIn(value []string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) NotInIfPresent(value []string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) Lt(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) LtIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) Lte(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) LteIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) Gt(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) GtIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) Gte(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) GteIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) Contains(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) ContainsIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) StartsWith(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) StartsWithIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) EndsWith(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) EndsWithIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) Mode(value QueryMode) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) ModeIfPresent(value *QueryMode) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) Not(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) NotIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r stepRunExpressionEvalQueryStepRunIDString) HasPrefix(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r stepRunExpressionEvalQueryStepRunIDString) HasPrefixIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r stepRunExpressionEvalQueryStepRunIDString) HasSuffix(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "stepRunId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r stepRunExpressionEvalQueryStepRunIDString) HasSuffixIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r stepRunExpressionEvalQueryStepRunIDString) Field() stepRunExpressionEvalPrismaFields {
+	return stepRunExpressionEvalFieldStepRunID
+}
+
+// base struct
+type stepRunExpressionEvalQueryValueStrString struct{}
+
+// Set the optional value of ValueStr
+func (r stepRunExpressionEvalQueryValueStrString) Set(value string) stepRunExpressionEvalSetParam {
+
+	return stepRunExpressionEvalSetParam{
+		data: builder.Field{
+			Name:  "valueStr",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ValueStr dynamically
+func (r stepRunExpressionEvalQueryValueStrString) SetIfPresent(value *String) stepRunExpressionEvalSetParam {
+	if value == nil {
+		return stepRunExpressionEvalSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of ValueStr dynamically
+func (r stepRunExpressionEvalQueryValueStrString) SetOptional(value *String) stepRunExpressionEvalSetParam {
+	if value == nil {
+
+		var v *string
+		return stepRunExpressionEvalSetParam{
+			data: builder.Field{
+				Name:  "valueStr",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) Equals(value string) stepRunExpressionEvalWithPrismaValueStrEqualsParam {
+
+	return stepRunExpressionEvalWithPrismaValueStrEqualsParam{
+		data: builder.Field{
+			Name: "valueStr",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) EqualsIfPresent(value *string) stepRunExpressionEvalWithPrismaValueStrEqualsParam {
+	if value == nil {
+		return stepRunExpressionEvalWithPrismaValueStrEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) EqualsOptional(value *String) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueStr",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) IsNull() stepRunExpressionEvalDefaultParam {
+	var str *string = nil
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueStr",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) Order(direction SortOrder) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name:  "valueStr",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) Cursor(cursor string) stepRunExpressionEvalCursorParam {
+	return stepRunExpressionEvalCursorParam{
+		data: builder.Field{
+			Name:  "valueStr",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) In(value []string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueStr",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) InIfPresent(value []string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) NotIn(value []string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueStr",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) NotInIfPresent(value []string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) Lt(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueStr",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) LtIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) Lte(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueStr",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) LteIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) Gt(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueStr",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) GtIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) Gte(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueStr",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) GteIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) Contains(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueStr",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) ContainsIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) StartsWith(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueStr",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) StartsWithIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) EndsWith(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueStr",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) EndsWithIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) Mode(value QueryMode) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueStr",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) ModeIfPresent(value *QueryMode) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) Not(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueStr",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) NotIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r stepRunExpressionEvalQueryValueStrString) HasPrefix(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueStr",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r stepRunExpressionEvalQueryValueStrString) HasPrefixIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r stepRunExpressionEvalQueryValueStrString) HasSuffix(value string) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueStr",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r stepRunExpressionEvalQueryValueStrString) HasSuffixIfPresent(value *string) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r stepRunExpressionEvalQueryValueStrString) Field() stepRunExpressionEvalPrismaFields {
+	return stepRunExpressionEvalFieldValueStr
+}
+
+// base struct
+type stepRunExpressionEvalQueryValueIntInt struct{}
+
+// Set the optional value of ValueInt
+func (r stepRunExpressionEvalQueryValueIntInt) Set(value int) stepRunExpressionEvalSetParam {
+
+	return stepRunExpressionEvalSetParam{
+		data: builder.Field{
+			Name:  "valueInt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ValueInt dynamically
+func (r stepRunExpressionEvalQueryValueIntInt) SetIfPresent(value *Int) stepRunExpressionEvalSetParam {
+	if value == nil {
+		return stepRunExpressionEvalSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of ValueInt dynamically
+func (r stepRunExpressionEvalQueryValueIntInt) SetOptional(value *Int) stepRunExpressionEvalSetParam {
+	if value == nil {
+
+		var v *int
+		return stepRunExpressionEvalSetParam{
+			data: builder.Field{
+				Name:  "valueInt",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the optional value of ValueInt
+func (r stepRunExpressionEvalQueryValueIntInt) Increment(value int) stepRunExpressionEvalSetParam {
+	return stepRunExpressionEvalSetParam{
+		data: builder.Field{
+			Name: "valueInt",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) IncrementIfPresent(value *int) stepRunExpressionEvalSetParam {
+	if value == nil {
+		return stepRunExpressionEvalSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the optional value of ValueInt
+func (r stepRunExpressionEvalQueryValueIntInt) Decrement(value int) stepRunExpressionEvalSetParam {
+	return stepRunExpressionEvalSetParam{
+		data: builder.Field{
+			Name: "valueInt",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) DecrementIfPresent(value *int) stepRunExpressionEvalSetParam {
+	if value == nil {
+		return stepRunExpressionEvalSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the optional value of ValueInt
+func (r stepRunExpressionEvalQueryValueIntInt) Multiply(value int) stepRunExpressionEvalSetParam {
+	return stepRunExpressionEvalSetParam{
+		data: builder.Field{
+			Name: "valueInt",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) MultiplyIfPresent(value *int) stepRunExpressionEvalSetParam {
+	if value == nil {
+		return stepRunExpressionEvalSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the optional value of ValueInt
+func (r stepRunExpressionEvalQueryValueIntInt) Divide(value int) stepRunExpressionEvalSetParam {
+	return stepRunExpressionEvalSetParam{
+		data: builder.Field{
+			Name: "valueInt",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) DivideIfPresent(value *int) stepRunExpressionEvalSetParam {
+	if value == nil {
+		return stepRunExpressionEvalSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) Equals(value int) stepRunExpressionEvalWithPrismaValueIntEqualsParam {
+
+	return stepRunExpressionEvalWithPrismaValueIntEqualsParam{
+		data: builder.Field{
+			Name: "valueInt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) EqualsIfPresent(value *int) stepRunExpressionEvalWithPrismaValueIntEqualsParam {
+	if value == nil {
+		return stepRunExpressionEvalWithPrismaValueIntEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) EqualsOptional(value *Int) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueInt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) IsNull() stepRunExpressionEvalDefaultParam {
+	var str *string = nil
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueInt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) Order(direction SortOrder) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name:  "valueInt",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) Cursor(cursor int) stepRunExpressionEvalCursorParam {
+	return stepRunExpressionEvalCursorParam{
+		data: builder.Field{
+			Name:  "valueInt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) In(value []int) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueInt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) InIfPresent(value []int) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) NotIn(value []int) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueInt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) NotInIfPresent(value []int) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) Lt(value int) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueInt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) LtIfPresent(value *int) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) Lte(value int) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueInt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) LteIfPresent(value *int) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) Gt(value int) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueInt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) GtIfPresent(value *int) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) Gte(value int) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueInt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) GteIfPresent(value *int) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) Not(value int) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueInt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) NotIfPresent(value *int) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r stepRunExpressionEvalQueryValueIntInt) LT(value int) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueInt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r stepRunExpressionEvalQueryValueIntInt) LTIfPresent(value *int) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.LT(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r stepRunExpressionEvalQueryValueIntInt) LTE(value int) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueInt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r stepRunExpressionEvalQueryValueIntInt) LTEIfPresent(value *int) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.LTE(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r stepRunExpressionEvalQueryValueIntInt) GT(value int) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueInt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r stepRunExpressionEvalQueryValueIntInt) GTIfPresent(value *int) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.GT(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r stepRunExpressionEvalQueryValueIntInt) GTE(value int) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "valueInt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r stepRunExpressionEvalQueryValueIntInt) GTEIfPresent(value *int) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.GTE(*value)
+}
+
+func (r stepRunExpressionEvalQueryValueIntInt) Field() stepRunExpressionEvalPrismaFields {
+	return stepRunExpressionEvalFieldValueInt
+}
+
+// base struct
+type stepRunExpressionEvalQueryKindStepExpressionKind struct{}
+
+// Set the required value of Kind
+func (r stepRunExpressionEvalQueryKindStepExpressionKind) Set(value StepExpressionKind) stepRunExpressionEvalWithPrismaKindSetParam {
+
+	return stepRunExpressionEvalWithPrismaKindSetParam{
+		data: builder.Field{
+			Name:  "kind",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Kind dynamically
+func (r stepRunExpressionEvalQueryKindStepExpressionKind) SetIfPresent(value *StepExpressionKind) stepRunExpressionEvalWithPrismaKindSetParam {
+	if value == nil {
+		return stepRunExpressionEvalWithPrismaKindSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r stepRunExpressionEvalQueryKindStepExpressionKind) Equals(value StepExpressionKind) stepRunExpressionEvalWithPrismaKindEqualsParam {
+
+	return stepRunExpressionEvalWithPrismaKindEqualsParam{
+		data: builder.Field{
+			Name: "kind",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryKindStepExpressionKind) EqualsIfPresent(value *StepExpressionKind) stepRunExpressionEvalWithPrismaKindEqualsParam {
+	if value == nil {
+		return stepRunExpressionEvalWithPrismaKindEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepRunExpressionEvalQueryKindStepExpressionKind) Order(direction SortOrder) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name:  "kind",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryKindStepExpressionKind) Cursor(cursor StepExpressionKind) stepRunExpressionEvalCursorParam {
+	return stepRunExpressionEvalCursorParam{
+		data: builder.Field{
+			Name:  "kind",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryKindStepExpressionKind) In(value []StepExpressionKind) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "kind",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryKindStepExpressionKind) InIfPresent(value []StepExpressionKind) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r stepRunExpressionEvalQueryKindStepExpressionKind) NotIn(value []StepExpressionKind) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "kind",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryKindStepExpressionKind) NotInIfPresent(value []StepExpressionKind) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepRunExpressionEvalQueryKindStepExpressionKind) Not(value StepExpressionKind) stepRunExpressionEvalDefaultParam {
+	return stepRunExpressionEvalDefaultParam{
+		data: builder.Field{
+			Name: "kind",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunExpressionEvalQueryKindStepExpressionKind) NotIfPresent(value *StepExpressionKind) stepRunExpressionEvalDefaultParam {
+	if value == nil {
+		return stepRunExpressionEvalDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+func (r stepRunExpressionEvalQueryKindStepExpressionKind) Field() stepRunExpressionEvalPrismaFields {
+	return stepRunExpressionEvalFieldKind
 }
 
 // StepRun acts as a namespaces to access query methods for the StepRun model
@@ -232501,84 +235661,6 @@ func (p stepWithPrismaScheduleTimeoutEqualsUniqueParam) scheduleTimeoutField() {
 func (stepWithPrismaScheduleTimeoutEqualsUniqueParam) unique() {}
 func (stepWithPrismaScheduleTimeoutEqualsUniqueParam) equals() {}
 
-type StepWithPrismaRateLimitsEqualsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	stepModel()
-	rateLimitsField()
-}
-
-type StepWithPrismaRateLimitsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	stepModel()
-	rateLimitsField()
-}
-
-type stepWithPrismaRateLimitsSetParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p stepWithPrismaRateLimitsSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p stepWithPrismaRateLimitsSetParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p stepWithPrismaRateLimitsSetParam) stepModel() {}
-
-func (p stepWithPrismaRateLimitsSetParam) rateLimitsField() {}
-
-type StepWithPrismaRateLimitsWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	stepModel()
-	rateLimitsField()
-}
-
-type stepWithPrismaRateLimitsEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p stepWithPrismaRateLimitsEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p stepWithPrismaRateLimitsEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p stepWithPrismaRateLimitsEqualsParam) stepModel() {}
-
-func (p stepWithPrismaRateLimitsEqualsParam) rateLimitsField() {}
-
-func (stepWithPrismaRateLimitsSetParam) settable()  {}
-func (stepWithPrismaRateLimitsEqualsParam) equals() {}
-
-type stepWithPrismaRateLimitsEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p stepWithPrismaRateLimitsEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p stepWithPrismaRateLimitsEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p stepWithPrismaRateLimitsEqualsUniqueParam) stepModel()       {}
-func (p stepWithPrismaRateLimitsEqualsUniqueParam) rateLimitsField() {}
-
-func (stepWithPrismaRateLimitsEqualsUniqueParam) unique() {}
-func (stepWithPrismaRateLimitsEqualsUniqueParam) equals() {}
-
 type StepWithPrismaWorkerLabelsEqualsSetParam interface {
 	field() builder.Field
 	getQuery() builder.Query
@@ -232666,6 +235748,7 @@ var stepRateLimitOutput = []builder.Output{
 	{Name: "units"},
 	{Name: "stepId"},
 	{Name: "rateLimitKey"},
+	{Name: "kind"},
 	{Name: "tenantId"},
 }
 
@@ -232911,84 +235994,6 @@ func (p stepRateLimitWithPrismaUnitsEqualsUniqueParam) unitsField()         {}
 func (stepRateLimitWithPrismaUnitsEqualsUniqueParam) unique() {}
 func (stepRateLimitWithPrismaUnitsEqualsUniqueParam) equals() {}
 
-type StepRateLimitWithPrismaStepEqualsSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	equals()
-	stepRateLimitModel()
-	stepField()
-}
-
-type StepRateLimitWithPrismaStepSetParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	stepRateLimitModel()
-	stepField()
-}
-
-type stepRateLimitWithPrismaStepSetParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p stepRateLimitWithPrismaStepSetParam) field() builder.Field {
-	return p.data
-}
-
-func (p stepRateLimitWithPrismaStepSetParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p stepRateLimitWithPrismaStepSetParam) stepRateLimitModel() {}
-
-func (p stepRateLimitWithPrismaStepSetParam) stepField() {}
-
-type StepRateLimitWithPrismaStepWhereParam interface {
-	field() builder.Field
-	getQuery() builder.Query
-	stepRateLimitModel()
-	stepField()
-}
-
-type stepRateLimitWithPrismaStepEqualsParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p stepRateLimitWithPrismaStepEqualsParam) field() builder.Field {
-	return p.data
-}
-
-func (p stepRateLimitWithPrismaStepEqualsParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p stepRateLimitWithPrismaStepEqualsParam) stepRateLimitModel() {}
-
-func (p stepRateLimitWithPrismaStepEqualsParam) stepField() {}
-
-func (stepRateLimitWithPrismaStepSetParam) settable()  {}
-func (stepRateLimitWithPrismaStepEqualsParam) equals() {}
-
-type stepRateLimitWithPrismaStepEqualsUniqueParam struct {
-	data  builder.Field
-	query builder.Query
-}
-
-func (p stepRateLimitWithPrismaStepEqualsUniqueParam) field() builder.Field {
-	return p.data
-}
-
-func (p stepRateLimitWithPrismaStepEqualsUniqueParam) getQuery() builder.Query {
-	return p.query
-}
-
-func (p stepRateLimitWithPrismaStepEqualsUniqueParam) stepRateLimitModel() {}
-func (p stepRateLimitWithPrismaStepEqualsUniqueParam) stepField()          {}
-
-func (stepRateLimitWithPrismaStepEqualsUniqueParam) unique() {}
-func (stepRateLimitWithPrismaStepEqualsUniqueParam) equals() {}
-
 type StepRateLimitWithPrismaStepIDEqualsSetParam interface {
 	field() builder.Field
 	getQuery() builder.Query
@@ -233222,6 +236227,84 @@ func (p stepRateLimitWithPrismaRateLimitKeyEqualsUniqueParam) rateLimitKeyField(
 
 func (stepRateLimitWithPrismaRateLimitKeyEqualsUniqueParam) unique() {}
 func (stepRateLimitWithPrismaRateLimitKeyEqualsUniqueParam) equals() {}
+
+type StepRateLimitWithPrismaKindEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepRateLimitModel()
+	kindField()
+}
+
+type StepRateLimitWithPrismaKindSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRateLimitModel()
+	kindField()
+}
+
+type stepRateLimitWithPrismaKindSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRateLimitWithPrismaKindSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRateLimitWithPrismaKindSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRateLimitWithPrismaKindSetParam) stepRateLimitModel() {}
+
+func (p stepRateLimitWithPrismaKindSetParam) kindField() {}
+
+type StepRateLimitWithPrismaKindWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRateLimitModel()
+	kindField()
+}
+
+type stepRateLimitWithPrismaKindEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRateLimitWithPrismaKindEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRateLimitWithPrismaKindEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRateLimitWithPrismaKindEqualsParam) stepRateLimitModel() {}
+
+func (p stepRateLimitWithPrismaKindEqualsParam) kindField() {}
+
+func (stepRateLimitWithPrismaKindSetParam) settable()  {}
+func (stepRateLimitWithPrismaKindEqualsParam) equals() {}
+
+type stepRateLimitWithPrismaKindEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRateLimitWithPrismaKindEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRateLimitWithPrismaKindEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRateLimitWithPrismaKindEqualsUniqueParam) stepRateLimitModel() {}
+func (p stepRateLimitWithPrismaKindEqualsUniqueParam) kindField()          {}
+
+func (stepRateLimitWithPrismaKindEqualsUniqueParam) unique() {}
+func (stepRateLimitWithPrismaKindEqualsUniqueParam) equals() {}
 
 type StepRateLimitWithPrismaTenantEqualsSetParam interface {
 	field() builder.Field
@@ -244523,6 +247606,1061 @@ func (p jobRunLookupDataWithPrismaDataEqualsUniqueParam) dataField()            
 
 func (jobRunLookupDataWithPrismaDataEqualsUniqueParam) unique() {}
 func (jobRunLookupDataWithPrismaDataEqualsUniqueParam) equals() {}
+
+type stepExpressionActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var stepExpressionOutput = []builder.Output{
+	{Name: "key"},
+	{Name: "stepId"},
+	{Name: "expression"},
+	{Name: "kind"},
+}
+
+type StepExpressionRelationWith interface {
+	getQuery() builder.Query
+	with()
+	stepExpressionRelation()
+}
+
+type StepExpressionWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepExpressionModel()
+}
+
+type stepExpressionDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepExpressionDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepExpressionDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepExpressionDefaultParam) stepExpressionModel() {}
+
+type StepExpressionOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepExpressionModel()
+}
+
+type stepExpressionOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepExpressionOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepExpressionOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepExpressionOrderByParam) stepExpressionModel() {}
+
+type StepExpressionCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepExpressionModel()
+	isCursor()
+}
+
+type stepExpressionCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepExpressionCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepExpressionCursorParam) isCursor() {}
+
+func (p stepExpressionCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepExpressionCursorParam) stepExpressionModel() {}
+
+type StepExpressionParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	stepExpressionModel()
+}
+
+type stepExpressionParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepExpressionParamUnique) stepExpressionModel() {}
+
+func (stepExpressionParamUnique) unique() {}
+
+func (p stepExpressionParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p stepExpressionParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type StepExpressionEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepExpressionModel()
+}
+
+type stepExpressionEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepExpressionEqualsParam) stepExpressionModel() {}
+
+func (stepExpressionEqualsParam) equals() {}
+
+func (p stepExpressionEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepExpressionEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type StepExpressionEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	stepExpressionModel()
+}
+
+type stepExpressionEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepExpressionEqualsUniqueParam) stepExpressionModel() {}
+
+func (stepExpressionEqualsUniqueParam) unique() {}
+func (stepExpressionEqualsUniqueParam) equals() {}
+
+func (p stepExpressionEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepExpressionEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type StepExpressionSetParam interface {
+	field() builder.Field
+	settable()
+	stepExpressionModel()
+}
+
+type stepExpressionSetParam struct {
+	data builder.Field
+}
+
+func (stepExpressionSetParam) settable() {}
+
+func (p stepExpressionSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepExpressionSetParam) stepExpressionModel() {}
+
+type StepExpressionWithPrismaKeyEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepExpressionModel()
+	keyField()
+}
+
+type StepExpressionWithPrismaKeySetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepExpressionModel()
+	keyField()
+}
+
+type stepExpressionWithPrismaKeySetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepExpressionWithPrismaKeySetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepExpressionWithPrismaKeySetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepExpressionWithPrismaKeySetParam) stepExpressionModel() {}
+
+func (p stepExpressionWithPrismaKeySetParam) keyField() {}
+
+type StepExpressionWithPrismaKeyWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepExpressionModel()
+	keyField()
+}
+
+type stepExpressionWithPrismaKeyEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepExpressionWithPrismaKeyEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepExpressionWithPrismaKeyEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepExpressionWithPrismaKeyEqualsParam) stepExpressionModel() {}
+
+func (p stepExpressionWithPrismaKeyEqualsParam) keyField() {}
+
+func (stepExpressionWithPrismaKeySetParam) settable()  {}
+func (stepExpressionWithPrismaKeyEqualsParam) equals() {}
+
+type stepExpressionWithPrismaKeyEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepExpressionWithPrismaKeyEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepExpressionWithPrismaKeyEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepExpressionWithPrismaKeyEqualsUniqueParam) stepExpressionModel() {}
+func (p stepExpressionWithPrismaKeyEqualsUniqueParam) keyField()            {}
+
+func (stepExpressionWithPrismaKeyEqualsUniqueParam) unique() {}
+func (stepExpressionWithPrismaKeyEqualsUniqueParam) equals() {}
+
+type StepExpressionWithPrismaStepIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepExpressionModel()
+	stepIDField()
+}
+
+type StepExpressionWithPrismaStepIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepExpressionModel()
+	stepIDField()
+}
+
+type stepExpressionWithPrismaStepIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepExpressionWithPrismaStepIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepExpressionWithPrismaStepIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepExpressionWithPrismaStepIDSetParam) stepExpressionModel() {}
+
+func (p stepExpressionWithPrismaStepIDSetParam) stepIDField() {}
+
+type StepExpressionWithPrismaStepIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepExpressionModel()
+	stepIDField()
+}
+
+type stepExpressionWithPrismaStepIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepExpressionWithPrismaStepIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepExpressionWithPrismaStepIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepExpressionWithPrismaStepIDEqualsParam) stepExpressionModel() {}
+
+func (p stepExpressionWithPrismaStepIDEqualsParam) stepIDField() {}
+
+func (stepExpressionWithPrismaStepIDSetParam) settable()  {}
+func (stepExpressionWithPrismaStepIDEqualsParam) equals() {}
+
+type stepExpressionWithPrismaStepIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepExpressionWithPrismaStepIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepExpressionWithPrismaStepIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepExpressionWithPrismaStepIDEqualsUniqueParam) stepExpressionModel() {}
+func (p stepExpressionWithPrismaStepIDEqualsUniqueParam) stepIDField()         {}
+
+func (stepExpressionWithPrismaStepIDEqualsUniqueParam) unique() {}
+func (stepExpressionWithPrismaStepIDEqualsUniqueParam) equals() {}
+
+type StepExpressionWithPrismaExpressionEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepExpressionModel()
+	expressionField()
+}
+
+type StepExpressionWithPrismaExpressionSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepExpressionModel()
+	expressionField()
+}
+
+type stepExpressionWithPrismaExpressionSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepExpressionWithPrismaExpressionSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepExpressionWithPrismaExpressionSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepExpressionWithPrismaExpressionSetParam) stepExpressionModel() {}
+
+func (p stepExpressionWithPrismaExpressionSetParam) expressionField() {}
+
+type StepExpressionWithPrismaExpressionWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepExpressionModel()
+	expressionField()
+}
+
+type stepExpressionWithPrismaExpressionEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepExpressionWithPrismaExpressionEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepExpressionWithPrismaExpressionEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepExpressionWithPrismaExpressionEqualsParam) stepExpressionModel() {}
+
+func (p stepExpressionWithPrismaExpressionEqualsParam) expressionField() {}
+
+func (stepExpressionWithPrismaExpressionSetParam) settable()  {}
+func (stepExpressionWithPrismaExpressionEqualsParam) equals() {}
+
+type stepExpressionWithPrismaExpressionEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepExpressionWithPrismaExpressionEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepExpressionWithPrismaExpressionEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepExpressionWithPrismaExpressionEqualsUniqueParam) stepExpressionModel() {}
+func (p stepExpressionWithPrismaExpressionEqualsUniqueParam) expressionField()     {}
+
+func (stepExpressionWithPrismaExpressionEqualsUniqueParam) unique() {}
+func (stepExpressionWithPrismaExpressionEqualsUniqueParam) equals() {}
+
+type StepExpressionWithPrismaKindEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepExpressionModel()
+	kindField()
+}
+
+type StepExpressionWithPrismaKindSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepExpressionModel()
+	kindField()
+}
+
+type stepExpressionWithPrismaKindSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepExpressionWithPrismaKindSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepExpressionWithPrismaKindSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepExpressionWithPrismaKindSetParam) stepExpressionModel() {}
+
+func (p stepExpressionWithPrismaKindSetParam) kindField() {}
+
+type StepExpressionWithPrismaKindWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepExpressionModel()
+	kindField()
+}
+
+type stepExpressionWithPrismaKindEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepExpressionWithPrismaKindEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepExpressionWithPrismaKindEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepExpressionWithPrismaKindEqualsParam) stepExpressionModel() {}
+
+func (p stepExpressionWithPrismaKindEqualsParam) kindField() {}
+
+func (stepExpressionWithPrismaKindSetParam) settable()  {}
+func (stepExpressionWithPrismaKindEqualsParam) equals() {}
+
+type stepExpressionWithPrismaKindEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepExpressionWithPrismaKindEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepExpressionWithPrismaKindEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepExpressionWithPrismaKindEqualsUniqueParam) stepExpressionModel() {}
+func (p stepExpressionWithPrismaKindEqualsUniqueParam) kindField()           {}
+
+func (stepExpressionWithPrismaKindEqualsUniqueParam) unique() {}
+func (stepExpressionWithPrismaKindEqualsUniqueParam) equals() {}
+
+type stepRunExpressionEvalActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var stepRunExpressionEvalOutput = []builder.Output{
+	{Name: "key"},
+	{Name: "stepRunId"},
+	{Name: "valueStr"},
+	{Name: "valueInt"},
+	{Name: "kind"},
+}
+
+type StepRunExpressionEvalRelationWith interface {
+	getQuery() builder.Query
+	with()
+	stepRunExpressionEvalRelation()
+}
+
+type StepRunExpressionEvalWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRunExpressionEvalModel()
+}
+
+type stepRunExpressionEvalDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunExpressionEvalDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunExpressionEvalDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunExpressionEvalDefaultParam) stepRunExpressionEvalModel() {}
+
+type StepRunExpressionEvalOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRunExpressionEvalModel()
+}
+
+type stepRunExpressionEvalOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunExpressionEvalOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunExpressionEvalOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunExpressionEvalOrderByParam) stepRunExpressionEvalModel() {}
+
+type StepRunExpressionEvalCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRunExpressionEvalModel()
+	isCursor()
+}
+
+type stepRunExpressionEvalCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunExpressionEvalCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunExpressionEvalCursorParam) isCursor() {}
+
+func (p stepRunExpressionEvalCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunExpressionEvalCursorParam) stepRunExpressionEvalModel() {}
+
+type StepRunExpressionEvalParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	stepRunExpressionEvalModel()
+}
+
+type stepRunExpressionEvalParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunExpressionEvalParamUnique) stepRunExpressionEvalModel() {}
+
+func (stepRunExpressionEvalParamUnique) unique() {}
+
+func (p stepRunExpressionEvalParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunExpressionEvalParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type StepRunExpressionEvalEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepRunExpressionEvalModel()
+}
+
+type stepRunExpressionEvalEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunExpressionEvalEqualsParam) stepRunExpressionEvalModel() {}
+
+func (stepRunExpressionEvalEqualsParam) equals() {}
+
+func (p stepRunExpressionEvalEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunExpressionEvalEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type StepRunExpressionEvalEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	stepRunExpressionEvalModel()
+}
+
+type stepRunExpressionEvalEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunExpressionEvalEqualsUniqueParam) stepRunExpressionEvalModel() {}
+
+func (stepRunExpressionEvalEqualsUniqueParam) unique() {}
+func (stepRunExpressionEvalEqualsUniqueParam) equals() {}
+
+func (p stepRunExpressionEvalEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunExpressionEvalEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type StepRunExpressionEvalSetParam interface {
+	field() builder.Field
+	settable()
+	stepRunExpressionEvalModel()
+}
+
+type stepRunExpressionEvalSetParam struct {
+	data builder.Field
+}
+
+func (stepRunExpressionEvalSetParam) settable() {}
+
+func (p stepRunExpressionEvalSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunExpressionEvalSetParam) stepRunExpressionEvalModel() {}
+
+type StepRunExpressionEvalWithPrismaKeyEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepRunExpressionEvalModel()
+	keyField()
+}
+
+type StepRunExpressionEvalWithPrismaKeySetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRunExpressionEvalModel()
+	keyField()
+}
+
+type stepRunExpressionEvalWithPrismaKeySetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunExpressionEvalWithPrismaKeySetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunExpressionEvalWithPrismaKeySetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunExpressionEvalWithPrismaKeySetParam) stepRunExpressionEvalModel() {}
+
+func (p stepRunExpressionEvalWithPrismaKeySetParam) keyField() {}
+
+type StepRunExpressionEvalWithPrismaKeyWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRunExpressionEvalModel()
+	keyField()
+}
+
+type stepRunExpressionEvalWithPrismaKeyEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunExpressionEvalWithPrismaKeyEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunExpressionEvalWithPrismaKeyEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunExpressionEvalWithPrismaKeyEqualsParam) stepRunExpressionEvalModel() {}
+
+func (p stepRunExpressionEvalWithPrismaKeyEqualsParam) keyField() {}
+
+func (stepRunExpressionEvalWithPrismaKeySetParam) settable()  {}
+func (stepRunExpressionEvalWithPrismaKeyEqualsParam) equals() {}
+
+type stepRunExpressionEvalWithPrismaKeyEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunExpressionEvalWithPrismaKeyEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunExpressionEvalWithPrismaKeyEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunExpressionEvalWithPrismaKeyEqualsUniqueParam) stepRunExpressionEvalModel() {}
+func (p stepRunExpressionEvalWithPrismaKeyEqualsUniqueParam) keyField()                   {}
+
+func (stepRunExpressionEvalWithPrismaKeyEqualsUniqueParam) unique() {}
+func (stepRunExpressionEvalWithPrismaKeyEqualsUniqueParam) equals() {}
+
+type StepRunExpressionEvalWithPrismaStepRunIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepRunExpressionEvalModel()
+	stepRunIDField()
+}
+
+type StepRunExpressionEvalWithPrismaStepRunIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRunExpressionEvalModel()
+	stepRunIDField()
+}
+
+type stepRunExpressionEvalWithPrismaStepRunIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunExpressionEvalWithPrismaStepRunIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunExpressionEvalWithPrismaStepRunIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunExpressionEvalWithPrismaStepRunIDSetParam) stepRunExpressionEvalModel() {}
+
+func (p stepRunExpressionEvalWithPrismaStepRunIDSetParam) stepRunIDField() {}
+
+type StepRunExpressionEvalWithPrismaStepRunIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRunExpressionEvalModel()
+	stepRunIDField()
+}
+
+type stepRunExpressionEvalWithPrismaStepRunIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunExpressionEvalWithPrismaStepRunIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunExpressionEvalWithPrismaStepRunIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunExpressionEvalWithPrismaStepRunIDEqualsParam) stepRunExpressionEvalModel() {}
+
+func (p stepRunExpressionEvalWithPrismaStepRunIDEqualsParam) stepRunIDField() {}
+
+func (stepRunExpressionEvalWithPrismaStepRunIDSetParam) settable()  {}
+func (stepRunExpressionEvalWithPrismaStepRunIDEqualsParam) equals() {}
+
+type stepRunExpressionEvalWithPrismaStepRunIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunExpressionEvalWithPrismaStepRunIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunExpressionEvalWithPrismaStepRunIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunExpressionEvalWithPrismaStepRunIDEqualsUniqueParam) stepRunExpressionEvalModel() {}
+func (p stepRunExpressionEvalWithPrismaStepRunIDEqualsUniqueParam) stepRunIDField()             {}
+
+func (stepRunExpressionEvalWithPrismaStepRunIDEqualsUniqueParam) unique() {}
+func (stepRunExpressionEvalWithPrismaStepRunIDEqualsUniqueParam) equals() {}
+
+type StepRunExpressionEvalWithPrismaValueStrEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepRunExpressionEvalModel()
+	valueStrField()
+}
+
+type StepRunExpressionEvalWithPrismaValueStrSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRunExpressionEvalModel()
+	valueStrField()
+}
+
+type stepRunExpressionEvalWithPrismaValueStrSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunExpressionEvalWithPrismaValueStrSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunExpressionEvalWithPrismaValueStrSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunExpressionEvalWithPrismaValueStrSetParam) stepRunExpressionEvalModel() {}
+
+func (p stepRunExpressionEvalWithPrismaValueStrSetParam) valueStrField() {}
+
+type StepRunExpressionEvalWithPrismaValueStrWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRunExpressionEvalModel()
+	valueStrField()
+}
+
+type stepRunExpressionEvalWithPrismaValueStrEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunExpressionEvalWithPrismaValueStrEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunExpressionEvalWithPrismaValueStrEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunExpressionEvalWithPrismaValueStrEqualsParam) stepRunExpressionEvalModel() {}
+
+func (p stepRunExpressionEvalWithPrismaValueStrEqualsParam) valueStrField() {}
+
+func (stepRunExpressionEvalWithPrismaValueStrSetParam) settable()  {}
+func (stepRunExpressionEvalWithPrismaValueStrEqualsParam) equals() {}
+
+type stepRunExpressionEvalWithPrismaValueStrEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunExpressionEvalWithPrismaValueStrEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunExpressionEvalWithPrismaValueStrEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunExpressionEvalWithPrismaValueStrEqualsUniqueParam) stepRunExpressionEvalModel() {}
+func (p stepRunExpressionEvalWithPrismaValueStrEqualsUniqueParam) valueStrField()              {}
+
+func (stepRunExpressionEvalWithPrismaValueStrEqualsUniqueParam) unique() {}
+func (stepRunExpressionEvalWithPrismaValueStrEqualsUniqueParam) equals() {}
+
+type StepRunExpressionEvalWithPrismaValueIntEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepRunExpressionEvalModel()
+	valueIntField()
+}
+
+type StepRunExpressionEvalWithPrismaValueIntSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRunExpressionEvalModel()
+	valueIntField()
+}
+
+type stepRunExpressionEvalWithPrismaValueIntSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunExpressionEvalWithPrismaValueIntSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunExpressionEvalWithPrismaValueIntSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunExpressionEvalWithPrismaValueIntSetParam) stepRunExpressionEvalModel() {}
+
+func (p stepRunExpressionEvalWithPrismaValueIntSetParam) valueIntField() {}
+
+type StepRunExpressionEvalWithPrismaValueIntWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRunExpressionEvalModel()
+	valueIntField()
+}
+
+type stepRunExpressionEvalWithPrismaValueIntEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunExpressionEvalWithPrismaValueIntEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunExpressionEvalWithPrismaValueIntEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunExpressionEvalWithPrismaValueIntEqualsParam) stepRunExpressionEvalModel() {}
+
+func (p stepRunExpressionEvalWithPrismaValueIntEqualsParam) valueIntField() {}
+
+func (stepRunExpressionEvalWithPrismaValueIntSetParam) settable()  {}
+func (stepRunExpressionEvalWithPrismaValueIntEqualsParam) equals() {}
+
+type stepRunExpressionEvalWithPrismaValueIntEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunExpressionEvalWithPrismaValueIntEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunExpressionEvalWithPrismaValueIntEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunExpressionEvalWithPrismaValueIntEqualsUniqueParam) stepRunExpressionEvalModel() {}
+func (p stepRunExpressionEvalWithPrismaValueIntEqualsUniqueParam) valueIntField()              {}
+
+func (stepRunExpressionEvalWithPrismaValueIntEqualsUniqueParam) unique() {}
+func (stepRunExpressionEvalWithPrismaValueIntEqualsUniqueParam) equals() {}
+
+type StepRunExpressionEvalWithPrismaKindEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepRunExpressionEvalModel()
+	kindField()
+}
+
+type StepRunExpressionEvalWithPrismaKindSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRunExpressionEvalModel()
+	kindField()
+}
+
+type stepRunExpressionEvalWithPrismaKindSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunExpressionEvalWithPrismaKindSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunExpressionEvalWithPrismaKindSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunExpressionEvalWithPrismaKindSetParam) stepRunExpressionEvalModel() {}
+
+func (p stepRunExpressionEvalWithPrismaKindSetParam) kindField() {}
+
+type StepRunExpressionEvalWithPrismaKindWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRunExpressionEvalModel()
+	kindField()
+}
+
+type stepRunExpressionEvalWithPrismaKindEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunExpressionEvalWithPrismaKindEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunExpressionEvalWithPrismaKindEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunExpressionEvalWithPrismaKindEqualsParam) stepRunExpressionEvalModel() {}
+
+func (p stepRunExpressionEvalWithPrismaKindEqualsParam) kindField() {}
+
+func (stepRunExpressionEvalWithPrismaKindSetParam) settable()  {}
+func (stepRunExpressionEvalWithPrismaKindEqualsParam) equals() {}
+
+type stepRunExpressionEvalWithPrismaKindEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunExpressionEvalWithPrismaKindEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunExpressionEvalWithPrismaKindEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunExpressionEvalWithPrismaKindEqualsUniqueParam) stepRunExpressionEvalModel() {}
+func (p stepRunExpressionEvalWithPrismaKindEqualsUniqueParam) kindField()                  {}
+
+func (stepRunExpressionEvalWithPrismaKindEqualsUniqueParam) unique() {}
+func (stepRunExpressionEvalWithPrismaKindEqualsUniqueParam) equals() {}
 
 type stepRunActions struct {
 	// client holds the prisma client
@@ -266818,7 +270956,7 @@ func (r stepCreateOne) Tx() StepUniqueTxResult {
 // Creates a single stepRateLimit.
 func (r stepRateLimitActions) CreateOne(
 	_units StepRateLimitWithPrismaUnitsSetParam,
-	_step StepRateLimitWithPrismaStepSetParam,
+	_stepID StepRateLimitWithPrismaStepIDSetParam,
 	_rateLimit StepRateLimitWithPrismaRateLimitSetParam,
 	_tenant StepRateLimitWithPrismaTenantSetParam,
 
@@ -266836,7 +270974,7 @@ func (r stepRateLimitActions) CreateOne(
 	var fields []builder.Field
 
 	fields = append(fields, _units.field())
-	fields = append(fields, _step.field())
+	fields = append(fields, _stepID.field())
 	fields = append(fields, _rateLimit.field())
 	fields = append(fields, _tenant.field())
 
@@ -267458,6 +271596,152 @@ func (r jobRunLookupDataCreateOne) Exec(ctx context.Context) (*JobRunLookupDataM
 
 func (r jobRunLookupDataCreateOne) Tx() JobRunLookupDataUniqueTxResult {
 	v := newJobRunLookupDataUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+// Creates a single stepExpression.
+func (r stepExpressionActions) CreateOne(
+	_key StepExpressionWithPrismaKeySetParam,
+	_stepID StepExpressionWithPrismaStepIDSetParam,
+	_expression StepExpressionWithPrismaExpressionSetParam,
+	_kind StepExpressionWithPrismaKindSetParam,
+
+	optional ...StepExpressionSetParam,
+) stepExpressionCreateOne {
+	var v stepExpressionCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "StepExpression"
+	v.query.Outputs = stepExpressionOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _key.field())
+	fields = append(fields, _stepID.field())
+	fields = append(fields, _expression.field())
+	fields = append(fields, _kind.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r stepExpressionCreateOne) With(params ...StepExpressionRelationWith) stepExpressionCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type stepExpressionCreateOne struct {
+	query builder.Query
+}
+
+func (p stepExpressionCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p stepExpressionCreateOne) stepExpressionModel() {}
+
+func (r stepExpressionCreateOne) Exec(ctx context.Context) (*StepExpressionModel, error) {
+	var v StepExpressionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepExpressionCreateOne) Tx() StepExpressionUniqueTxResult {
+	v := newStepExpressionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+// Creates a single stepRunExpressionEval.
+func (r stepRunExpressionEvalActions) CreateOne(
+	_key StepRunExpressionEvalWithPrismaKeySetParam,
+	_stepRunID StepRunExpressionEvalWithPrismaStepRunIDSetParam,
+	_kind StepRunExpressionEvalWithPrismaKindSetParam,
+
+	optional ...StepRunExpressionEvalSetParam,
+) stepRunExpressionEvalCreateOne {
+	var v stepRunExpressionEvalCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "StepRunExpressionEval"
+	v.query.Outputs = stepRunExpressionEvalOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _key.field())
+	fields = append(fields, _stepRunID.field())
+	fields = append(fields, _kind.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r stepRunExpressionEvalCreateOne) With(params ...StepRunExpressionEvalRelationWith) stepRunExpressionEvalCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type stepRunExpressionEvalCreateOne struct {
+	query builder.Query
+}
+
+func (p stepRunExpressionEvalCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunExpressionEvalCreateOne) stepRunExpressionEvalModel() {}
+
+func (r stepRunExpressionEvalCreateOne) Exec(ctx context.Context) (*StepRunExpressionEvalModel, error) {
+	var v StepRunExpressionEvalModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepRunExpressionEvalCreateOne) Tx() StepRunExpressionEvalUniqueTxResult {
+	v := newStepRunExpressionEvalUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -347536,560 +351820,6 @@ func (r stepToStepRunsDeleteMany) Tx() StepManyTxResult {
 	return v
 }
 
-type stepToRateLimitsFindUnique struct {
-	query builder.Query
-}
-
-func (r stepToRateLimitsFindUnique) getQuery() builder.Query {
-	return r.query
-}
-
-func (r stepToRateLimitsFindUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepToRateLimitsFindUnique) with()         {}
-func (r stepToRateLimitsFindUnique) stepModel()    {}
-func (r stepToRateLimitsFindUnique) stepRelation() {}
-
-func (r stepToRateLimitsFindUnique) With(params ...StepRateLimitRelationWith) stepToRateLimitsFindUnique {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r stepToRateLimitsFindUnique) Select(params ...stepPrismaFields) stepToRateLimitsFindUnique {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepToRateLimitsFindUnique) Omit(params ...stepPrismaFields) stepToRateLimitsFindUnique {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range stepOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepToRateLimitsFindUnique) Exec(ctx context.Context) (
-	*StepModel,
-	error,
-) {
-	var v *StepModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r stepToRateLimitsFindUnique) ExecInner(ctx context.Context) (
-	*InnerStep,
-	error,
-) {
-	var v *InnerStep
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r stepToRateLimitsFindUnique) Update(params ...StepSetParam) stepToRateLimitsUpdateUnique {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateOne"
-	r.query.Model = "Step"
-
-	var v stepToRateLimitsUpdateUnique
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type stepToRateLimitsUpdateUnique struct {
-	query builder.Query
-}
-
-func (r stepToRateLimitsUpdateUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepToRateLimitsUpdateUnique) stepModel() {}
-
-func (r stepToRateLimitsUpdateUnique) Exec(ctx context.Context) (*StepModel, error) {
-	var v StepModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r stepToRateLimitsUpdateUnique) Tx() StepUniqueTxResult {
-	v := newStepUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r stepToRateLimitsFindUnique) Delete() stepToRateLimitsDeleteUnique {
-	var v stepToRateLimitsDeleteUnique
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteOne"
-	v.query.Model = "Step"
-
-	return v
-}
-
-type stepToRateLimitsDeleteUnique struct {
-	query builder.Query
-}
-
-func (r stepToRateLimitsDeleteUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p stepToRateLimitsDeleteUnique) stepModel() {}
-
-func (r stepToRateLimitsDeleteUnique) Exec(ctx context.Context) (*StepModel, error) {
-	var v StepModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r stepToRateLimitsDeleteUnique) Tx() StepUniqueTxResult {
-	v := newStepUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type stepToRateLimitsFindFirst struct {
-	query builder.Query
-}
-
-func (r stepToRateLimitsFindFirst) getQuery() builder.Query {
-	return r.query
-}
-
-func (r stepToRateLimitsFindFirst) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepToRateLimitsFindFirst) with()         {}
-func (r stepToRateLimitsFindFirst) stepModel()    {}
-func (r stepToRateLimitsFindFirst) stepRelation() {}
-
-func (r stepToRateLimitsFindFirst) With(params ...StepRateLimitRelationWith) stepToRateLimitsFindFirst {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r stepToRateLimitsFindFirst) Select(params ...stepPrismaFields) stepToRateLimitsFindFirst {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepToRateLimitsFindFirst) Omit(params ...stepPrismaFields) stepToRateLimitsFindFirst {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range stepOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepToRateLimitsFindFirst) OrderBy(params ...StepRateLimitOrderByParam) stepToRateLimitsFindFirst {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r stepToRateLimitsFindFirst) Skip(count int) stepToRateLimitsFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r stepToRateLimitsFindFirst) Take(count int) stepToRateLimitsFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r stepToRateLimitsFindFirst) Cursor(cursor StepCursorParam) stepToRateLimitsFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r stepToRateLimitsFindFirst) Exec(ctx context.Context) (
-	*StepModel,
-	error,
-) {
-	var v *StepModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r stepToRateLimitsFindFirst) ExecInner(ctx context.Context) (
-	*InnerStep,
-	error,
-) {
-	var v *InnerStep
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-type stepToRateLimitsFindMany struct {
-	query builder.Query
-}
-
-func (r stepToRateLimitsFindMany) getQuery() builder.Query {
-	return r.query
-}
-
-func (r stepToRateLimitsFindMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepToRateLimitsFindMany) with()         {}
-func (r stepToRateLimitsFindMany) stepModel()    {}
-func (r stepToRateLimitsFindMany) stepRelation() {}
-
-func (r stepToRateLimitsFindMany) With(params ...StepRateLimitRelationWith) stepToRateLimitsFindMany {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r stepToRateLimitsFindMany) Select(params ...stepPrismaFields) stepToRateLimitsFindMany {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepToRateLimitsFindMany) Omit(params ...stepPrismaFields) stepToRateLimitsFindMany {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range stepOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepToRateLimitsFindMany) OrderBy(params ...StepRateLimitOrderByParam) stepToRateLimitsFindMany {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r stepToRateLimitsFindMany) Skip(count int) stepToRateLimitsFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r stepToRateLimitsFindMany) Take(count int) stepToRateLimitsFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r stepToRateLimitsFindMany) Cursor(cursor StepCursorParam) stepToRateLimitsFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r stepToRateLimitsFindMany) Exec(ctx context.Context) (
-	[]StepModel,
-	error,
-) {
-	var v []StepModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r stepToRateLimitsFindMany) ExecInner(ctx context.Context) (
-	[]InnerStep,
-	error,
-) {
-	var v []InnerStep
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r stepToRateLimitsFindMany) Update(params ...StepSetParam) stepToRateLimitsUpdateMany {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateMany"
-	r.query.Model = "Step"
-
-	r.query.Outputs = countOutput
-
-	var v stepToRateLimitsUpdateMany
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type stepToRateLimitsUpdateMany struct {
-	query builder.Query
-}
-
-func (r stepToRateLimitsUpdateMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepToRateLimitsUpdateMany) stepModel() {}
-
-func (r stepToRateLimitsUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r stepToRateLimitsUpdateMany) Tx() StepManyTxResult {
-	v := newStepManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r stepToRateLimitsFindMany) Delete() stepToRateLimitsDeleteMany {
-	var v stepToRateLimitsDeleteMany
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteMany"
-	v.query.Model = "Step"
-
-	v.query.Outputs = countOutput
-
-	return v
-}
-
-type stepToRateLimitsDeleteMany struct {
-	query builder.Query
-}
-
-func (r stepToRateLimitsDeleteMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p stepToRateLimitsDeleteMany) stepModel() {}
-
-func (r stepToRateLimitsDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r stepToRateLimitsDeleteMany) Tx() StepManyTxResult {
-	v := newStepManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
 type stepToWorkerLabelsFindUnique struct {
 	query builder.Query
 }
@@ -349289,560 +353019,6 @@ func (r stepDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
 
 func (r stepDeleteMany) Tx() StepManyTxResult {
 	v := newStepManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type stepRateLimitToStepFindUnique struct {
-	query builder.Query
-}
-
-func (r stepRateLimitToStepFindUnique) getQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRateLimitToStepFindUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRateLimitToStepFindUnique) with()                  {}
-func (r stepRateLimitToStepFindUnique) stepRateLimitModel()    {}
-func (r stepRateLimitToStepFindUnique) stepRateLimitRelation() {}
-
-func (r stepRateLimitToStepFindUnique) With(params ...StepRelationWith) stepRateLimitToStepFindUnique {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r stepRateLimitToStepFindUnique) Select(params ...stepRateLimitPrismaFields) stepRateLimitToStepFindUnique {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRateLimitToStepFindUnique) Omit(params ...stepRateLimitPrismaFields) stepRateLimitToStepFindUnique {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range stepRateLimitOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRateLimitToStepFindUnique) Exec(ctx context.Context) (
-	*StepRateLimitModel,
-	error,
-) {
-	var v *StepRateLimitModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r stepRateLimitToStepFindUnique) ExecInner(ctx context.Context) (
-	*InnerStepRateLimit,
-	error,
-) {
-	var v *InnerStepRateLimit
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r stepRateLimitToStepFindUnique) Update(params ...StepRateLimitSetParam) stepRateLimitToStepUpdateUnique {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateOne"
-	r.query.Model = "StepRateLimit"
-
-	var v stepRateLimitToStepUpdateUnique
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type stepRateLimitToStepUpdateUnique struct {
-	query builder.Query
-}
-
-func (r stepRateLimitToStepUpdateUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRateLimitToStepUpdateUnique) stepRateLimitModel() {}
-
-func (r stepRateLimitToStepUpdateUnique) Exec(ctx context.Context) (*StepRateLimitModel, error) {
-	var v StepRateLimitModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r stepRateLimitToStepUpdateUnique) Tx() StepRateLimitUniqueTxResult {
-	v := newStepRateLimitUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r stepRateLimitToStepFindUnique) Delete() stepRateLimitToStepDeleteUnique {
-	var v stepRateLimitToStepDeleteUnique
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteOne"
-	v.query.Model = "StepRateLimit"
-
-	return v
-}
-
-type stepRateLimitToStepDeleteUnique struct {
-	query builder.Query
-}
-
-func (r stepRateLimitToStepDeleteUnique) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p stepRateLimitToStepDeleteUnique) stepRateLimitModel() {}
-
-func (r stepRateLimitToStepDeleteUnique) Exec(ctx context.Context) (*StepRateLimitModel, error) {
-	var v StepRateLimitModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r stepRateLimitToStepDeleteUnique) Tx() StepRateLimitUniqueTxResult {
-	v := newStepRateLimitUniqueTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-type stepRateLimitToStepFindFirst struct {
-	query builder.Query
-}
-
-func (r stepRateLimitToStepFindFirst) getQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRateLimitToStepFindFirst) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRateLimitToStepFindFirst) with()                  {}
-func (r stepRateLimitToStepFindFirst) stepRateLimitModel()    {}
-func (r stepRateLimitToStepFindFirst) stepRateLimitRelation() {}
-
-func (r stepRateLimitToStepFindFirst) With(params ...StepRelationWith) stepRateLimitToStepFindFirst {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r stepRateLimitToStepFindFirst) Select(params ...stepRateLimitPrismaFields) stepRateLimitToStepFindFirst {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRateLimitToStepFindFirst) Omit(params ...stepRateLimitPrismaFields) stepRateLimitToStepFindFirst {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range stepRateLimitOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRateLimitToStepFindFirst) OrderBy(params ...StepOrderByParam) stepRateLimitToStepFindFirst {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r stepRateLimitToStepFindFirst) Skip(count int) stepRateLimitToStepFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r stepRateLimitToStepFindFirst) Take(count int) stepRateLimitToStepFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r stepRateLimitToStepFindFirst) Cursor(cursor StepRateLimitCursorParam) stepRateLimitToStepFindFirst {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r stepRateLimitToStepFindFirst) Exec(ctx context.Context) (
-	*StepRateLimitModel,
-	error,
-) {
-	var v *StepRateLimitModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-func (r stepRateLimitToStepFindFirst) ExecInner(ctx context.Context) (
-	*InnerStepRateLimit,
-	error,
-) {
-	var v *InnerStepRateLimit
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	if v == nil {
-		return nil, ErrNotFound
-	}
-
-	return v, nil
-}
-
-type stepRateLimitToStepFindMany struct {
-	query builder.Query
-}
-
-func (r stepRateLimitToStepFindMany) getQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRateLimitToStepFindMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRateLimitToStepFindMany) with()                  {}
-func (r stepRateLimitToStepFindMany) stepRateLimitModel()    {}
-func (r stepRateLimitToStepFindMany) stepRateLimitRelation() {}
-
-func (r stepRateLimitToStepFindMany) With(params ...StepRelationWith) stepRateLimitToStepFindMany {
-	for _, q := range params {
-		query := q.getQuery()
-		r.query.Outputs = append(r.query.Outputs, builder.Output{
-			Name:    query.Method,
-			Inputs:  query.Inputs,
-			Outputs: query.Outputs,
-		})
-	}
-
-	return r
-}
-
-func (r stepRateLimitToStepFindMany) Select(params ...stepRateLimitPrismaFields) stepRateLimitToStepFindMany {
-	var outputs []builder.Output
-
-	for _, param := range params {
-		outputs = append(outputs, builder.Output{
-			Name: string(param),
-		})
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRateLimitToStepFindMany) Omit(params ...stepRateLimitPrismaFields) stepRateLimitToStepFindMany {
-	var outputs []builder.Output
-
-	var raw []string
-	for _, param := range params {
-		raw = append(raw, string(param))
-	}
-
-	for _, output := range stepRateLimitOutput {
-		if !slices.Contains(raw, output.Name) {
-			outputs = append(outputs, output)
-		}
-	}
-
-	r.query.Outputs = outputs
-
-	return r
-}
-
-func (r stepRateLimitToStepFindMany) OrderBy(params ...StepOrderByParam) stepRateLimitToStepFindMany {
-	var fields []builder.Field
-
-	for _, param := range params {
-		fields = append(fields, builder.Field{
-			Name:   param.field().Name,
-			Value:  param.field().Value,
-			Fields: param.field().Fields,
-		})
-	}
-
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:     "orderBy",
-		Fields:   fields,
-		WrapList: true,
-	})
-
-	return r
-}
-
-func (r stepRateLimitToStepFindMany) Skip(count int) stepRateLimitToStepFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "skip",
-		Value: count,
-	})
-	return r
-}
-
-func (r stepRateLimitToStepFindMany) Take(count int) stepRateLimitToStepFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:  "take",
-		Value: count,
-	})
-	return r
-}
-
-func (r stepRateLimitToStepFindMany) Cursor(cursor StepRateLimitCursorParam) stepRateLimitToStepFindMany {
-	r.query.Inputs = append(r.query.Inputs, builder.Input{
-		Name:   "cursor",
-		Fields: []builder.Field{cursor.field()},
-	})
-	return r
-}
-
-func (r stepRateLimitToStepFindMany) Exec(ctx context.Context) (
-	[]StepRateLimitModel,
-	error,
-) {
-	var v []StepRateLimitModel
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r stepRateLimitToStepFindMany) ExecInner(ctx context.Context) (
-	[]InnerStepRateLimit,
-	error,
-) {
-	var v []InnerStepRateLimit
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (r stepRateLimitToStepFindMany) Update(params ...StepRateLimitSetParam) stepRateLimitToStepUpdateMany {
-	r.query.Operation = "mutation"
-	r.query.Method = "updateMany"
-	r.query.Model = "StepRateLimit"
-
-	r.query.Outputs = countOutput
-
-	var v stepRateLimitToStepUpdateMany
-	v.query = r.query
-	var fields []builder.Field
-	for _, q := range params {
-
-		field := q.field()
-
-		_, isJson := field.Value.(types.JSON)
-		if field.Value != nil && !isJson {
-			v := field.Value
-			field.Fields = []builder.Field{
-				{
-					Name:  "set",
-					Value: v,
-				},
-			}
-
-			field.Value = nil
-		}
-
-		fields = append(fields, field)
-	}
-	v.query.Inputs = append(v.query.Inputs, builder.Input{
-		Name:   "data",
-		Fields: fields,
-	})
-	return v
-}
-
-type stepRateLimitToStepUpdateMany struct {
-	query builder.Query
-}
-
-func (r stepRateLimitToStepUpdateMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (r stepRateLimitToStepUpdateMany) stepRateLimitModel() {}
-
-func (r stepRateLimitToStepUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r stepRateLimitToStepUpdateMany) Tx() StepRateLimitManyTxResult {
-	v := newStepRateLimitManyTxResult()
-	v.query = r.query
-	v.query.TxResult = make(chan []byte, 1)
-	return v
-}
-
-func (r stepRateLimitToStepFindMany) Delete() stepRateLimitToStepDeleteMany {
-	var v stepRateLimitToStepDeleteMany
-	v.query = r.query
-	v.query.Operation = "mutation"
-	v.query.Method = "deleteMany"
-	v.query.Model = "StepRateLimit"
-
-	v.query.Outputs = countOutput
-
-	return v
-}
-
-type stepRateLimitToStepDeleteMany struct {
-	query builder.Query
-}
-
-func (r stepRateLimitToStepDeleteMany) ExtractQuery() builder.Query {
-	return r.query
-}
-
-func (p stepRateLimitToStepDeleteMany) stepRateLimitModel() {}
-
-func (r stepRateLimitToStepDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
-	var v BatchResult
-	if err := r.query.Exec(ctx, &v); err != nil {
-		return nil, err
-	}
-	return &v, nil
-}
-
-func (r stepRateLimitToStepDeleteMany) Tx() StepRateLimitManyTxResult {
-	v := newStepRateLimitManyTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -373975,6 +377151,1306 @@ func (r jobRunLookupDataDeleteMany) Exec(ctx context.Context) (*BatchResult, err
 
 func (r jobRunLookupDataDeleteMany) Tx() JobRunLookupDataManyTxResult {
 	v := newJobRunLookupDataManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type stepExpressionFindUnique struct {
+	query builder.Query
+}
+
+func (r stepExpressionFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r stepExpressionFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepExpressionFindUnique) with()                   {}
+func (r stepExpressionFindUnique) stepExpressionModel()    {}
+func (r stepExpressionFindUnique) stepExpressionRelation() {}
+
+func (r stepExpressionActions) FindUnique(
+	params StepExpressionEqualsUniqueWhereParam,
+) stepExpressionFindUnique {
+	var v stepExpressionFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "StepExpression"
+	v.query.Outputs = stepExpressionOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r stepExpressionFindUnique) With(params ...StepExpressionRelationWith) stepExpressionFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r stepExpressionFindUnique) Select(params ...stepExpressionPrismaFields) stepExpressionFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepExpressionFindUnique) Omit(params ...stepExpressionPrismaFields) stepExpressionFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range stepExpressionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepExpressionFindUnique) Exec(ctx context.Context) (
+	*StepExpressionModel,
+	error,
+) {
+	var v *StepExpressionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r stepExpressionFindUnique) ExecInner(ctx context.Context) (
+	*InnerStepExpression,
+	error,
+) {
+	var v *InnerStepExpression
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r stepExpressionFindUnique) Update(params ...StepExpressionSetParam) stepExpressionUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "StepExpression"
+
+	var v stepExpressionUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type stepExpressionUpdateUnique struct {
+	query builder.Query
+}
+
+func (r stepExpressionUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepExpressionUpdateUnique) stepExpressionModel() {}
+
+func (r stepExpressionUpdateUnique) Exec(ctx context.Context) (*StepExpressionModel, error) {
+	var v StepExpressionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepExpressionUpdateUnique) Tx() StepExpressionUniqueTxResult {
+	v := newStepExpressionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r stepExpressionFindUnique) Delete() stepExpressionDeleteUnique {
+	var v stepExpressionDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "StepExpression"
+
+	return v
+}
+
+type stepExpressionDeleteUnique struct {
+	query builder.Query
+}
+
+func (r stepExpressionDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p stepExpressionDeleteUnique) stepExpressionModel() {}
+
+func (r stepExpressionDeleteUnique) Exec(ctx context.Context) (*StepExpressionModel, error) {
+	var v StepExpressionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepExpressionDeleteUnique) Tx() StepExpressionUniqueTxResult {
+	v := newStepExpressionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type stepExpressionFindFirst struct {
+	query builder.Query
+}
+
+func (r stepExpressionFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r stepExpressionFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepExpressionFindFirst) with()                   {}
+func (r stepExpressionFindFirst) stepExpressionModel()    {}
+func (r stepExpressionFindFirst) stepExpressionRelation() {}
+
+func (r stepExpressionActions) FindFirst(
+	params ...StepExpressionWhereParam,
+) stepExpressionFindFirst {
+	var v stepExpressionFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "StepExpression"
+	v.query.Outputs = stepExpressionOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r stepExpressionFindFirst) With(params ...StepExpressionRelationWith) stepExpressionFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r stepExpressionFindFirst) Select(params ...stepExpressionPrismaFields) stepExpressionFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepExpressionFindFirst) Omit(params ...stepExpressionPrismaFields) stepExpressionFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range stepExpressionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepExpressionFindFirst) OrderBy(params ...StepExpressionOrderByParam) stepExpressionFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r stepExpressionFindFirst) Skip(count int) stepExpressionFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r stepExpressionFindFirst) Take(count int) stepExpressionFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r stepExpressionFindFirst) Cursor(cursor StepExpressionCursorParam) stepExpressionFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r stepExpressionFindFirst) Exec(ctx context.Context) (
+	*StepExpressionModel,
+	error,
+) {
+	var v *StepExpressionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r stepExpressionFindFirst) ExecInner(ctx context.Context) (
+	*InnerStepExpression,
+	error,
+) {
+	var v *InnerStepExpression
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type stepExpressionFindMany struct {
+	query builder.Query
+}
+
+func (r stepExpressionFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r stepExpressionFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepExpressionFindMany) with()                   {}
+func (r stepExpressionFindMany) stepExpressionModel()    {}
+func (r stepExpressionFindMany) stepExpressionRelation() {}
+
+func (r stepExpressionActions) FindMany(
+	params ...StepExpressionWhereParam,
+) stepExpressionFindMany {
+	var v stepExpressionFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "StepExpression"
+	v.query.Outputs = stepExpressionOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r stepExpressionFindMany) With(params ...StepExpressionRelationWith) stepExpressionFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r stepExpressionFindMany) Select(params ...stepExpressionPrismaFields) stepExpressionFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepExpressionFindMany) Omit(params ...stepExpressionPrismaFields) stepExpressionFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range stepExpressionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepExpressionFindMany) OrderBy(params ...StepExpressionOrderByParam) stepExpressionFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r stepExpressionFindMany) Skip(count int) stepExpressionFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r stepExpressionFindMany) Take(count int) stepExpressionFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r stepExpressionFindMany) Cursor(cursor StepExpressionCursorParam) stepExpressionFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r stepExpressionFindMany) Exec(ctx context.Context) (
+	[]StepExpressionModel,
+	error,
+) {
+	var v []StepExpressionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r stepExpressionFindMany) ExecInner(ctx context.Context) (
+	[]InnerStepExpression,
+	error,
+) {
+	var v []InnerStepExpression
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r stepExpressionFindMany) Update(params ...StepExpressionSetParam) stepExpressionUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "StepExpression"
+
+	r.query.Outputs = countOutput
+
+	var v stepExpressionUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type stepExpressionUpdateMany struct {
+	query builder.Query
+}
+
+func (r stepExpressionUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepExpressionUpdateMany) stepExpressionModel() {}
+
+func (r stepExpressionUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepExpressionUpdateMany) Tx() StepExpressionManyTxResult {
+	v := newStepExpressionManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r stepExpressionFindMany) Delete() stepExpressionDeleteMany {
+	var v stepExpressionDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "StepExpression"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type stepExpressionDeleteMany struct {
+	query builder.Query
+}
+
+func (r stepExpressionDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p stepExpressionDeleteMany) stepExpressionModel() {}
+
+func (r stepExpressionDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepExpressionDeleteMany) Tx() StepExpressionManyTxResult {
+	v := newStepExpressionManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type stepRunExpressionEvalFindUnique struct {
+	query builder.Query
+}
+
+func (r stepRunExpressionEvalFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r stepRunExpressionEvalFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepRunExpressionEvalFindUnique) with()                          {}
+func (r stepRunExpressionEvalFindUnique) stepRunExpressionEvalModel()    {}
+func (r stepRunExpressionEvalFindUnique) stepRunExpressionEvalRelation() {}
+
+func (r stepRunExpressionEvalActions) FindUnique(
+	params StepRunExpressionEvalEqualsUniqueWhereParam,
+) stepRunExpressionEvalFindUnique {
+	var v stepRunExpressionEvalFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "StepRunExpressionEval"
+	v.query.Outputs = stepRunExpressionEvalOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r stepRunExpressionEvalFindUnique) With(params ...StepRunExpressionEvalRelationWith) stepRunExpressionEvalFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r stepRunExpressionEvalFindUnique) Select(params ...stepRunExpressionEvalPrismaFields) stepRunExpressionEvalFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepRunExpressionEvalFindUnique) Omit(params ...stepRunExpressionEvalPrismaFields) stepRunExpressionEvalFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range stepRunExpressionEvalOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepRunExpressionEvalFindUnique) Exec(ctx context.Context) (
+	*StepRunExpressionEvalModel,
+	error,
+) {
+	var v *StepRunExpressionEvalModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r stepRunExpressionEvalFindUnique) ExecInner(ctx context.Context) (
+	*InnerStepRunExpressionEval,
+	error,
+) {
+	var v *InnerStepRunExpressionEval
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r stepRunExpressionEvalFindUnique) Update(params ...StepRunExpressionEvalSetParam) stepRunExpressionEvalUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "StepRunExpressionEval"
+
+	var v stepRunExpressionEvalUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type stepRunExpressionEvalUpdateUnique struct {
+	query builder.Query
+}
+
+func (r stepRunExpressionEvalUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepRunExpressionEvalUpdateUnique) stepRunExpressionEvalModel() {}
+
+func (r stepRunExpressionEvalUpdateUnique) Exec(ctx context.Context) (*StepRunExpressionEvalModel, error) {
+	var v StepRunExpressionEvalModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepRunExpressionEvalUpdateUnique) Tx() StepRunExpressionEvalUniqueTxResult {
+	v := newStepRunExpressionEvalUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r stepRunExpressionEvalFindUnique) Delete() stepRunExpressionEvalDeleteUnique {
+	var v stepRunExpressionEvalDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "StepRunExpressionEval"
+
+	return v
+}
+
+type stepRunExpressionEvalDeleteUnique struct {
+	query builder.Query
+}
+
+func (r stepRunExpressionEvalDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p stepRunExpressionEvalDeleteUnique) stepRunExpressionEvalModel() {}
+
+func (r stepRunExpressionEvalDeleteUnique) Exec(ctx context.Context) (*StepRunExpressionEvalModel, error) {
+	var v StepRunExpressionEvalModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepRunExpressionEvalDeleteUnique) Tx() StepRunExpressionEvalUniqueTxResult {
+	v := newStepRunExpressionEvalUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type stepRunExpressionEvalFindFirst struct {
+	query builder.Query
+}
+
+func (r stepRunExpressionEvalFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r stepRunExpressionEvalFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepRunExpressionEvalFindFirst) with()                          {}
+func (r stepRunExpressionEvalFindFirst) stepRunExpressionEvalModel()    {}
+func (r stepRunExpressionEvalFindFirst) stepRunExpressionEvalRelation() {}
+
+func (r stepRunExpressionEvalActions) FindFirst(
+	params ...StepRunExpressionEvalWhereParam,
+) stepRunExpressionEvalFindFirst {
+	var v stepRunExpressionEvalFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "StepRunExpressionEval"
+	v.query.Outputs = stepRunExpressionEvalOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r stepRunExpressionEvalFindFirst) With(params ...StepRunExpressionEvalRelationWith) stepRunExpressionEvalFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r stepRunExpressionEvalFindFirst) Select(params ...stepRunExpressionEvalPrismaFields) stepRunExpressionEvalFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepRunExpressionEvalFindFirst) Omit(params ...stepRunExpressionEvalPrismaFields) stepRunExpressionEvalFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range stepRunExpressionEvalOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepRunExpressionEvalFindFirst) OrderBy(params ...StepRunExpressionEvalOrderByParam) stepRunExpressionEvalFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r stepRunExpressionEvalFindFirst) Skip(count int) stepRunExpressionEvalFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r stepRunExpressionEvalFindFirst) Take(count int) stepRunExpressionEvalFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r stepRunExpressionEvalFindFirst) Cursor(cursor StepRunExpressionEvalCursorParam) stepRunExpressionEvalFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r stepRunExpressionEvalFindFirst) Exec(ctx context.Context) (
+	*StepRunExpressionEvalModel,
+	error,
+) {
+	var v *StepRunExpressionEvalModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r stepRunExpressionEvalFindFirst) ExecInner(ctx context.Context) (
+	*InnerStepRunExpressionEval,
+	error,
+) {
+	var v *InnerStepRunExpressionEval
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type stepRunExpressionEvalFindMany struct {
+	query builder.Query
+}
+
+func (r stepRunExpressionEvalFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r stepRunExpressionEvalFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepRunExpressionEvalFindMany) with()                          {}
+func (r stepRunExpressionEvalFindMany) stepRunExpressionEvalModel()    {}
+func (r stepRunExpressionEvalFindMany) stepRunExpressionEvalRelation() {}
+
+func (r stepRunExpressionEvalActions) FindMany(
+	params ...StepRunExpressionEvalWhereParam,
+) stepRunExpressionEvalFindMany {
+	var v stepRunExpressionEvalFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "StepRunExpressionEval"
+	v.query.Outputs = stepRunExpressionEvalOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r stepRunExpressionEvalFindMany) With(params ...StepRunExpressionEvalRelationWith) stepRunExpressionEvalFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r stepRunExpressionEvalFindMany) Select(params ...stepRunExpressionEvalPrismaFields) stepRunExpressionEvalFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepRunExpressionEvalFindMany) Omit(params ...stepRunExpressionEvalPrismaFields) stepRunExpressionEvalFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range stepRunExpressionEvalOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r stepRunExpressionEvalFindMany) OrderBy(params ...StepRunExpressionEvalOrderByParam) stepRunExpressionEvalFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r stepRunExpressionEvalFindMany) Skip(count int) stepRunExpressionEvalFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r stepRunExpressionEvalFindMany) Take(count int) stepRunExpressionEvalFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r stepRunExpressionEvalFindMany) Cursor(cursor StepRunExpressionEvalCursorParam) stepRunExpressionEvalFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r stepRunExpressionEvalFindMany) Exec(ctx context.Context) (
+	[]StepRunExpressionEvalModel,
+	error,
+) {
+	var v []StepRunExpressionEvalModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r stepRunExpressionEvalFindMany) ExecInner(ctx context.Context) (
+	[]InnerStepRunExpressionEval,
+	error,
+) {
+	var v []InnerStepRunExpressionEval
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r stepRunExpressionEvalFindMany) Update(params ...StepRunExpressionEvalSetParam) stepRunExpressionEvalUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "StepRunExpressionEval"
+
+	r.query.Outputs = countOutput
+
+	var v stepRunExpressionEvalUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type stepRunExpressionEvalUpdateMany struct {
+	query builder.Query
+}
+
+func (r stepRunExpressionEvalUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepRunExpressionEvalUpdateMany) stepRunExpressionEvalModel() {}
+
+func (r stepRunExpressionEvalUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepRunExpressionEvalUpdateMany) Tx() StepRunExpressionEvalManyTxResult {
+	v := newStepRunExpressionEvalManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r stepRunExpressionEvalFindMany) Delete() stepRunExpressionEvalDeleteMany {
+	var v stepRunExpressionEvalDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "StepRunExpressionEval"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type stepRunExpressionEvalDeleteMany struct {
+	query builder.Query
+}
+
+func (r stepRunExpressionEvalDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p stepRunExpressionEvalDeleteMany) stepRunExpressionEvalModel() {}
+
+func (r stepRunExpressionEvalDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepRunExpressionEvalDeleteMany) Tx() StepRunExpressionEvalManyTxResult {
+	v := newStepRunExpressionEvalManyTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -412170,6 +416646,102 @@ func (r JobRunLookupDataManyTxResult) Result() (v *BatchResult) {
 	return v
 }
 
+func newStepExpressionUniqueTxResult() StepExpressionUniqueTxResult {
+	return StepExpressionUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type StepExpressionUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p StepExpressionUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p StepExpressionUniqueTxResult) IsTx() {}
+
+func (r StepExpressionUniqueTxResult) Result() (v *StepExpressionModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newStepExpressionManyTxResult() StepExpressionManyTxResult {
+	return StepExpressionManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type StepExpressionManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p StepExpressionManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p StepExpressionManyTxResult) IsTx() {}
+
+func (r StepExpressionManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newStepRunExpressionEvalUniqueTxResult() StepRunExpressionEvalUniqueTxResult {
+	return StepRunExpressionEvalUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type StepRunExpressionEvalUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p StepRunExpressionEvalUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p StepRunExpressionEvalUniqueTxResult) IsTx() {}
+
+func (r StepRunExpressionEvalUniqueTxResult) Result() (v *StepRunExpressionEvalModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newStepRunExpressionEvalManyTxResult() StepRunExpressionEvalManyTxResult {
+	return StepRunExpressionEvalManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type StepRunExpressionEvalManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p StepRunExpressionEvalManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p StepRunExpressionEvalManyTxResult) IsTx() {}
+
+func (r StepRunExpressionEvalManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
 func newStepRunUniqueTxResult() StepRunUniqueTxResult {
 	return StepRunUniqueTxResult{
 		result: &transaction.Result{},
@@ -416486,7 +421058,7 @@ func (r stepRateLimitActions) UpsertOne(
 func (r stepRateLimitUpsertOne) Create(
 
 	_units StepRateLimitWithPrismaUnitsSetParam,
-	_step StepRateLimitWithPrismaStepSetParam,
+	_stepID StepRateLimitWithPrismaStepIDSetParam,
 	_rateLimit StepRateLimitWithPrismaRateLimitSetParam,
 	_tenant StepRateLimitWithPrismaTenantSetParam,
 
@@ -416497,7 +421069,7 @@ func (r stepRateLimitUpsertOne) Create(
 
 	var fields []builder.Field
 	fields = append(fields, _units.field())
-	fields = append(fields, _step.field())
+	fields = append(fields, _stepID.field())
 	fields = append(fields, _rateLimit.field())
 	fields = append(fields, _tenant.field())
 
@@ -417468,6 +422040,236 @@ func (r jobRunLookupDataUpsertOne) Exec(ctx context.Context) (*JobRunLookupDataM
 
 func (r jobRunLookupDataUpsertOne) Tx() JobRunLookupDataUniqueTxResult {
 	v := newJobRunLookupDataUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type stepExpressionUpsertOne struct {
+	query builder.Query
+}
+
+func (r stepExpressionUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r stepExpressionUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepExpressionUpsertOne) with()                   {}
+func (r stepExpressionUpsertOne) stepExpressionModel()    {}
+func (r stepExpressionUpsertOne) stepExpressionRelation() {}
+
+func (r stepExpressionActions) UpsertOne(
+	params StepExpressionEqualsUniqueWhereParam,
+) stepExpressionUpsertOne {
+	var v stepExpressionUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "StepExpression"
+	v.query.Outputs = stepExpressionOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r stepExpressionUpsertOne) Create(
+
+	_key StepExpressionWithPrismaKeySetParam,
+	_stepID StepExpressionWithPrismaStepIDSetParam,
+	_expression StepExpressionWithPrismaExpressionSetParam,
+	_kind StepExpressionWithPrismaKindSetParam,
+
+	optional ...StepExpressionSetParam,
+) stepExpressionUpsertOne {
+	var v stepExpressionUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _key.field())
+	fields = append(fields, _stepID.field())
+	fields = append(fields, _expression.field())
+	fields = append(fields, _kind.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r stepExpressionUpsertOne) Update(
+	params ...StepExpressionSetParam,
+) stepExpressionUpsertOne {
+	var v stepExpressionUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r stepExpressionUpsertOne) Exec(ctx context.Context) (*StepExpressionModel, error) {
+	var v StepExpressionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepExpressionUpsertOne) Tx() StepExpressionUniqueTxResult {
+	v := newStepExpressionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type stepRunExpressionEvalUpsertOne struct {
+	query builder.Query
+}
+
+func (r stepRunExpressionEvalUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r stepRunExpressionEvalUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r stepRunExpressionEvalUpsertOne) with()                          {}
+func (r stepRunExpressionEvalUpsertOne) stepRunExpressionEvalModel()    {}
+func (r stepRunExpressionEvalUpsertOne) stepRunExpressionEvalRelation() {}
+
+func (r stepRunExpressionEvalActions) UpsertOne(
+	params StepRunExpressionEvalEqualsUniqueWhereParam,
+) stepRunExpressionEvalUpsertOne {
+	var v stepRunExpressionEvalUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "StepRunExpressionEval"
+	v.query.Outputs = stepRunExpressionEvalOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r stepRunExpressionEvalUpsertOne) Create(
+
+	_key StepRunExpressionEvalWithPrismaKeySetParam,
+	_stepRunID StepRunExpressionEvalWithPrismaStepRunIDSetParam,
+	_kind StepRunExpressionEvalWithPrismaKindSetParam,
+
+	optional ...StepRunExpressionEvalSetParam,
+) stepRunExpressionEvalUpsertOne {
+	var v stepRunExpressionEvalUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _key.field())
+	fields = append(fields, _stepRunID.field())
+	fields = append(fields, _kind.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r stepRunExpressionEvalUpsertOne) Update(
+	params ...StepRunExpressionEvalSetParam,
+) stepRunExpressionEvalUpsertOne {
+	var v stepRunExpressionEvalUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r stepRunExpressionEvalUpsertOne) Exec(ctx context.Context) (*StepRunExpressionEvalModel, error) {
+	var v StepRunExpressionEvalModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r stepRunExpressionEvalUpsertOne) Tx() StepRunExpressionEvalUniqueTxResult {
+	v := newStepRunExpressionEvalUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
