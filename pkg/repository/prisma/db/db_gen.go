@@ -537,6 +537,8 @@ model Workflow {
   // the parent tenant
   tenantId String @db.Uuid
 
+  isPaused Boolean? @default(false)
+
   // the workflow name
   name String
 
@@ -1421,6 +1423,7 @@ enum InternalQueue {
   WORKER_SEMAPHORE_COUNT
   STEP_RUN_UPDATE
   WORKFLOW_RUN_UPDATE
+  WORKFLOW_RUN_PAUSED
 }
 
 model InternalQueueItem {
@@ -2272,6 +2275,7 @@ const (
 	InternalQueueWorkerSemaphoreCount InternalQueue = "WORKER_SEMAPHORE_COUNT"
 	InternalQueueStepRunUpdate        InternalQueue = "STEP_RUN_UPDATE"
 	InternalQueueWorkflowRunUpdate    InternalQueue = "WORKFLOW_RUN_UPDATE"
+	InternalQueueWorkflowRunPaused    InternalQueue = "WORKFLOW_RUN_PAUSED"
 )
 
 type RawInternalQueue InternalQueue
@@ -2587,6 +2591,7 @@ const (
 	WorkflowScalarFieldEnumUpdatedAt   WorkflowScalarFieldEnum = "updatedAt"
 	WorkflowScalarFieldEnumDeletedAt   WorkflowScalarFieldEnum = "deletedAt"
 	WorkflowScalarFieldEnumTenantID    WorkflowScalarFieldEnum = "tenantId"
+	WorkflowScalarFieldEnumIsPaused    WorkflowScalarFieldEnum = "isPaused"
 	WorkflowScalarFieldEnumName        WorkflowScalarFieldEnum = "name"
 	WorkflowScalarFieldEnumDescription WorkflowScalarFieldEnum = "description"
 )
@@ -3637,6 +3642,8 @@ const workflowFieldUpdatedAt workflowPrismaFields = "updatedAt"
 const workflowFieldDeletedAt workflowPrismaFields = "deletedAt"
 
 const workflowFieldTenantID workflowPrismaFields = "tenantId"
+
+const workflowFieldIsPaused workflowPrismaFields = "isPaused"
 
 const workflowFieldName workflowPrismaFields = "name"
 
@@ -8768,6 +8775,7 @@ type InnerWorkflow struct {
 	UpdatedAt   DateTime  `json:"updatedAt"`
 	DeletedAt   *DateTime `json:"deletedAt,omitempty"`
 	TenantID    string    `json:"tenantId"`
+	IsPaused    *bool     `json:"isPaused,omitempty"`
 	Name        string    `json:"name"`
 	Description *string   `json:"description,omitempty"`
 }
@@ -8779,6 +8787,7 @@ type RawWorkflowModel struct {
 	UpdatedAt   RawDateTime  `json:"updatedAt"`
 	DeletedAt   *RawDateTime `json:"deletedAt,omitempty"`
 	TenantID    RawString    `json:"tenantId"`
+	IsPaused    *RawBoolean  `json:"isPaused,omitempty"`
 	Name        RawString    `json:"name"`
 	Description *RawString   `json:"description,omitempty"`
 }
@@ -8795,6 +8804,13 @@ func (r WorkflowModel) DeletedAt() (value DateTime, ok bool) {
 		return value, false
 	}
 	return *r.InnerWorkflow.DeletedAt, true
+}
+
+func (r WorkflowModel) IsPaused() (value Boolean, ok bool) {
+	if r.InnerWorkflow.IsPaused == nil {
+		return value, false
+	}
+	return *r.InnerWorkflow.IsPaused, true
 }
 
 func (r WorkflowModel) Description() (value String, ok bool) {
@@ -61789,6 +61805,11 @@ type workflowQuery struct {
 	// @required
 	TenantID workflowQueryTenantIDString
 
+	// IsPaused
+	//
+	// @optional
+	IsPaused workflowQueryIsPausedBoolean
+
 	// Name
 	//
 	// @required
@@ -63545,6 +63566,119 @@ func (r workflowQueryTenantIDString) HasSuffixIfPresent(value *string) workflowD
 
 func (r workflowQueryTenantIDString) Field() workflowPrismaFields {
 	return workflowFieldTenantID
+}
+
+// base struct
+type workflowQueryIsPausedBoolean struct{}
+
+// Set the optional value of IsPaused
+func (r workflowQueryIsPausedBoolean) Set(value bool) workflowSetParam {
+
+	return workflowSetParam{
+		data: builder.Field{
+			Name:  "isPaused",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of IsPaused dynamically
+func (r workflowQueryIsPausedBoolean) SetIfPresent(value *Boolean) workflowSetParam {
+	if value == nil {
+		return workflowSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of IsPaused dynamically
+func (r workflowQueryIsPausedBoolean) SetOptional(value *Boolean) workflowSetParam {
+	if value == nil {
+
+		var v *bool
+		return workflowSetParam{
+			data: builder.Field{
+				Name:  "isPaused",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowQueryIsPausedBoolean) Equals(value bool) workflowWithPrismaIsPausedEqualsParam {
+
+	return workflowWithPrismaIsPausedEqualsParam{
+		data: builder.Field{
+			Name: "isPaused",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowQueryIsPausedBoolean) EqualsIfPresent(value *bool) workflowWithPrismaIsPausedEqualsParam {
+	if value == nil {
+		return workflowWithPrismaIsPausedEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowQueryIsPausedBoolean) EqualsOptional(value *Boolean) workflowDefaultParam {
+	return workflowDefaultParam{
+		data: builder.Field{
+			Name: "isPaused",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowQueryIsPausedBoolean) IsNull() workflowDefaultParam {
+	var str *string = nil
+	return workflowDefaultParam{
+		data: builder.Field{
+			Name: "isPaused",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowQueryIsPausedBoolean) Order(direction SortOrder) workflowDefaultParam {
+	return workflowDefaultParam{
+		data: builder.Field{
+			Name:  "isPaused",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowQueryIsPausedBoolean) Cursor(cursor bool) workflowCursorParam {
+	return workflowCursorParam{
+		data: builder.Field{
+			Name:  "isPaused",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowQueryIsPausedBoolean) Field() workflowPrismaFields {
+	return workflowFieldIsPaused
 }
 
 // base struct
@@ -216415,6 +216549,7 @@ var workflowOutput = []builder.Output{
 	{Name: "updatedAt"},
 	{Name: "deletedAt"},
 	{Name: "tenantId"},
+	{Name: "isPaused"},
 	{Name: "name"},
 	{Name: "description"},
 }
@@ -216972,6 +217107,84 @@ func (p workflowWithPrismaTenantIDEqualsUniqueParam) tenantIDField() {}
 
 func (workflowWithPrismaTenantIDEqualsUniqueParam) unique() {}
 func (workflowWithPrismaTenantIDEqualsUniqueParam) equals() {}
+
+type WorkflowWithPrismaIsPausedEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowModel()
+	isPausedField()
+}
+
+type WorkflowWithPrismaIsPausedSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowModel()
+	isPausedField()
+}
+
+type workflowWithPrismaIsPausedSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowWithPrismaIsPausedSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowWithPrismaIsPausedSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowWithPrismaIsPausedSetParam) workflowModel() {}
+
+func (p workflowWithPrismaIsPausedSetParam) isPausedField() {}
+
+type WorkflowWithPrismaIsPausedWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowModel()
+	isPausedField()
+}
+
+type workflowWithPrismaIsPausedEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowWithPrismaIsPausedEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowWithPrismaIsPausedEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowWithPrismaIsPausedEqualsParam) workflowModel() {}
+
+func (p workflowWithPrismaIsPausedEqualsParam) isPausedField() {}
+
+func (workflowWithPrismaIsPausedSetParam) settable()  {}
+func (workflowWithPrismaIsPausedEqualsParam) equals() {}
+
+type workflowWithPrismaIsPausedEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowWithPrismaIsPausedEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowWithPrismaIsPausedEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowWithPrismaIsPausedEqualsUniqueParam) workflowModel() {}
+func (p workflowWithPrismaIsPausedEqualsUniqueParam) isPausedField() {}
+
+func (workflowWithPrismaIsPausedEqualsUniqueParam) unique() {}
+func (workflowWithPrismaIsPausedEqualsUniqueParam) equals() {}
 
 type WorkflowWithPrismaNameEqualsSetParam interface {
 	field() builder.Field
