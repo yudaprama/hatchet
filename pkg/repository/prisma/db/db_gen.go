@@ -498,6 +498,9 @@ model Event {
   // metadata stored in the event
   additionalMetadata Json?
 
+  // this is used to order the events on bulk inserts
+  insertOrder Int?
+
   @@index([tenantId])
   @@index([createdAt])
   @@index([tenantId, createdAt])
@@ -2564,6 +2567,7 @@ const (
 	EventScalarFieldEnumReplayedFromID     EventScalarFieldEnum = "replayedFromId"
 	EventScalarFieldEnumData               EventScalarFieldEnum = "data"
 	EventScalarFieldEnumAdditionalMetadata EventScalarFieldEnum = "additionalMetadata"
+	EventScalarFieldEnumInsertOrder        EventScalarFieldEnum = "insertOrder"
 )
 
 type WorkflowTagScalarFieldEnum string
@@ -3604,6 +3608,8 @@ const eventFieldReplays eventPrismaFields = "replays"
 const eventFieldData eventPrismaFields = "data"
 
 const eventFieldAdditionalMetadata eventPrismaFields = "additionalMetadata"
+
+const eventFieldInsertOrder eventPrismaFields = "insertOrder"
 
 type workflowTagPrismaFields = prismaFields
 
@@ -8631,6 +8637,7 @@ type InnerEvent struct {
 	ReplayedFromID     *string   `json:"replayedFromId,omitempty"`
 	Data               *JSON     `json:"data,omitempty"`
 	AdditionalMetadata *JSON     `json:"additionalMetadata,omitempty"`
+	InsertOrder        *int      `json:"insertOrder,omitempty"`
 }
 
 // RawEventModel is a struct for Event when used in raw queries
@@ -8644,6 +8651,7 @@ type RawEventModel struct {
 	ReplayedFromID     *RawString   `json:"replayedFromId,omitempty"`
 	Data               *RawJSON     `json:"data,omitempty"`
 	AdditionalMetadata *RawJSON     `json:"additionalMetadata,omitempty"`
+	InsertOrder        *RawInt      `json:"insertOrder,omitempty"`
 }
 
 // RelationsEvent holds the relation data separately
@@ -8692,6 +8700,13 @@ func (r EventModel) AdditionalMetadata() (value JSON, ok bool) {
 		return value, false
 	}
 	return *r.InnerEvent.AdditionalMetadata, true
+}
+
+func (r EventModel) InsertOrder() (value Int, ok bool) {
+	if r.InnerEvent.InsertOrder == nil {
+		return value, false
+	}
+	return *r.InnerEvent.InsertOrder, true
 }
 
 // WorkflowTagModel represents the WorkflowTag model and is a wrapper for accessing fields and methods
@@ -55720,6 +55735,11 @@ type eventQuery struct {
 	//
 	// @optional
 	AdditionalMetadata eventQueryAdditionalMetadataJson
+
+	// InsertOrder
+	//
+	// @optional
+	InsertOrder eventQueryInsertOrderInt
 }
 
 func (eventQuery) Not(params ...EventWhereParam) eventDefaultParam {
@@ -59172,6 +59192,450 @@ func (r eventQueryAdditionalMetadataJson) NotIfPresent(value *JSONNullValueFilte
 
 func (r eventQueryAdditionalMetadataJson) Field() eventPrismaFields {
 	return eventFieldAdditionalMetadata
+}
+
+// base struct
+type eventQueryInsertOrderInt struct{}
+
+// Set the optional value of InsertOrder
+func (r eventQueryInsertOrderInt) Set(value int) eventSetParam {
+
+	return eventSetParam{
+		data: builder.Field{
+			Name:  "insertOrder",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of InsertOrder dynamically
+func (r eventQueryInsertOrderInt) SetIfPresent(value *Int) eventSetParam {
+	if value == nil {
+		return eventSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of InsertOrder dynamically
+func (r eventQueryInsertOrderInt) SetOptional(value *Int) eventSetParam {
+	if value == nil {
+
+		var v *int
+		return eventSetParam{
+			data: builder.Field{
+				Name:  "insertOrder",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the optional value of InsertOrder
+func (r eventQueryInsertOrderInt) Increment(value int) eventSetParam {
+	return eventSetParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventQueryInsertOrderInt) IncrementIfPresent(value *int) eventSetParam {
+	if value == nil {
+		return eventSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the optional value of InsertOrder
+func (r eventQueryInsertOrderInt) Decrement(value int) eventSetParam {
+	return eventSetParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventQueryInsertOrderInt) DecrementIfPresent(value *int) eventSetParam {
+	if value == nil {
+		return eventSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the optional value of InsertOrder
+func (r eventQueryInsertOrderInt) Multiply(value int) eventSetParam {
+	return eventSetParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventQueryInsertOrderInt) MultiplyIfPresent(value *int) eventSetParam {
+	if value == nil {
+		return eventSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the optional value of InsertOrder
+func (r eventQueryInsertOrderInt) Divide(value int) eventSetParam {
+	return eventSetParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventQueryInsertOrderInt) DivideIfPresent(value *int) eventSetParam {
+	if value == nil {
+		return eventSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r eventQueryInsertOrderInt) Equals(value int) eventWithPrismaInsertOrderEqualsParam {
+
+	return eventWithPrismaInsertOrderEqualsParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventQueryInsertOrderInt) EqualsIfPresent(value *int) eventWithPrismaInsertOrderEqualsParam {
+	if value == nil {
+		return eventWithPrismaInsertOrderEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r eventQueryInsertOrderInt) EqualsOptional(value *Int) eventDefaultParam {
+	return eventDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventQueryInsertOrderInt) IsNull() eventDefaultParam {
+	var str *string = nil
+	return eventDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r eventQueryInsertOrderInt) Order(direction SortOrder) eventDefaultParam {
+	return eventDefaultParam{
+		data: builder.Field{
+			Name:  "insertOrder",
+			Value: direction,
+		},
+	}
+}
+
+func (r eventQueryInsertOrderInt) Cursor(cursor int) eventCursorParam {
+	return eventCursorParam{
+		data: builder.Field{
+			Name:  "insertOrder",
+			Value: cursor,
+		},
+	}
+}
+
+func (r eventQueryInsertOrderInt) In(value []int) eventDefaultParam {
+	return eventDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventQueryInsertOrderInt) InIfPresent(value []int) eventDefaultParam {
+	if value == nil {
+		return eventDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r eventQueryInsertOrderInt) NotIn(value []int) eventDefaultParam {
+	return eventDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventQueryInsertOrderInt) NotInIfPresent(value []int) eventDefaultParam {
+	if value == nil {
+		return eventDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r eventQueryInsertOrderInt) Lt(value int) eventDefaultParam {
+	return eventDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventQueryInsertOrderInt) LtIfPresent(value *int) eventDefaultParam {
+	if value == nil {
+		return eventDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r eventQueryInsertOrderInt) Lte(value int) eventDefaultParam {
+	return eventDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventQueryInsertOrderInt) LteIfPresent(value *int) eventDefaultParam {
+	if value == nil {
+		return eventDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r eventQueryInsertOrderInt) Gt(value int) eventDefaultParam {
+	return eventDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventQueryInsertOrderInt) GtIfPresent(value *int) eventDefaultParam {
+	if value == nil {
+		return eventDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r eventQueryInsertOrderInt) Gte(value int) eventDefaultParam {
+	return eventDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventQueryInsertOrderInt) GteIfPresent(value *int) eventDefaultParam {
+	if value == nil {
+		return eventDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r eventQueryInsertOrderInt) Not(value int) eventDefaultParam {
+	return eventDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventQueryInsertOrderInt) NotIfPresent(value *int) eventDefaultParam {
+	if value == nil {
+		return eventDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r eventQueryInsertOrderInt) LT(value int) eventDefaultParam {
+	return eventDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r eventQueryInsertOrderInt) LTIfPresent(value *int) eventDefaultParam {
+	if value == nil {
+		return eventDefaultParam{}
+	}
+	return r.LT(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r eventQueryInsertOrderInt) LTE(value int) eventDefaultParam {
+	return eventDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r eventQueryInsertOrderInt) LTEIfPresent(value *int) eventDefaultParam {
+	if value == nil {
+		return eventDefaultParam{}
+	}
+	return r.LTE(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r eventQueryInsertOrderInt) GT(value int) eventDefaultParam {
+	return eventDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r eventQueryInsertOrderInt) GTIfPresent(value *int) eventDefaultParam {
+	if value == nil {
+		return eventDefaultParam{}
+	}
+	return r.GT(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r eventQueryInsertOrderInt) GTE(value int) eventDefaultParam {
+	return eventDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r eventQueryInsertOrderInt) GTEIfPresent(value *int) eventDefaultParam {
+	if value == nil {
+		return eventDefaultParam{}
+	}
+	return r.GTE(*value)
+}
+
+func (r eventQueryInsertOrderInt) Field() eventPrismaFields {
+	return eventFieldInsertOrder
 }
 
 // WorkflowTag acts as a namespaces to access query methods for the WorkflowTag model
@@ -214060,6 +214524,7 @@ var eventOutput = []builder.Output{
 	{Name: "replayedFromId"},
 	{Name: "data"},
 	{Name: "additionalMetadata"},
+	{Name: "insertOrder"},
 }
 
 type EventRelationWith interface {
@@ -215083,6 +215548,84 @@ func (p eventWithPrismaAdditionalMetadataEqualsUniqueParam) additionalMetadataFi
 
 func (eventWithPrismaAdditionalMetadataEqualsUniqueParam) unique() {}
 func (eventWithPrismaAdditionalMetadataEqualsUniqueParam) equals() {}
+
+type EventWithPrismaInsertOrderEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	eventModel()
+	insertOrderField()
+}
+
+type EventWithPrismaInsertOrderSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	eventModel()
+	insertOrderField()
+}
+
+type eventWithPrismaInsertOrderSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p eventWithPrismaInsertOrderSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p eventWithPrismaInsertOrderSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p eventWithPrismaInsertOrderSetParam) eventModel() {}
+
+func (p eventWithPrismaInsertOrderSetParam) insertOrderField() {}
+
+type EventWithPrismaInsertOrderWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	eventModel()
+	insertOrderField()
+}
+
+type eventWithPrismaInsertOrderEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p eventWithPrismaInsertOrderEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p eventWithPrismaInsertOrderEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p eventWithPrismaInsertOrderEqualsParam) eventModel() {}
+
+func (p eventWithPrismaInsertOrderEqualsParam) insertOrderField() {}
+
+func (eventWithPrismaInsertOrderSetParam) settable()  {}
+func (eventWithPrismaInsertOrderEqualsParam) equals() {}
+
+type eventWithPrismaInsertOrderEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p eventWithPrismaInsertOrderEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p eventWithPrismaInsertOrderEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p eventWithPrismaInsertOrderEqualsUniqueParam) eventModel()       {}
+func (p eventWithPrismaInsertOrderEqualsUniqueParam) insertOrderField() {}
+
+func (eventWithPrismaInsertOrderEqualsUniqueParam) unique() {}
+func (eventWithPrismaInsertOrderEqualsUniqueParam) equals() {}
 
 type workflowTagActions struct {
 	// client holds the prisma client
