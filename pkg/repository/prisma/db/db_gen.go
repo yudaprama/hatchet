@@ -1419,6 +1419,7 @@ model QueueItem {
 enum InternalQueue {
   WORKER_SEMAPHORE_COUNT
   STEP_RUN_UPDATE
+  STEP_RUN_UPDATE_V2
   WORKFLOW_RUN_UPDATE
   WORKFLOW_RUN_PAUSED
 }
@@ -2271,6 +2272,7 @@ type InternalQueue string
 const (
 	InternalQueueWorkerSemaphoreCount InternalQueue = "WORKER_SEMAPHORE_COUNT"
 	InternalQueueStepRunUpdate        InternalQueue = "STEP_RUN_UPDATE"
+	InternalQueueStepRunUpdateV2      InternalQueue = "STEP_RUN_UPDATE_V2"
 	InternalQueueWorkflowRunUpdate    InternalQueue = "WORKFLOW_RUN_UPDATE"
 	InternalQueueWorkflowRunPaused    InternalQueue = "WORKFLOW_RUN_PAUSED"
 )
