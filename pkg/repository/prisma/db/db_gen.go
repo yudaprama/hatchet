@@ -471,6 +471,13 @@ model APIToken {
   webhookWorkers WebhookWorker[]
 }
 
+model EventKey {
+  key      String @id
+  tenantId String @db.Uuid
+
+  @@unique([key, tenantId])
+}
+
 // Event represents an event in the database.
 model Event {
   // base fields
@@ -1937,6 +1944,7 @@ func newClient() *PrismaClient {
 	c.TenantMember = tenantMemberActions{client: c}
 	c.TenantInviteLink = tenantInviteLinkActions{client: c}
 	c.APIToken = aPITokenActions{client: c}
+	c.EventKey = eventKeyActions{client: c}
 	c.Event = eventActions{client: c}
 	c.WorkflowTag = workflowTagActions{client: c}
 	c.Workflow = workflowActions{client: c}
@@ -2038,6 +2046,8 @@ type PrismaClient struct {
 	TenantInviteLink tenantInviteLinkActions
 	// APIToken provides access to CRUD methods.
 	APIToken aPITokenActions
+	// EventKey provides access to CRUD methods.
+	EventKey eventKeyActions
 	// Event provides access to CRUD methods.
 	Event eventActions
 	// WorkflowTag provides access to CRUD methods.
@@ -2555,6 +2565,13 @@ const (
 	APITokenScalarFieldEnumInternal    APITokenScalarFieldEnum = "internal"
 	APITokenScalarFieldEnumName        APITokenScalarFieldEnum = "name"
 	APITokenScalarFieldEnumTenantID    APITokenScalarFieldEnum = "tenantId"
+)
+
+type EventKeyScalarFieldEnum string
+
+const (
+	EventKeyScalarFieldEnumKey      EventKeyScalarFieldEnum = "key"
+	EventKeyScalarFieldEnumTenantID EventKeyScalarFieldEnum = "tenantId"
 )
 
 type EventScalarFieldEnum string
@@ -3586,6 +3603,12 @@ const aPITokenFieldTenant aPITokenPrismaFields = "tenant"
 const aPITokenFieldTenantID aPITokenPrismaFields = "tenantId"
 
 const aPITokenFieldWebhookWorkers aPITokenPrismaFields = "webhookWorkers"
+
+type eventKeyPrismaFields = prismaFields
+
+const eventKeyFieldKey eventKeyPrismaFields = "key"
+
+const eventKeyFieldTenantID eventKeyPrismaFields = "tenantId"
 
 type eventPrismaFields = prismaFields
 
@@ -4697,6 +4720,10 @@ func NewMock() (*PrismaClient, *Mock, func(t *testing.T)) {
 		mock: m,
 	}
 
+	m.EventKey = eventKeyMock{
+		mock: m,
+	}
+
 	m.Event = eventMock{
 		mock: m,
 	}
@@ -4914,6 +4941,8 @@ type Mock struct {
 	TenantInviteLink tenantInviteLinkMock
 
 	APIToken aPITokenMock
+
+	EventKey eventKeyMock
 
 	Event eventMock
 
@@ -5672,6 +5701,48 @@ func (m *aPITokenMockExec) ReturnsMany(v []APITokenModel) {
 }
 
 func (m *aPITokenMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
+type eventKeyMock struct {
+	mock *Mock
+}
+
+type EventKeyMockExpectParam interface {
+	ExtractQuery() builder.Query
+	eventKeyModel()
+}
+
+func (m *eventKeyMock) Expect(query EventKeyMockExpectParam) *eventKeyMockExec {
+	return &eventKeyMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type eventKeyMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *eventKeyMockExec) Returns(v EventKeyModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *eventKeyMockExec) ReturnsMany(v []EventKeyModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *eventKeyMockExec) Errors(err error) {
 	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
 		Query:   m.query,
 		WantErr: err,
@@ -8620,6 +8691,28 @@ func (r APITokenModel) WebhookWorkers() (value []WebhookWorkerModel) {
 		panic("attempted to access webhookWorkers but did not fetch it using the .With() syntax")
 	}
 	return r.RelationsAPIToken.WebhookWorkers
+}
+
+// EventKeyModel represents the EventKey model and is a wrapper for accessing fields and methods
+type EventKeyModel struct {
+	InnerEventKey
+	RelationsEventKey
+}
+
+// InnerEventKey holds the actual data
+type InnerEventKey struct {
+	Key      string `json:"key"`
+	TenantID string `json:"tenantId"`
+}
+
+// RawEventKeyModel is a struct for EventKey when used in raw queries
+type RawEventKeyModel struct {
+	Key      RawString `json:"key"`
+	TenantID RawString `json:"tenantId"`
+}
+
+// RelationsEventKey holds the relation data separately
+type RelationsEventKey struct {
 }
 
 // EventModel represents the Event model and is a wrapper for accessing fields and methods
@@ -55681,6 +55774,786 @@ func (r aPITokenQueryWebhookWorkersRelations) Unlink(
 
 func (r aPITokenQueryWebhookWorkersWebhookWorker) Field() aPITokenPrismaFields {
 	return aPITokenFieldWebhookWorkers
+}
+
+// EventKey acts as a namespaces to access query methods for the EventKey model
+var EventKey = eventKeyQuery{}
+
+// eventKeyQuery exposes query functions for the eventKey model
+type eventKeyQuery struct {
+
+	// Key
+	//
+	// @required
+	Key eventKeyQueryKeyString
+
+	// TenantID
+	//
+	// @required
+	TenantID eventKeyQueryTenantIDString
+}
+
+func (eventKeyQuery) Not(params ...EventKeyWhereParam) eventKeyDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return eventKeyDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (eventKeyQuery) Or(params ...EventKeyWhereParam) eventKeyDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return eventKeyDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (eventKeyQuery) And(params ...EventKeyWhereParam) eventKeyDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return eventKeyDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (eventKeyQuery) KeyTenantID(
+	_key EventKeyWithPrismaKeyWhereParam,
+
+	_tenantID EventKeyWithPrismaTenantIDWhereParam,
+) EventKeyEqualsUniqueWhereParam {
+	var fields []builder.Field
+
+	fields = append(fields, _key.field())
+	fields = append(fields, _tenantID.field())
+
+	return eventKeyEqualsUniqueParam{
+		data: builder.Field{
+			Name:   "key_tenantId",
+			Fields: builder.TransformEquals(fields),
+		},
+	}
+}
+
+// base struct
+type eventKeyQueryKeyString struct{}
+
+// Set the required value of Key
+func (r eventKeyQueryKeyString) Set(value string) eventKeyWithPrismaKeySetParam {
+
+	return eventKeyWithPrismaKeySetParam{
+		data: builder.Field{
+			Name:  "key",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Key dynamically
+func (r eventKeyQueryKeyString) SetIfPresent(value *String) eventKeyWithPrismaKeySetParam {
+	if value == nil {
+		return eventKeyWithPrismaKeySetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r eventKeyQueryKeyString) Equals(value string) eventKeyWithPrismaKeyEqualsUniqueParam {
+
+	return eventKeyWithPrismaKeyEqualsUniqueParam{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryKeyString) EqualsIfPresent(value *string) eventKeyWithPrismaKeyEqualsUniqueParam {
+	if value == nil {
+		return eventKeyWithPrismaKeyEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r eventKeyQueryKeyString) Order(direction SortOrder) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
+		data: builder.Field{
+			Name:  "key",
+			Value: direction,
+		},
+	}
+}
+
+func (r eventKeyQueryKeyString) Cursor(cursor string) eventKeyCursorParam {
+	return eventKeyCursorParam{
+		data: builder.Field{
+			Name:  "key",
+			Value: cursor,
+		},
+	}
+}
+
+func (r eventKeyQueryKeyString) In(value []string) eventKeyParamUnique {
+	return eventKeyParamUnique{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryKeyString) InIfPresent(value []string) eventKeyParamUnique {
+	if value == nil {
+		return eventKeyParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r eventKeyQueryKeyString) NotIn(value []string) eventKeyParamUnique {
+	return eventKeyParamUnique{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryKeyString) NotInIfPresent(value []string) eventKeyParamUnique {
+	if value == nil {
+		return eventKeyParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r eventKeyQueryKeyString) Lt(value string) eventKeyParamUnique {
+	return eventKeyParamUnique{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryKeyString) LtIfPresent(value *string) eventKeyParamUnique {
+	if value == nil {
+		return eventKeyParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r eventKeyQueryKeyString) Lte(value string) eventKeyParamUnique {
+	return eventKeyParamUnique{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryKeyString) LteIfPresent(value *string) eventKeyParamUnique {
+	if value == nil {
+		return eventKeyParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r eventKeyQueryKeyString) Gt(value string) eventKeyParamUnique {
+	return eventKeyParamUnique{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryKeyString) GtIfPresent(value *string) eventKeyParamUnique {
+	if value == nil {
+		return eventKeyParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r eventKeyQueryKeyString) Gte(value string) eventKeyParamUnique {
+	return eventKeyParamUnique{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryKeyString) GteIfPresent(value *string) eventKeyParamUnique {
+	if value == nil {
+		return eventKeyParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r eventKeyQueryKeyString) Contains(value string) eventKeyParamUnique {
+	return eventKeyParamUnique{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryKeyString) ContainsIfPresent(value *string) eventKeyParamUnique {
+	if value == nil {
+		return eventKeyParamUnique{}
+	}
+	return r.Contains(*value)
+}
+
+func (r eventKeyQueryKeyString) StartsWith(value string) eventKeyParamUnique {
+	return eventKeyParamUnique{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryKeyString) StartsWithIfPresent(value *string) eventKeyParamUnique {
+	if value == nil {
+		return eventKeyParamUnique{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r eventKeyQueryKeyString) EndsWith(value string) eventKeyParamUnique {
+	return eventKeyParamUnique{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryKeyString) EndsWithIfPresent(value *string) eventKeyParamUnique {
+	if value == nil {
+		return eventKeyParamUnique{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r eventKeyQueryKeyString) Mode(value QueryMode) eventKeyParamUnique {
+	return eventKeyParamUnique{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryKeyString) ModeIfPresent(value *QueryMode) eventKeyParamUnique {
+	if value == nil {
+		return eventKeyParamUnique{}
+	}
+	return r.Mode(*value)
+}
+
+func (r eventKeyQueryKeyString) Not(value string) eventKeyParamUnique {
+	return eventKeyParamUnique{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryKeyString) NotIfPresent(value *string) eventKeyParamUnique {
+	if value == nil {
+		return eventKeyParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r eventKeyQueryKeyString) HasPrefix(value string) eventKeyParamUnique {
+	return eventKeyParamUnique{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r eventKeyQueryKeyString) HasPrefixIfPresent(value *string) eventKeyParamUnique {
+	if value == nil {
+		return eventKeyParamUnique{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r eventKeyQueryKeyString) HasSuffix(value string) eventKeyParamUnique {
+	return eventKeyParamUnique{
+		data: builder.Field{
+			Name: "key",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r eventKeyQueryKeyString) HasSuffixIfPresent(value *string) eventKeyParamUnique {
+	if value == nil {
+		return eventKeyParamUnique{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r eventKeyQueryKeyString) Field() eventKeyPrismaFields {
+	return eventKeyFieldKey
+}
+
+// base struct
+type eventKeyQueryTenantIDString struct{}
+
+// Set the required value of TenantID
+func (r eventKeyQueryTenantIDString) Set(value string) eventKeyWithPrismaTenantIDSetParam {
+
+	return eventKeyWithPrismaTenantIDSetParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of TenantID dynamically
+func (r eventKeyQueryTenantIDString) SetIfPresent(value *String) eventKeyWithPrismaTenantIDSetParam {
+	if value == nil {
+		return eventKeyWithPrismaTenantIDSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r eventKeyQueryTenantIDString) Equals(value string) eventKeyWithPrismaTenantIDEqualsParam {
+
+	return eventKeyWithPrismaTenantIDEqualsParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryTenantIDString) EqualsIfPresent(value *string) eventKeyWithPrismaTenantIDEqualsParam {
+	if value == nil {
+		return eventKeyWithPrismaTenantIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r eventKeyQueryTenantIDString) Order(direction SortOrder) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: direction,
+		},
+	}
+}
+
+func (r eventKeyQueryTenantIDString) Cursor(cursor string) eventKeyCursorParam {
+	return eventKeyCursorParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r eventKeyQueryTenantIDString) In(value []string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryTenantIDString) InIfPresent(value []string) eventKeyDefaultParam {
+	if value == nil {
+		return eventKeyDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r eventKeyQueryTenantIDString) NotIn(value []string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryTenantIDString) NotInIfPresent(value []string) eventKeyDefaultParam {
+	if value == nil {
+		return eventKeyDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r eventKeyQueryTenantIDString) Lt(value string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryTenantIDString) LtIfPresent(value *string) eventKeyDefaultParam {
+	if value == nil {
+		return eventKeyDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r eventKeyQueryTenantIDString) Lte(value string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryTenantIDString) LteIfPresent(value *string) eventKeyDefaultParam {
+	if value == nil {
+		return eventKeyDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r eventKeyQueryTenantIDString) Gt(value string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryTenantIDString) GtIfPresent(value *string) eventKeyDefaultParam {
+	if value == nil {
+		return eventKeyDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r eventKeyQueryTenantIDString) Gte(value string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryTenantIDString) GteIfPresent(value *string) eventKeyDefaultParam {
+	if value == nil {
+		return eventKeyDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r eventKeyQueryTenantIDString) Contains(value string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryTenantIDString) ContainsIfPresent(value *string) eventKeyDefaultParam {
+	if value == nil {
+		return eventKeyDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r eventKeyQueryTenantIDString) StartsWith(value string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryTenantIDString) StartsWithIfPresent(value *string) eventKeyDefaultParam {
+	if value == nil {
+		return eventKeyDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r eventKeyQueryTenantIDString) EndsWith(value string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryTenantIDString) EndsWithIfPresent(value *string) eventKeyDefaultParam {
+	if value == nil {
+		return eventKeyDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r eventKeyQueryTenantIDString) Mode(value QueryMode) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryTenantIDString) ModeIfPresent(value *QueryMode) eventKeyDefaultParam {
+	if value == nil {
+		return eventKeyDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r eventKeyQueryTenantIDString) Not(value string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryTenantIDString) NotIfPresent(value *string) eventKeyDefaultParam {
+	if value == nil {
+		return eventKeyDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r eventKeyQueryTenantIDString) HasPrefix(value string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r eventKeyQueryTenantIDString) HasPrefixIfPresent(value *string) eventKeyDefaultParam {
+	if value == nil {
+		return eventKeyDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r eventKeyQueryTenantIDString) HasSuffix(value string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r eventKeyQueryTenantIDString) HasSuffixIfPresent(value *string) eventKeyDefaultParam {
+	if value == nil {
+		return eventKeyDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r eventKeyQueryTenantIDString) Field() eventKeyPrismaFields {
+	return eventKeyFieldTenantID
 }
 
 // Event acts as a namespaces to access query methods for the Event model
@@ -214511,6 +215384,336 @@ func (p aPITokenWithPrismaWebhookWorkersEqualsUniqueParam) webhookWorkersField()
 func (aPITokenWithPrismaWebhookWorkersEqualsUniqueParam) unique() {}
 func (aPITokenWithPrismaWebhookWorkersEqualsUniqueParam) equals() {}
 
+type eventKeyActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var eventKeyOutput = []builder.Output{
+	{Name: "key"},
+	{Name: "tenantId"},
+}
+
+type EventKeyRelationWith interface {
+	getQuery() builder.Query
+	with()
+	eventKeyRelation()
+}
+
+type EventKeyWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	eventKeyModel()
+}
+
+type eventKeyDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p eventKeyDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p eventKeyDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p eventKeyDefaultParam) eventKeyModel() {}
+
+type EventKeyOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	eventKeyModel()
+}
+
+type eventKeyOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p eventKeyOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p eventKeyOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p eventKeyOrderByParam) eventKeyModel() {}
+
+type EventKeyCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	eventKeyModel()
+	isCursor()
+}
+
+type eventKeyCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p eventKeyCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p eventKeyCursorParam) isCursor() {}
+
+func (p eventKeyCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p eventKeyCursorParam) eventKeyModel() {}
+
+type EventKeyParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	eventKeyModel()
+}
+
+type eventKeyParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p eventKeyParamUnique) eventKeyModel() {}
+
+func (eventKeyParamUnique) unique() {}
+
+func (p eventKeyParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p eventKeyParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type EventKeyEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	eventKeyModel()
+}
+
+type eventKeyEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p eventKeyEqualsParam) eventKeyModel() {}
+
+func (eventKeyEqualsParam) equals() {}
+
+func (p eventKeyEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p eventKeyEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type EventKeyEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	eventKeyModel()
+}
+
+type eventKeyEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p eventKeyEqualsUniqueParam) eventKeyModel() {}
+
+func (eventKeyEqualsUniqueParam) unique() {}
+func (eventKeyEqualsUniqueParam) equals() {}
+
+func (p eventKeyEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p eventKeyEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type EventKeySetParam interface {
+	field() builder.Field
+	settable()
+	eventKeyModel()
+}
+
+type eventKeySetParam struct {
+	data builder.Field
+}
+
+func (eventKeySetParam) settable() {}
+
+func (p eventKeySetParam) field() builder.Field {
+	return p.data
+}
+
+func (p eventKeySetParam) eventKeyModel() {}
+
+type EventKeyWithPrismaKeyEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	eventKeyModel()
+	keyField()
+}
+
+type EventKeyWithPrismaKeySetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	eventKeyModel()
+	keyField()
+}
+
+type eventKeyWithPrismaKeySetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p eventKeyWithPrismaKeySetParam) field() builder.Field {
+	return p.data
+}
+
+func (p eventKeyWithPrismaKeySetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p eventKeyWithPrismaKeySetParam) eventKeyModel() {}
+
+func (p eventKeyWithPrismaKeySetParam) keyField() {}
+
+type EventKeyWithPrismaKeyWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	eventKeyModel()
+	keyField()
+}
+
+type eventKeyWithPrismaKeyEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p eventKeyWithPrismaKeyEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p eventKeyWithPrismaKeyEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p eventKeyWithPrismaKeyEqualsParam) eventKeyModel() {}
+
+func (p eventKeyWithPrismaKeyEqualsParam) keyField() {}
+
+func (eventKeyWithPrismaKeySetParam) settable()  {}
+func (eventKeyWithPrismaKeyEqualsParam) equals() {}
+
+type eventKeyWithPrismaKeyEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p eventKeyWithPrismaKeyEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p eventKeyWithPrismaKeyEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p eventKeyWithPrismaKeyEqualsUniqueParam) eventKeyModel() {}
+func (p eventKeyWithPrismaKeyEqualsUniqueParam) keyField()      {}
+
+func (eventKeyWithPrismaKeyEqualsUniqueParam) unique() {}
+func (eventKeyWithPrismaKeyEqualsUniqueParam) equals() {}
+
+type EventKeyWithPrismaTenantIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	eventKeyModel()
+	tenantIDField()
+}
+
+type EventKeyWithPrismaTenantIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	eventKeyModel()
+	tenantIDField()
+}
+
+type eventKeyWithPrismaTenantIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p eventKeyWithPrismaTenantIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p eventKeyWithPrismaTenantIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p eventKeyWithPrismaTenantIDSetParam) eventKeyModel() {}
+
+func (p eventKeyWithPrismaTenantIDSetParam) tenantIDField() {}
+
+type EventKeyWithPrismaTenantIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	eventKeyModel()
+	tenantIDField()
+}
+
+type eventKeyWithPrismaTenantIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p eventKeyWithPrismaTenantIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p eventKeyWithPrismaTenantIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p eventKeyWithPrismaTenantIDEqualsParam) eventKeyModel() {}
+
+func (p eventKeyWithPrismaTenantIDEqualsParam) tenantIDField() {}
+
+func (eventKeyWithPrismaTenantIDSetParam) settable()  {}
+func (eventKeyWithPrismaTenantIDEqualsParam) equals() {}
+
+type eventKeyWithPrismaTenantIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p eventKeyWithPrismaTenantIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p eventKeyWithPrismaTenantIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p eventKeyWithPrismaTenantIDEqualsUniqueParam) eventKeyModel() {}
+func (p eventKeyWithPrismaTenantIDEqualsUniqueParam) tenantIDField() {}
+
+func (eventKeyWithPrismaTenantIDEqualsUniqueParam) unique() {}
+func (eventKeyWithPrismaTenantIDEqualsUniqueParam) equals() {}
+
 type eventActions struct {
 	// client holds the prisma client
 	client *PrismaClient
@@ -260704,6 +261907,76 @@ func (r aPITokenCreateOne) Tx() APITokenUniqueTxResult {
 	return v
 }
 
+// Creates a single eventKey.
+func (r eventKeyActions) CreateOne(
+	_key EventKeyWithPrismaKeySetParam,
+	_tenantID EventKeyWithPrismaTenantIDSetParam,
+
+	optional ...EventKeySetParam,
+) eventKeyCreateOne {
+	var v eventKeyCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "EventKey"
+	v.query.Outputs = eventKeyOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _key.field())
+	fields = append(fields, _tenantID.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r eventKeyCreateOne) With(params ...EventKeyRelationWith) eventKeyCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type eventKeyCreateOne struct {
+	query builder.Query
+}
+
+func (p eventKeyCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p eventKeyCreateOne) eventKeyModel() {}
+
+func (r eventKeyCreateOne) Exec(ctx context.Context) (*EventKeyModel, error) {
+	var v EventKeyModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r eventKeyCreateOne) Tx() EventKeyUniqueTxResult {
+	v := newEventKeyUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 // Creates a single event.
 func (r eventActions) CreateOne(
 	_key EventWithPrismaKeySetParam,
@@ -299216,6 +300489,656 @@ func (r aPITokenDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
 
 func (r aPITokenDeleteMany) Tx() APITokenManyTxResult {
 	v := newAPITokenManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type eventKeyFindUnique struct {
+	query builder.Query
+}
+
+func (r eventKeyFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r eventKeyFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r eventKeyFindUnique) with()             {}
+func (r eventKeyFindUnique) eventKeyModel()    {}
+func (r eventKeyFindUnique) eventKeyRelation() {}
+
+func (r eventKeyActions) FindUnique(
+	params EventKeyEqualsUniqueWhereParam,
+) eventKeyFindUnique {
+	var v eventKeyFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "EventKey"
+	v.query.Outputs = eventKeyOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r eventKeyFindUnique) With(params ...EventKeyRelationWith) eventKeyFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r eventKeyFindUnique) Select(params ...eventKeyPrismaFields) eventKeyFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r eventKeyFindUnique) Omit(params ...eventKeyPrismaFields) eventKeyFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range eventKeyOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r eventKeyFindUnique) Exec(ctx context.Context) (
+	*EventKeyModel,
+	error,
+) {
+	var v *EventKeyModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r eventKeyFindUnique) ExecInner(ctx context.Context) (
+	*InnerEventKey,
+	error,
+) {
+	var v *InnerEventKey
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r eventKeyFindUnique) Update(params ...EventKeySetParam) eventKeyUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "EventKey"
+
+	var v eventKeyUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type eventKeyUpdateUnique struct {
+	query builder.Query
+}
+
+func (r eventKeyUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r eventKeyUpdateUnique) eventKeyModel() {}
+
+func (r eventKeyUpdateUnique) Exec(ctx context.Context) (*EventKeyModel, error) {
+	var v EventKeyModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r eventKeyUpdateUnique) Tx() EventKeyUniqueTxResult {
+	v := newEventKeyUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r eventKeyFindUnique) Delete() eventKeyDeleteUnique {
+	var v eventKeyDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "EventKey"
+
+	return v
+}
+
+type eventKeyDeleteUnique struct {
+	query builder.Query
+}
+
+func (r eventKeyDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p eventKeyDeleteUnique) eventKeyModel() {}
+
+func (r eventKeyDeleteUnique) Exec(ctx context.Context) (*EventKeyModel, error) {
+	var v EventKeyModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r eventKeyDeleteUnique) Tx() EventKeyUniqueTxResult {
+	v := newEventKeyUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type eventKeyFindFirst struct {
+	query builder.Query
+}
+
+func (r eventKeyFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r eventKeyFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r eventKeyFindFirst) with()             {}
+func (r eventKeyFindFirst) eventKeyModel()    {}
+func (r eventKeyFindFirst) eventKeyRelation() {}
+
+func (r eventKeyActions) FindFirst(
+	params ...EventKeyWhereParam,
+) eventKeyFindFirst {
+	var v eventKeyFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "EventKey"
+	v.query.Outputs = eventKeyOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r eventKeyFindFirst) With(params ...EventKeyRelationWith) eventKeyFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r eventKeyFindFirst) Select(params ...eventKeyPrismaFields) eventKeyFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r eventKeyFindFirst) Omit(params ...eventKeyPrismaFields) eventKeyFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range eventKeyOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r eventKeyFindFirst) OrderBy(params ...EventKeyOrderByParam) eventKeyFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r eventKeyFindFirst) Skip(count int) eventKeyFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r eventKeyFindFirst) Take(count int) eventKeyFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r eventKeyFindFirst) Cursor(cursor EventKeyCursorParam) eventKeyFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r eventKeyFindFirst) Exec(ctx context.Context) (
+	*EventKeyModel,
+	error,
+) {
+	var v *EventKeyModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r eventKeyFindFirst) ExecInner(ctx context.Context) (
+	*InnerEventKey,
+	error,
+) {
+	var v *InnerEventKey
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type eventKeyFindMany struct {
+	query builder.Query
+}
+
+func (r eventKeyFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r eventKeyFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r eventKeyFindMany) with()             {}
+func (r eventKeyFindMany) eventKeyModel()    {}
+func (r eventKeyFindMany) eventKeyRelation() {}
+
+func (r eventKeyActions) FindMany(
+	params ...EventKeyWhereParam,
+) eventKeyFindMany {
+	var v eventKeyFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "EventKey"
+	v.query.Outputs = eventKeyOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r eventKeyFindMany) With(params ...EventKeyRelationWith) eventKeyFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r eventKeyFindMany) Select(params ...eventKeyPrismaFields) eventKeyFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r eventKeyFindMany) Omit(params ...eventKeyPrismaFields) eventKeyFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range eventKeyOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r eventKeyFindMany) OrderBy(params ...EventKeyOrderByParam) eventKeyFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r eventKeyFindMany) Skip(count int) eventKeyFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r eventKeyFindMany) Take(count int) eventKeyFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r eventKeyFindMany) Cursor(cursor EventKeyCursorParam) eventKeyFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r eventKeyFindMany) Exec(ctx context.Context) (
+	[]EventKeyModel,
+	error,
+) {
+	var v []EventKeyModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r eventKeyFindMany) ExecInner(ctx context.Context) (
+	[]InnerEventKey,
+	error,
+) {
+	var v []InnerEventKey
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r eventKeyFindMany) Update(params ...EventKeySetParam) eventKeyUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "EventKey"
+
+	r.query.Outputs = countOutput
+
+	var v eventKeyUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type eventKeyUpdateMany struct {
+	query builder.Query
+}
+
+func (r eventKeyUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r eventKeyUpdateMany) eventKeyModel() {}
+
+func (r eventKeyUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r eventKeyUpdateMany) Tx() EventKeyManyTxResult {
+	v := newEventKeyManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r eventKeyFindMany) Delete() eventKeyDeleteMany {
+	var v eventKeyDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "EventKey"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type eventKeyDeleteMany struct {
+	query builder.Query
+}
+
+func (r eventKeyDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p eventKeyDeleteMany) eventKeyModel() {}
+
+func (r eventKeyDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r eventKeyDeleteMany) Tx() EventKeyManyTxResult {
+	v := newEventKeyManyTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -380771,6 +382694,54 @@ func (r APITokenManyTxResult) Result() (v *BatchResult) {
 	return v
 }
 
+func newEventKeyUniqueTxResult() EventKeyUniqueTxResult {
+	return EventKeyUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type EventKeyUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p EventKeyUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p EventKeyUniqueTxResult) IsTx() {}
+
+func (r EventKeyUniqueTxResult) Result() (v *EventKeyModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newEventKeyManyTxResult() EventKeyManyTxResult {
+	return EventKeyManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type EventKeyManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p EventKeyManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p EventKeyManyTxResult) IsTx() {}
+
+func (r EventKeyManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
 func newEventUniqueTxResult() EventUniqueTxResult {
 	return EventUniqueTxResult{
 		result: &transaction.Result{},
@@ -384731,6 +386702,118 @@ func (r aPITokenUpsertOne) Exec(ctx context.Context) (*APITokenModel, error) {
 
 func (r aPITokenUpsertOne) Tx() APITokenUniqueTxResult {
 	v := newAPITokenUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type eventKeyUpsertOne struct {
+	query builder.Query
+}
+
+func (r eventKeyUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r eventKeyUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r eventKeyUpsertOne) with()             {}
+func (r eventKeyUpsertOne) eventKeyModel()    {}
+func (r eventKeyUpsertOne) eventKeyRelation() {}
+
+func (r eventKeyActions) UpsertOne(
+	params EventKeyEqualsUniqueWhereParam,
+) eventKeyUpsertOne {
+	var v eventKeyUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "EventKey"
+	v.query.Outputs = eventKeyOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r eventKeyUpsertOne) Create(
+
+	_key EventKeyWithPrismaKeySetParam,
+	_tenantID EventKeyWithPrismaTenantIDSetParam,
+
+	optional ...EventKeySetParam,
+) eventKeyUpsertOne {
+	var v eventKeyUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _key.field())
+	fields = append(fields, _tenantID.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r eventKeyUpsertOne) Update(
+	params ...EventKeySetParam,
+) eventKeyUpsertOne {
+	var v eventKeyUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r eventKeyUpsertOne) Exec(ctx context.Context) (*EventKeyModel, error) {
+	var v EventKeyModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r eventKeyUpsertOne) Tx() EventKeyUniqueTxResult {
+	v := newEventKeyUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
