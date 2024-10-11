@@ -472,7 +472,8 @@ model APIToken {
 }
 
 model EventKey {
-  key      String @id
+  id       BigInt @id @default(autoincrement()) @db.BigInt
+  key      String
   tenantId String @db.Uuid
 
   @@unique([key, tenantId])
@@ -2570,6 +2571,7 @@ const (
 type EventKeyScalarFieldEnum string
 
 const (
+	EventKeyScalarFieldEnumID       EventKeyScalarFieldEnum = "id"
 	EventKeyScalarFieldEnumKey      EventKeyScalarFieldEnum = "key"
 	EventKeyScalarFieldEnumTenantID EventKeyScalarFieldEnum = "tenantId"
 )
@@ -3605,6 +3607,8 @@ const aPITokenFieldTenantID aPITokenPrismaFields = "tenantId"
 const aPITokenFieldWebhookWorkers aPITokenPrismaFields = "webhookWorkers"
 
 type eventKeyPrismaFields = prismaFields
+
+const eventKeyFieldID eventKeyPrismaFields = "id"
 
 const eventKeyFieldKey eventKeyPrismaFields = "key"
 
@@ -8701,12 +8705,14 @@ type EventKeyModel struct {
 
 // InnerEventKey holds the actual data
 type InnerEventKey struct {
+	ID       BigInt `json:"id"`
 	Key      string `json:"key"`
 	TenantID string `json:"tenantId"`
 }
 
 // RawEventKeyModel is a struct for EventKey when used in raw queries
 type RawEventKeyModel struct {
+	ID       RawBigInt `json:"id"`
 	Key      RawString `json:"key"`
 	TenantID RawString `json:"tenantId"`
 }
@@ -55782,6 +55788,11 @@ var EventKey = eventKeyQuery{}
 // eventKeyQuery exposes query functions for the eventKey model
 type eventKeyQuery struct {
 
+	// ID
+	//
+	// @required
+	ID eventKeyQueryIDBigInt
+
 	// Key
 	//
 	// @required
@@ -55863,6 +55874,309 @@ func (eventKeyQuery) KeyTenantID(
 }
 
 // base struct
+type eventKeyQueryIDBigInt struct{}
+
+// Set the required value of ID
+func (r eventKeyQueryIDBigInt) Set(value BigInt) eventKeySetParam {
+
+	return eventKeySetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r eventKeyQueryIDBigInt) SetIfPresent(value *BigInt) eventKeySetParam {
+	if value == nil {
+		return eventKeySetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the required value of ID
+func (r eventKeyQueryIDBigInt) Increment(value BigInt) eventKeySetParam {
+	return eventKeySetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryIDBigInt) IncrementIfPresent(value *BigInt) eventKeySetParam {
+	if value == nil {
+		return eventKeySetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the required value of ID
+func (r eventKeyQueryIDBigInt) Decrement(value BigInt) eventKeySetParam {
+	return eventKeySetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryIDBigInt) DecrementIfPresent(value *BigInt) eventKeySetParam {
+	if value == nil {
+		return eventKeySetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the required value of ID
+func (r eventKeyQueryIDBigInt) Multiply(value BigInt) eventKeySetParam {
+	return eventKeySetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryIDBigInt) MultiplyIfPresent(value *BigInt) eventKeySetParam {
+	if value == nil {
+		return eventKeySetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the required value of ID
+func (r eventKeyQueryIDBigInt) Divide(value BigInt) eventKeySetParam {
+	return eventKeySetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryIDBigInt) DivideIfPresent(value *BigInt) eventKeySetParam {
+	if value == nil {
+		return eventKeySetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r eventKeyQueryIDBigInt) Equals(value BigInt) eventKeyWithPrismaIDEqualsUniqueParam {
+
+	return eventKeyWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryIDBigInt) EqualsIfPresent(value *BigInt) eventKeyWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return eventKeyWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r eventKeyQueryIDBigInt) Order(direction SortOrder) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r eventKeyQueryIDBigInt) Cursor(cursor BigInt) eventKeyCursorParam {
+	return eventKeyCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r eventKeyQueryIDBigInt) In(value []BigInt) eventKeyParamUnique {
+	return eventKeyParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryIDBigInt) InIfPresent(value []BigInt) eventKeyParamUnique {
+	if value == nil {
+		return eventKeyParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r eventKeyQueryIDBigInt) NotIn(value []BigInt) eventKeyParamUnique {
+	return eventKeyParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryIDBigInt) NotInIfPresent(value []BigInt) eventKeyParamUnique {
+	if value == nil {
+		return eventKeyParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r eventKeyQueryIDBigInt) Lt(value BigInt) eventKeyParamUnique {
+	return eventKeyParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryIDBigInt) LtIfPresent(value *BigInt) eventKeyParamUnique {
+	if value == nil {
+		return eventKeyParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r eventKeyQueryIDBigInt) Lte(value BigInt) eventKeyParamUnique {
+	return eventKeyParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryIDBigInt) LteIfPresent(value *BigInt) eventKeyParamUnique {
+	if value == nil {
+		return eventKeyParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r eventKeyQueryIDBigInt) Gt(value BigInt) eventKeyParamUnique {
+	return eventKeyParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryIDBigInt) GtIfPresent(value *BigInt) eventKeyParamUnique {
+	if value == nil {
+		return eventKeyParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r eventKeyQueryIDBigInt) Gte(value BigInt) eventKeyParamUnique {
+	return eventKeyParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryIDBigInt) GteIfPresent(value *BigInt) eventKeyParamUnique {
+	if value == nil {
+		return eventKeyParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r eventKeyQueryIDBigInt) Not(value BigInt) eventKeyParamUnique {
+	return eventKeyParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r eventKeyQueryIDBigInt) NotIfPresent(value *BigInt) eventKeyParamUnique {
+	if value == nil {
+		return eventKeyParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+func (r eventKeyQueryIDBigInt) Field() eventKeyPrismaFields {
+	return eventKeyFieldID
+}
+
+// base struct
 type eventKeyQueryKeyString struct{}
 
 // Set the required value of Key
@@ -55886,9 +56200,9 @@ func (r eventKeyQueryKeyString) SetIfPresent(value *String) eventKeyWithPrismaKe
 	return r.Set(*value)
 }
 
-func (r eventKeyQueryKeyString) Equals(value string) eventKeyWithPrismaKeyEqualsUniqueParam {
+func (r eventKeyQueryKeyString) Equals(value string) eventKeyWithPrismaKeyEqualsParam {
 
-	return eventKeyWithPrismaKeyEqualsUniqueParam{
+	return eventKeyWithPrismaKeyEqualsParam{
 		data: builder.Field{
 			Name: "key",
 			Fields: []builder.Field{
@@ -55901,9 +56215,9 @@ func (r eventKeyQueryKeyString) Equals(value string) eventKeyWithPrismaKeyEquals
 	}
 }
 
-func (r eventKeyQueryKeyString) EqualsIfPresent(value *string) eventKeyWithPrismaKeyEqualsUniqueParam {
+func (r eventKeyQueryKeyString) EqualsIfPresent(value *string) eventKeyWithPrismaKeyEqualsParam {
 	if value == nil {
-		return eventKeyWithPrismaKeyEqualsUniqueParam{}
+		return eventKeyWithPrismaKeyEqualsParam{}
 	}
 	return r.Equals(*value)
 }
@@ -55926,8 +56240,8 @@ func (r eventKeyQueryKeyString) Cursor(cursor string) eventKeyCursorParam {
 	}
 }
 
-func (r eventKeyQueryKeyString) In(value []string) eventKeyParamUnique {
-	return eventKeyParamUnique{
+func (r eventKeyQueryKeyString) In(value []string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
 		data: builder.Field{
 			Name: "key",
 			Fields: []builder.Field{
@@ -55940,15 +56254,15 @@ func (r eventKeyQueryKeyString) In(value []string) eventKeyParamUnique {
 	}
 }
 
-func (r eventKeyQueryKeyString) InIfPresent(value []string) eventKeyParamUnique {
+func (r eventKeyQueryKeyString) InIfPresent(value []string) eventKeyDefaultParam {
 	if value == nil {
-		return eventKeyParamUnique{}
+		return eventKeyDefaultParam{}
 	}
 	return r.In(value)
 }
 
-func (r eventKeyQueryKeyString) NotIn(value []string) eventKeyParamUnique {
-	return eventKeyParamUnique{
+func (r eventKeyQueryKeyString) NotIn(value []string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
 		data: builder.Field{
 			Name: "key",
 			Fields: []builder.Field{
@@ -55961,15 +56275,15 @@ func (r eventKeyQueryKeyString) NotIn(value []string) eventKeyParamUnique {
 	}
 }
 
-func (r eventKeyQueryKeyString) NotInIfPresent(value []string) eventKeyParamUnique {
+func (r eventKeyQueryKeyString) NotInIfPresent(value []string) eventKeyDefaultParam {
 	if value == nil {
-		return eventKeyParamUnique{}
+		return eventKeyDefaultParam{}
 	}
 	return r.NotIn(value)
 }
 
-func (r eventKeyQueryKeyString) Lt(value string) eventKeyParamUnique {
-	return eventKeyParamUnique{
+func (r eventKeyQueryKeyString) Lt(value string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
 		data: builder.Field{
 			Name: "key",
 			Fields: []builder.Field{
@@ -55982,15 +56296,15 @@ func (r eventKeyQueryKeyString) Lt(value string) eventKeyParamUnique {
 	}
 }
 
-func (r eventKeyQueryKeyString) LtIfPresent(value *string) eventKeyParamUnique {
+func (r eventKeyQueryKeyString) LtIfPresent(value *string) eventKeyDefaultParam {
 	if value == nil {
-		return eventKeyParamUnique{}
+		return eventKeyDefaultParam{}
 	}
 	return r.Lt(*value)
 }
 
-func (r eventKeyQueryKeyString) Lte(value string) eventKeyParamUnique {
-	return eventKeyParamUnique{
+func (r eventKeyQueryKeyString) Lte(value string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
 		data: builder.Field{
 			Name: "key",
 			Fields: []builder.Field{
@@ -56003,15 +56317,15 @@ func (r eventKeyQueryKeyString) Lte(value string) eventKeyParamUnique {
 	}
 }
 
-func (r eventKeyQueryKeyString) LteIfPresent(value *string) eventKeyParamUnique {
+func (r eventKeyQueryKeyString) LteIfPresent(value *string) eventKeyDefaultParam {
 	if value == nil {
-		return eventKeyParamUnique{}
+		return eventKeyDefaultParam{}
 	}
 	return r.Lte(*value)
 }
 
-func (r eventKeyQueryKeyString) Gt(value string) eventKeyParamUnique {
-	return eventKeyParamUnique{
+func (r eventKeyQueryKeyString) Gt(value string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
 		data: builder.Field{
 			Name: "key",
 			Fields: []builder.Field{
@@ -56024,15 +56338,15 @@ func (r eventKeyQueryKeyString) Gt(value string) eventKeyParamUnique {
 	}
 }
 
-func (r eventKeyQueryKeyString) GtIfPresent(value *string) eventKeyParamUnique {
+func (r eventKeyQueryKeyString) GtIfPresent(value *string) eventKeyDefaultParam {
 	if value == nil {
-		return eventKeyParamUnique{}
+		return eventKeyDefaultParam{}
 	}
 	return r.Gt(*value)
 }
 
-func (r eventKeyQueryKeyString) Gte(value string) eventKeyParamUnique {
-	return eventKeyParamUnique{
+func (r eventKeyQueryKeyString) Gte(value string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
 		data: builder.Field{
 			Name: "key",
 			Fields: []builder.Field{
@@ -56045,15 +56359,15 @@ func (r eventKeyQueryKeyString) Gte(value string) eventKeyParamUnique {
 	}
 }
 
-func (r eventKeyQueryKeyString) GteIfPresent(value *string) eventKeyParamUnique {
+func (r eventKeyQueryKeyString) GteIfPresent(value *string) eventKeyDefaultParam {
 	if value == nil {
-		return eventKeyParamUnique{}
+		return eventKeyDefaultParam{}
 	}
 	return r.Gte(*value)
 }
 
-func (r eventKeyQueryKeyString) Contains(value string) eventKeyParamUnique {
-	return eventKeyParamUnique{
+func (r eventKeyQueryKeyString) Contains(value string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
 		data: builder.Field{
 			Name: "key",
 			Fields: []builder.Field{
@@ -56066,15 +56380,15 @@ func (r eventKeyQueryKeyString) Contains(value string) eventKeyParamUnique {
 	}
 }
 
-func (r eventKeyQueryKeyString) ContainsIfPresent(value *string) eventKeyParamUnique {
+func (r eventKeyQueryKeyString) ContainsIfPresent(value *string) eventKeyDefaultParam {
 	if value == nil {
-		return eventKeyParamUnique{}
+		return eventKeyDefaultParam{}
 	}
 	return r.Contains(*value)
 }
 
-func (r eventKeyQueryKeyString) StartsWith(value string) eventKeyParamUnique {
-	return eventKeyParamUnique{
+func (r eventKeyQueryKeyString) StartsWith(value string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
 		data: builder.Field{
 			Name: "key",
 			Fields: []builder.Field{
@@ -56087,15 +56401,15 @@ func (r eventKeyQueryKeyString) StartsWith(value string) eventKeyParamUnique {
 	}
 }
 
-func (r eventKeyQueryKeyString) StartsWithIfPresent(value *string) eventKeyParamUnique {
+func (r eventKeyQueryKeyString) StartsWithIfPresent(value *string) eventKeyDefaultParam {
 	if value == nil {
-		return eventKeyParamUnique{}
+		return eventKeyDefaultParam{}
 	}
 	return r.StartsWith(*value)
 }
 
-func (r eventKeyQueryKeyString) EndsWith(value string) eventKeyParamUnique {
-	return eventKeyParamUnique{
+func (r eventKeyQueryKeyString) EndsWith(value string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
 		data: builder.Field{
 			Name: "key",
 			Fields: []builder.Field{
@@ -56108,15 +56422,15 @@ func (r eventKeyQueryKeyString) EndsWith(value string) eventKeyParamUnique {
 	}
 }
 
-func (r eventKeyQueryKeyString) EndsWithIfPresent(value *string) eventKeyParamUnique {
+func (r eventKeyQueryKeyString) EndsWithIfPresent(value *string) eventKeyDefaultParam {
 	if value == nil {
-		return eventKeyParamUnique{}
+		return eventKeyDefaultParam{}
 	}
 	return r.EndsWith(*value)
 }
 
-func (r eventKeyQueryKeyString) Mode(value QueryMode) eventKeyParamUnique {
-	return eventKeyParamUnique{
+func (r eventKeyQueryKeyString) Mode(value QueryMode) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
 		data: builder.Field{
 			Name: "key",
 			Fields: []builder.Field{
@@ -56129,15 +56443,15 @@ func (r eventKeyQueryKeyString) Mode(value QueryMode) eventKeyParamUnique {
 	}
 }
 
-func (r eventKeyQueryKeyString) ModeIfPresent(value *QueryMode) eventKeyParamUnique {
+func (r eventKeyQueryKeyString) ModeIfPresent(value *QueryMode) eventKeyDefaultParam {
 	if value == nil {
-		return eventKeyParamUnique{}
+		return eventKeyDefaultParam{}
 	}
 	return r.Mode(*value)
 }
 
-func (r eventKeyQueryKeyString) Not(value string) eventKeyParamUnique {
-	return eventKeyParamUnique{
+func (r eventKeyQueryKeyString) Not(value string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
 		data: builder.Field{
 			Name: "key",
 			Fields: []builder.Field{
@@ -56150,17 +56464,17 @@ func (r eventKeyQueryKeyString) Not(value string) eventKeyParamUnique {
 	}
 }
 
-func (r eventKeyQueryKeyString) NotIfPresent(value *string) eventKeyParamUnique {
+func (r eventKeyQueryKeyString) NotIfPresent(value *string) eventKeyDefaultParam {
 	if value == nil {
-		return eventKeyParamUnique{}
+		return eventKeyDefaultParam{}
 	}
 	return r.Not(*value)
 }
 
 // deprecated: Use StartsWith instead.
 
-func (r eventKeyQueryKeyString) HasPrefix(value string) eventKeyParamUnique {
-	return eventKeyParamUnique{
+func (r eventKeyQueryKeyString) HasPrefix(value string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
 		data: builder.Field{
 			Name: "key",
 			Fields: []builder.Field{
@@ -56174,17 +56488,17 @@ func (r eventKeyQueryKeyString) HasPrefix(value string) eventKeyParamUnique {
 }
 
 // deprecated: Use StartsWithIfPresent instead.
-func (r eventKeyQueryKeyString) HasPrefixIfPresent(value *string) eventKeyParamUnique {
+func (r eventKeyQueryKeyString) HasPrefixIfPresent(value *string) eventKeyDefaultParam {
 	if value == nil {
-		return eventKeyParamUnique{}
+		return eventKeyDefaultParam{}
 	}
 	return r.HasPrefix(*value)
 }
 
 // deprecated: Use EndsWith instead.
 
-func (r eventKeyQueryKeyString) HasSuffix(value string) eventKeyParamUnique {
-	return eventKeyParamUnique{
+func (r eventKeyQueryKeyString) HasSuffix(value string) eventKeyDefaultParam {
+	return eventKeyDefaultParam{
 		data: builder.Field{
 			Name: "key",
 			Fields: []builder.Field{
@@ -56198,9 +56512,9 @@ func (r eventKeyQueryKeyString) HasSuffix(value string) eventKeyParamUnique {
 }
 
 // deprecated: Use EndsWithIfPresent instead.
-func (r eventKeyQueryKeyString) HasSuffixIfPresent(value *string) eventKeyParamUnique {
+func (r eventKeyQueryKeyString) HasSuffixIfPresent(value *string) eventKeyDefaultParam {
 	if value == nil {
-		return eventKeyParamUnique{}
+		return eventKeyDefaultParam{}
 	}
 	return r.HasSuffix(*value)
 }
@@ -215390,6 +215704,7 @@ type eventKeyActions struct {
 }
 
 var eventKeyOutput = []builder.Output{
+	{Name: "id"},
 	{Name: "key"},
 	{Name: "tenantId"},
 }
@@ -215557,6 +215872,84 @@ func (p eventKeySetParam) field() builder.Field {
 }
 
 func (p eventKeySetParam) eventKeyModel() {}
+
+type EventKeyWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	eventKeyModel()
+	idField()
+}
+
+type EventKeyWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	eventKeyModel()
+	idField()
+}
+
+type eventKeyWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p eventKeyWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p eventKeyWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p eventKeyWithPrismaIDSetParam) eventKeyModel() {}
+
+func (p eventKeyWithPrismaIDSetParam) idField() {}
+
+type EventKeyWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	eventKeyModel()
+	idField()
+}
+
+type eventKeyWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p eventKeyWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p eventKeyWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p eventKeyWithPrismaIDEqualsParam) eventKeyModel() {}
+
+func (p eventKeyWithPrismaIDEqualsParam) idField() {}
+
+func (eventKeyWithPrismaIDSetParam) settable()  {}
+func (eventKeyWithPrismaIDEqualsParam) equals() {}
+
+type eventKeyWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p eventKeyWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p eventKeyWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p eventKeyWithPrismaIDEqualsUniqueParam) eventKeyModel() {}
+func (p eventKeyWithPrismaIDEqualsUniqueParam) idField()       {}
+
+func (eventKeyWithPrismaIDEqualsUniqueParam) unique() {}
+func (eventKeyWithPrismaIDEqualsUniqueParam) equals() {}
 
 type EventKeyWithPrismaKeyEqualsSetParam interface {
 	field() builder.Field
