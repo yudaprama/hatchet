@@ -1024,6 +1024,9 @@ model WorkflowRun {
   // (optional) additional metadata for the workflow run
   additionalMetadata Json?
 
+  // this is used to order the workflow runs on bulk inserts
+  insertOrder Int?
+
   @@unique([parentId, parentStepRunId, childKey])
   @@index([tenantId])
   @@index([workflowVersionId])
@@ -2799,6 +2802,7 @@ const (
 	WorkflowRunScalarFieldEnumChildIndex         WorkflowRunScalarFieldEnum = "childIndex"
 	WorkflowRunScalarFieldEnumChildKey           WorkflowRunScalarFieldEnum = "childKey"
 	WorkflowRunScalarFieldEnumAdditionalMetadata WorkflowRunScalarFieldEnum = "additionalMetadata"
+	WorkflowRunScalarFieldEnumInsertOrder        WorkflowRunScalarFieldEnum = "insertOrder"
 )
 
 type WorkflowRunDedupeScalarFieldEnum string
@@ -4029,6 +4033,8 @@ const workflowRunFieldChildIndex workflowRunPrismaFields = "childIndex"
 const workflowRunFieldChildKey workflowRunPrismaFields = "childKey"
 
 const workflowRunFieldAdditionalMetadata workflowRunPrismaFields = "additionalMetadata"
+
+const workflowRunFieldInsertOrder workflowRunPrismaFields = "insertOrder"
 
 type workflowRunDedupePrismaFields = prismaFields
 
@@ -9875,6 +9881,7 @@ type InnerWorkflowRun struct {
 	ChildIndex         *int              `json:"childIndex,omitempty"`
 	ChildKey           *string           `json:"childKey,omitempty"`
 	AdditionalMetadata *JSON             `json:"additionalMetadata,omitempty"`
+	InsertOrder        *int              `json:"insertOrder,omitempty"`
 }
 
 // RawWorkflowRunModel is a struct for WorkflowRun when used in raw queries
@@ -9898,6 +9905,7 @@ type RawWorkflowRunModel struct {
 	ChildIndex         *RawInt              `json:"childIndex,omitempty"`
 	ChildKey           *RawString           `json:"childKey,omitempty"`
 	AdditionalMetadata *RawJSON             `json:"additionalMetadata,omitempty"`
+	InsertOrder        *RawInt              `json:"insertOrder,omitempty"`
 }
 
 // RelationsWorkflowRun holds the relation data separately
@@ -10049,6 +10057,13 @@ func (r WorkflowRunModel) AdditionalMetadata() (value JSON, ok bool) {
 		return value, false
 	}
 	return *r.InnerWorkflowRun.AdditionalMetadata, true
+}
+
+func (r WorkflowRunModel) InsertOrder() (value Int, ok bool) {
+	if r.InnerWorkflowRun.InsertOrder == nil {
+		return value, false
+	}
+	return *r.InnerWorkflowRun.InsertOrder, true
 }
 
 // WorkflowRunDedupeModel represents the WorkflowRunDedupe model and is a wrapper for accessing fields and methods
@@ -104650,6 +104665,11 @@ type workflowRunQuery struct {
 	//
 	// @optional
 	AdditionalMetadata workflowRunQueryAdditionalMetadataJson
+
+	// InsertOrder
+	//
+	// @optional
+	InsertOrder workflowRunQueryInsertOrderInt
 }
 
 func (workflowRunQuery) Not(params ...WorkflowRunWhereParam) workflowRunDefaultParam {
@@ -112405,6 +112425,450 @@ func (r workflowRunQueryAdditionalMetadataJson) NotIfPresent(value *JSONNullValu
 
 func (r workflowRunQueryAdditionalMetadataJson) Field() workflowRunPrismaFields {
 	return workflowRunFieldAdditionalMetadata
+}
+
+// base struct
+type workflowRunQueryInsertOrderInt struct{}
+
+// Set the optional value of InsertOrder
+func (r workflowRunQueryInsertOrderInt) Set(value int) workflowRunSetParam {
+
+	return workflowRunSetParam{
+		data: builder.Field{
+			Name:  "insertOrder",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of InsertOrder dynamically
+func (r workflowRunQueryInsertOrderInt) SetIfPresent(value *Int) workflowRunSetParam {
+	if value == nil {
+		return workflowRunSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of InsertOrder dynamically
+func (r workflowRunQueryInsertOrderInt) SetOptional(value *Int) workflowRunSetParam {
+	if value == nil {
+
+		var v *int
+		return workflowRunSetParam{
+			data: builder.Field{
+				Name:  "insertOrder",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the optional value of InsertOrder
+func (r workflowRunQueryInsertOrderInt) Increment(value int) workflowRunSetParam {
+	return workflowRunSetParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryInsertOrderInt) IncrementIfPresent(value *int) workflowRunSetParam {
+	if value == nil {
+		return workflowRunSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the optional value of InsertOrder
+func (r workflowRunQueryInsertOrderInt) Decrement(value int) workflowRunSetParam {
+	return workflowRunSetParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryInsertOrderInt) DecrementIfPresent(value *int) workflowRunSetParam {
+	if value == nil {
+		return workflowRunSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the optional value of InsertOrder
+func (r workflowRunQueryInsertOrderInt) Multiply(value int) workflowRunSetParam {
+	return workflowRunSetParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryInsertOrderInt) MultiplyIfPresent(value *int) workflowRunSetParam {
+	if value == nil {
+		return workflowRunSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the optional value of InsertOrder
+func (r workflowRunQueryInsertOrderInt) Divide(value int) workflowRunSetParam {
+	return workflowRunSetParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryInsertOrderInt) DivideIfPresent(value *int) workflowRunSetParam {
+	if value == nil {
+		return workflowRunSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r workflowRunQueryInsertOrderInt) Equals(value int) workflowRunWithPrismaInsertOrderEqualsParam {
+
+	return workflowRunWithPrismaInsertOrderEqualsParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryInsertOrderInt) EqualsIfPresent(value *int) workflowRunWithPrismaInsertOrderEqualsParam {
+	if value == nil {
+		return workflowRunWithPrismaInsertOrderEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowRunQueryInsertOrderInt) EqualsOptional(value *Int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryInsertOrderInt) IsNull() workflowRunDefaultParam {
+	var str *string = nil
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryInsertOrderInt) Order(direction SortOrder) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name:  "insertOrder",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowRunQueryInsertOrderInt) Cursor(cursor int) workflowRunCursorParam {
+	return workflowRunCursorParam{
+		data: builder.Field{
+			Name:  "insertOrder",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowRunQueryInsertOrderInt) In(value []int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryInsertOrderInt) InIfPresent(value []int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowRunQueryInsertOrderInt) NotIn(value []int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryInsertOrderInt) NotInIfPresent(value []int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowRunQueryInsertOrderInt) Lt(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryInsertOrderInt) LtIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowRunQueryInsertOrderInt) Lte(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryInsertOrderInt) LteIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowRunQueryInsertOrderInt) Gt(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryInsertOrderInt) GtIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowRunQueryInsertOrderInt) Gte(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryInsertOrderInt) GteIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowRunQueryInsertOrderInt) Not(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunQueryInsertOrderInt) NotIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r workflowRunQueryInsertOrderInt) LT(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r workflowRunQueryInsertOrderInt) LTIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.LT(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r workflowRunQueryInsertOrderInt) LTE(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r workflowRunQueryInsertOrderInt) LTEIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.LTE(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r workflowRunQueryInsertOrderInt) GT(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r workflowRunQueryInsertOrderInt) GTIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.GT(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r workflowRunQueryInsertOrderInt) GTE(value int) workflowRunDefaultParam {
+	return workflowRunDefaultParam{
+		data: builder.Field{
+			Name: "insertOrder",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r workflowRunQueryInsertOrderInt) GTEIfPresent(value *int) workflowRunDefaultParam {
+	if value == nil {
+		return workflowRunDefaultParam{}
+	}
+	return r.GTE(*value)
+}
+
+func (r workflowRunQueryInsertOrderInt) Field() workflowRunPrismaFields {
+	return workflowRunFieldInsertOrder
 }
 
 // WorkflowRunDedupe acts as a namespaces to access query methods for the WorkflowRunDedupe model
@@ -231919,6 +232383,7 @@ var workflowRunOutput = []builder.Output{
 	{Name: "childIndex"},
 	{Name: "childKey"},
 	{Name: "additionalMetadata"},
+	{Name: "insertOrder"},
 }
 
 type WorkflowRunRelationWith interface {
@@ -234112,6 +234577,84 @@ func (p workflowRunWithPrismaAdditionalMetadataEqualsUniqueParam) additionalMeta
 
 func (workflowRunWithPrismaAdditionalMetadataEqualsUniqueParam) unique() {}
 func (workflowRunWithPrismaAdditionalMetadataEqualsUniqueParam) equals() {}
+
+type WorkflowRunWithPrismaInsertOrderEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowRunModel()
+	insertOrderField()
+}
+
+type WorkflowRunWithPrismaInsertOrderSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunModel()
+	insertOrderField()
+}
+
+type workflowRunWithPrismaInsertOrderSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunWithPrismaInsertOrderSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunWithPrismaInsertOrderSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunWithPrismaInsertOrderSetParam) workflowRunModel() {}
+
+func (p workflowRunWithPrismaInsertOrderSetParam) insertOrderField() {}
+
+type WorkflowRunWithPrismaInsertOrderWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunModel()
+	insertOrderField()
+}
+
+type workflowRunWithPrismaInsertOrderEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunWithPrismaInsertOrderEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunWithPrismaInsertOrderEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunWithPrismaInsertOrderEqualsParam) workflowRunModel() {}
+
+func (p workflowRunWithPrismaInsertOrderEqualsParam) insertOrderField() {}
+
+func (workflowRunWithPrismaInsertOrderSetParam) settable()  {}
+func (workflowRunWithPrismaInsertOrderEqualsParam) equals() {}
+
+type workflowRunWithPrismaInsertOrderEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunWithPrismaInsertOrderEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunWithPrismaInsertOrderEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunWithPrismaInsertOrderEqualsUniqueParam) workflowRunModel() {}
+func (p workflowRunWithPrismaInsertOrderEqualsUniqueParam) insertOrderField() {}
+
+func (workflowRunWithPrismaInsertOrderEqualsUniqueParam) unique() {}
+func (workflowRunWithPrismaInsertOrderEqualsUniqueParam) equals() {}
 
 type workflowRunDedupeActions struct {
 	// client holds the prisma client
