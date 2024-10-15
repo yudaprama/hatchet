@@ -1494,6 +1494,7 @@ enum StepRunEventReason {
   ASSIGNED
   SENT_TO_WORKER
   STARTED
+  ACKNOWLEDGED
   FINISHED
   FAILED
   RETRYING
@@ -2330,6 +2331,7 @@ const (
 	StepRunEventReasonAssigned                     StepRunEventReason = "ASSIGNED"
 	StepRunEventReasonSentToWorker                 StepRunEventReason = "SENT_TO_WORKER"
 	StepRunEventReasonStarted                      StepRunEventReason = "STARTED"
+	StepRunEventReasonAcknowledged                 StepRunEventReason = "ACKNOWLEDGED"
 	StepRunEventReasonFinished                     StepRunEventReason = "FINISHED"
 	StepRunEventReasonFailed                       StepRunEventReason = "FAILED"
 	StepRunEventReasonRetrying                     StepRunEventReason = "RETRYING"
