@@ -1861,6 +1861,29 @@ model SNSIntegration {
 model SecurityCheckIdent {
   id String @id @unique @default(uuid()) @db.Uuid
 }
+
+enum LeaseKind {
+  WORKER
+  QUEUE
+}
+
+model Lease {
+  id BigInt @id @default(autoincrement()) @db.BigInt
+
+  // when the lease on the resource expires
+  expiresAt DateTime?
+
+  // the parent tenant
+  tenantId String @db.Uuid
+
+  // the resource being leased
+  resourceId String
+
+  // the kind of lease
+  kind LeaseKind
+
+  @@unique([tenantId, kind, resourceId])
+}
 `
 const schemaDatasourceURL = ""
 const schemaEnvVarName = "DATABASE_URL"
@@ -1994,6 +2017,7 @@ func newClient() *PrismaClient {
 	c.StreamEvent = streamEventActions{client: c}
 	c.SNSIntegration = sNSIntegrationActions{client: c}
 	c.SecurityCheckIdent = securityCheckIdentActions{client: c}
+	c.Lease = leaseActions{client: c}
 
 	c.Prisma = &PrismaActions{
 		Raw: &raw.Raw{Engine: c},
@@ -2142,6 +2166,8 @@ type PrismaClient struct {
 	SNSIntegration sNSIntegrationActions
 	// SecurityCheckIdent provides access to CRUD methods.
 	SecurityCheckIdent securityCheckIdentActions
+	// Lease provides access to CRUD methods.
+	Lease leaseActions
 }
 
 // --- template enums.gotpl ---
@@ -2363,6 +2389,14 @@ const (
 )
 
 type RawLogLineLevel LogLineLevel
+type LeaseKind string
+
+const (
+	LeaseKindWorker LeaseKind = "WORKER"
+	LeaseKindQueue  LeaseKind = "QUEUE"
+)
+
+type RawLeaseKind LeaseKind
 
 type TransactionIsolationLevel string
 
@@ -3183,6 +3217,16 @@ type SecurityCheckIdentScalarFieldEnum string
 
 const (
 	SecurityCheckIdentScalarFieldEnumID SecurityCheckIdentScalarFieldEnum = "id"
+)
+
+type LeaseScalarFieldEnum string
+
+const (
+	LeaseScalarFieldEnumID         LeaseScalarFieldEnum = "id"
+	LeaseScalarFieldEnumExpiresAt  LeaseScalarFieldEnum = "expiresAt"
+	LeaseScalarFieldEnumTenantID   LeaseScalarFieldEnum = "tenantId"
+	LeaseScalarFieldEnumResourceID LeaseScalarFieldEnum = "resourceId"
+	LeaseScalarFieldEnumKind       LeaseScalarFieldEnum = "kind"
 )
 
 type SortOrder string
@@ -4656,6 +4700,18 @@ type securityCheckIdentPrismaFields = prismaFields
 
 const securityCheckIdentFieldID securityCheckIdentPrismaFields = "id"
 
+type leasePrismaFields = prismaFields
+
+const leaseFieldID leasePrismaFields = "id"
+
+const leaseFieldExpiresAt leasePrismaFields = "expiresAt"
+
+const leaseFieldTenantID leasePrismaFields = "tenantId"
+
+const leaseFieldResourceID leasePrismaFields = "resourceId"
+
+const leaseFieldKind leasePrismaFields = "kind"
+
 // --- template mock.gotpl ---
 func NewMock() (*PrismaClient, *Mock, func(t *testing.T)) {
 	expectations := new([]mock.Expectation)
@@ -4914,6 +4970,10 @@ func NewMock() (*PrismaClient, *Mock, func(t *testing.T)) {
 		mock: m,
 	}
 
+	m.Lease = leaseMock{
+		mock: m,
+	}
+
 	return pc, m, m.Ensure
 }
 
@@ -5043,6 +5103,8 @@ type Mock struct {
 	SNSIntegration sNSIntegrationMock
 
 	SecurityCheckIdent securityCheckIdentMock
+
+	Lease leaseMock
 }
 
 type userMock struct {
@@ -7643,6 +7705,48 @@ func (m *securityCheckIdentMockExec) ReturnsMany(v []SecurityCheckIdentModel) {
 }
 
 func (m *securityCheckIdentMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
+type leaseMock struct {
+	mock *Mock
+}
+
+type LeaseMockExpectParam interface {
+	ExtractQuery() builder.Query
+	leaseModel()
+}
+
+func (m *leaseMock) Expect(query LeaseMockExpectParam) *leaseMockExec {
+	return &leaseMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type leaseMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *leaseMockExec) Returns(v LeaseModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *leaseMockExec) ReturnsMany(v []LeaseModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *leaseMockExec) Errors(err error) {
 	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
 		Query:   m.query,
 		WantErr: err,
@@ -12042,6 +12146,41 @@ type RawSecurityCheckIdentModel struct {
 
 // RelationsSecurityCheckIdent holds the relation data separately
 type RelationsSecurityCheckIdent struct {
+}
+
+// LeaseModel represents the Lease model and is a wrapper for accessing fields and methods
+type LeaseModel struct {
+	InnerLease
+	RelationsLease
+}
+
+// InnerLease holds the actual data
+type InnerLease struct {
+	ID         BigInt    `json:"id"`
+	ExpiresAt  *DateTime `json:"expiresAt,omitempty"`
+	TenantID   string    `json:"tenantId"`
+	ResourceID string    `json:"resourceId"`
+	Kind       LeaseKind `json:"kind"`
+}
+
+// RawLeaseModel is a struct for Lease when used in raw queries
+type RawLeaseModel struct {
+	ID         RawBigInt    `json:"id"`
+	ExpiresAt  *RawDateTime `json:"expiresAt,omitempty"`
+	TenantID   RawString    `json:"tenantId"`
+	ResourceID RawString    `json:"resourceId"`
+	Kind       RawLeaseKind `json:"kind"`
+}
+
+// RelationsLease holds the relation data separately
+type RelationsLease struct {
+}
+
+func (r LeaseModel) ExpiresAt() (value DateTime, ok bool) {
+	if r.InnerLease.ExpiresAt == nil {
+		return value, false
+	}
+	return *r.InnerLease.ExpiresAt, true
 }
 
 // --- template query.gotpl ---
@@ -200543,6 +200682,1594 @@ func (r securityCheckIdentQueryIDString) Field() securityCheckIdentPrismaFields 
 	return securityCheckIdentFieldID
 }
 
+// Lease acts as a namespaces to access query methods for the Lease model
+var Lease = leaseQuery{}
+
+// leaseQuery exposes query functions for the lease model
+type leaseQuery struct {
+
+	// ID
+	//
+	// @required
+	ID leaseQueryIDBigInt
+
+	// ExpiresAt
+	//
+	// @optional
+	ExpiresAt leaseQueryExpiresAtDateTime
+
+	// TenantID
+	//
+	// @required
+	TenantID leaseQueryTenantIDString
+
+	// ResourceID
+	//
+	// @required
+	ResourceID leaseQueryResourceIDString
+
+	// Kind
+	//
+	// @required
+	Kind leaseQueryKindLeaseKind
+}
+
+func (leaseQuery) Not(params ...LeaseWhereParam) leaseDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (leaseQuery) Or(params ...LeaseWhereParam) leaseDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (leaseQuery) And(params ...LeaseWhereParam) leaseDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (leaseQuery) TenantIDKindResourceID(
+	_tenantID LeaseWithPrismaTenantIDWhereParam,
+
+	_kind LeaseWithPrismaKindWhereParam,
+
+	_resourceID LeaseWithPrismaResourceIDWhereParam,
+) LeaseEqualsUniqueWhereParam {
+	var fields []builder.Field
+
+	fields = append(fields, _tenantID.field())
+	fields = append(fields, _kind.field())
+	fields = append(fields, _resourceID.field())
+
+	return leaseEqualsUniqueParam{
+		data: builder.Field{
+			Name:   "tenantId_kind_resourceId",
+			Fields: builder.TransformEquals(fields),
+		},
+	}
+}
+
+// base struct
+type leaseQueryIDBigInt struct{}
+
+// Set the required value of ID
+func (r leaseQueryIDBigInt) Set(value BigInt) leaseSetParam {
+
+	return leaseSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r leaseQueryIDBigInt) SetIfPresent(value *BigInt) leaseSetParam {
+	if value == nil {
+		return leaseSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the required value of ID
+func (r leaseQueryIDBigInt) Increment(value BigInt) leaseSetParam {
+	return leaseSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryIDBigInt) IncrementIfPresent(value *BigInt) leaseSetParam {
+	if value == nil {
+		return leaseSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the required value of ID
+func (r leaseQueryIDBigInt) Decrement(value BigInt) leaseSetParam {
+	return leaseSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryIDBigInt) DecrementIfPresent(value *BigInt) leaseSetParam {
+	if value == nil {
+		return leaseSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the required value of ID
+func (r leaseQueryIDBigInt) Multiply(value BigInt) leaseSetParam {
+	return leaseSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryIDBigInt) MultiplyIfPresent(value *BigInt) leaseSetParam {
+	if value == nil {
+		return leaseSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the required value of ID
+func (r leaseQueryIDBigInt) Divide(value BigInt) leaseSetParam {
+	return leaseSetParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryIDBigInt) DivideIfPresent(value *BigInt) leaseSetParam {
+	if value == nil {
+		return leaseSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r leaseQueryIDBigInt) Equals(value BigInt) leaseWithPrismaIDEqualsUniqueParam {
+
+	return leaseWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryIDBigInt) EqualsIfPresent(value *BigInt) leaseWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return leaseWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r leaseQueryIDBigInt) Order(direction SortOrder) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r leaseQueryIDBigInt) Cursor(cursor BigInt) leaseCursorParam {
+	return leaseCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r leaseQueryIDBigInt) In(value []BigInt) leaseParamUnique {
+	return leaseParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryIDBigInt) InIfPresent(value []BigInt) leaseParamUnique {
+	if value == nil {
+		return leaseParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r leaseQueryIDBigInt) NotIn(value []BigInt) leaseParamUnique {
+	return leaseParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryIDBigInt) NotInIfPresent(value []BigInt) leaseParamUnique {
+	if value == nil {
+		return leaseParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r leaseQueryIDBigInt) Lt(value BigInt) leaseParamUnique {
+	return leaseParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryIDBigInt) LtIfPresent(value *BigInt) leaseParamUnique {
+	if value == nil {
+		return leaseParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r leaseQueryIDBigInt) Lte(value BigInt) leaseParamUnique {
+	return leaseParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryIDBigInt) LteIfPresent(value *BigInt) leaseParamUnique {
+	if value == nil {
+		return leaseParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r leaseQueryIDBigInt) Gt(value BigInt) leaseParamUnique {
+	return leaseParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryIDBigInt) GtIfPresent(value *BigInt) leaseParamUnique {
+	if value == nil {
+		return leaseParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r leaseQueryIDBigInt) Gte(value BigInt) leaseParamUnique {
+	return leaseParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryIDBigInt) GteIfPresent(value *BigInt) leaseParamUnique {
+	if value == nil {
+		return leaseParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r leaseQueryIDBigInt) Not(value BigInt) leaseParamUnique {
+	return leaseParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryIDBigInt) NotIfPresent(value *BigInt) leaseParamUnique {
+	if value == nil {
+		return leaseParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+func (r leaseQueryIDBigInt) Field() leasePrismaFields {
+	return leaseFieldID
+}
+
+// base struct
+type leaseQueryExpiresAtDateTime struct{}
+
+// Set the optional value of ExpiresAt
+func (r leaseQueryExpiresAtDateTime) Set(value DateTime) leaseSetParam {
+
+	return leaseSetParam{
+		data: builder.Field{
+			Name:  "expiresAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ExpiresAt dynamically
+func (r leaseQueryExpiresAtDateTime) SetIfPresent(value *DateTime) leaseSetParam {
+	if value == nil {
+		return leaseSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of ExpiresAt dynamically
+func (r leaseQueryExpiresAtDateTime) SetOptional(value *DateTime) leaseSetParam {
+	if value == nil {
+
+		var v *DateTime
+		return leaseSetParam{
+			data: builder.Field{
+				Name:  "expiresAt",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r leaseQueryExpiresAtDateTime) Equals(value DateTime) leaseWithPrismaExpiresAtEqualsParam {
+
+	return leaseWithPrismaExpiresAtEqualsParam{
+		data: builder.Field{
+			Name: "expiresAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryExpiresAtDateTime) EqualsIfPresent(value *DateTime) leaseWithPrismaExpiresAtEqualsParam {
+	if value == nil {
+		return leaseWithPrismaExpiresAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r leaseQueryExpiresAtDateTime) EqualsOptional(value *DateTime) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "expiresAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryExpiresAtDateTime) IsNull() leaseDefaultParam {
+	var str *string = nil
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "expiresAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryExpiresAtDateTime) Order(direction SortOrder) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name:  "expiresAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r leaseQueryExpiresAtDateTime) Cursor(cursor DateTime) leaseCursorParam {
+	return leaseCursorParam{
+		data: builder.Field{
+			Name:  "expiresAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r leaseQueryExpiresAtDateTime) In(value []DateTime) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "expiresAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryExpiresAtDateTime) InIfPresent(value []DateTime) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r leaseQueryExpiresAtDateTime) NotIn(value []DateTime) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "expiresAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryExpiresAtDateTime) NotInIfPresent(value []DateTime) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r leaseQueryExpiresAtDateTime) Lt(value DateTime) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "expiresAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryExpiresAtDateTime) LtIfPresent(value *DateTime) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r leaseQueryExpiresAtDateTime) Lte(value DateTime) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "expiresAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryExpiresAtDateTime) LteIfPresent(value *DateTime) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r leaseQueryExpiresAtDateTime) Gt(value DateTime) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "expiresAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryExpiresAtDateTime) GtIfPresent(value *DateTime) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r leaseQueryExpiresAtDateTime) Gte(value DateTime) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "expiresAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryExpiresAtDateTime) GteIfPresent(value *DateTime) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r leaseQueryExpiresAtDateTime) Not(value DateTime) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "expiresAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryExpiresAtDateTime) NotIfPresent(value *DateTime) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r leaseQueryExpiresAtDateTime) Before(value DateTime) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "expiresAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r leaseQueryExpiresAtDateTime) BeforeIfPresent(value *DateTime) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r leaseQueryExpiresAtDateTime) After(value DateTime) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "expiresAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r leaseQueryExpiresAtDateTime) AfterIfPresent(value *DateTime) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r leaseQueryExpiresAtDateTime) BeforeEquals(value DateTime) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "expiresAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r leaseQueryExpiresAtDateTime) BeforeEqualsIfPresent(value *DateTime) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r leaseQueryExpiresAtDateTime) AfterEquals(value DateTime) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "expiresAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r leaseQueryExpiresAtDateTime) AfterEqualsIfPresent(value *DateTime) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r leaseQueryExpiresAtDateTime) Field() leasePrismaFields {
+	return leaseFieldExpiresAt
+}
+
+// base struct
+type leaseQueryTenantIDString struct{}
+
+// Set the required value of TenantID
+func (r leaseQueryTenantIDString) Set(value string) leaseWithPrismaTenantIDSetParam {
+
+	return leaseWithPrismaTenantIDSetParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of TenantID dynamically
+func (r leaseQueryTenantIDString) SetIfPresent(value *String) leaseWithPrismaTenantIDSetParam {
+	if value == nil {
+		return leaseWithPrismaTenantIDSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r leaseQueryTenantIDString) Equals(value string) leaseWithPrismaTenantIDEqualsParam {
+
+	return leaseWithPrismaTenantIDEqualsParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryTenantIDString) EqualsIfPresent(value *string) leaseWithPrismaTenantIDEqualsParam {
+	if value == nil {
+		return leaseWithPrismaTenantIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r leaseQueryTenantIDString) Order(direction SortOrder) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: direction,
+		},
+	}
+}
+
+func (r leaseQueryTenantIDString) Cursor(cursor string) leaseCursorParam {
+	return leaseCursorParam{
+		data: builder.Field{
+			Name:  "tenantId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r leaseQueryTenantIDString) In(value []string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryTenantIDString) InIfPresent(value []string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r leaseQueryTenantIDString) NotIn(value []string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryTenantIDString) NotInIfPresent(value []string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r leaseQueryTenantIDString) Lt(value string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryTenantIDString) LtIfPresent(value *string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r leaseQueryTenantIDString) Lte(value string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryTenantIDString) LteIfPresent(value *string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r leaseQueryTenantIDString) Gt(value string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryTenantIDString) GtIfPresent(value *string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r leaseQueryTenantIDString) Gte(value string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryTenantIDString) GteIfPresent(value *string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r leaseQueryTenantIDString) Contains(value string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryTenantIDString) ContainsIfPresent(value *string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r leaseQueryTenantIDString) StartsWith(value string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryTenantIDString) StartsWithIfPresent(value *string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r leaseQueryTenantIDString) EndsWith(value string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryTenantIDString) EndsWithIfPresent(value *string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r leaseQueryTenantIDString) Mode(value QueryMode) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryTenantIDString) ModeIfPresent(value *QueryMode) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r leaseQueryTenantIDString) Not(value string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryTenantIDString) NotIfPresent(value *string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r leaseQueryTenantIDString) HasPrefix(value string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r leaseQueryTenantIDString) HasPrefixIfPresent(value *string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r leaseQueryTenantIDString) HasSuffix(value string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "tenantId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r leaseQueryTenantIDString) HasSuffixIfPresent(value *string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r leaseQueryTenantIDString) Field() leasePrismaFields {
+	return leaseFieldTenantID
+}
+
+// base struct
+type leaseQueryResourceIDString struct{}
+
+// Set the required value of ResourceID
+func (r leaseQueryResourceIDString) Set(value string) leaseWithPrismaResourceIDSetParam {
+
+	return leaseWithPrismaResourceIDSetParam{
+		data: builder.Field{
+			Name:  "resourceId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ResourceID dynamically
+func (r leaseQueryResourceIDString) SetIfPresent(value *String) leaseWithPrismaResourceIDSetParam {
+	if value == nil {
+		return leaseWithPrismaResourceIDSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r leaseQueryResourceIDString) Equals(value string) leaseWithPrismaResourceIDEqualsParam {
+
+	return leaseWithPrismaResourceIDEqualsParam{
+		data: builder.Field{
+			Name: "resourceId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryResourceIDString) EqualsIfPresent(value *string) leaseWithPrismaResourceIDEqualsParam {
+	if value == nil {
+		return leaseWithPrismaResourceIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r leaseQueryResourceIDString) Order(direction SortOrder) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name:  "resourceId",
+			Value: direction,
+		},
+	}
+}
+
+func (r leaseQueryResourceIDString) Cursor(cursor string) leaseCursorParam {
+	return leaseCursorParam{
+		data: builder.Field{
+			Name:  "resourceId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r leaseQueryResourceIDString) In(value []string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "resourceId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryResourceIDString) InIfPresent(value []string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r leaseQueryResourceIDString) NotIn(value []string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "resourceId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryResourceIDString) NotInIfPresent(value []string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r leaseQueryResourceIDString) Lt(value string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "resourceId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryResourceIDString) LtIfPresent(value *string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r leaseQueryResourceIDString) Lte(value string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "resourceId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryResourceIDString) LteIfPresent(value *string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r leaseQueryResourceIDString) Gt(value string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "resourceId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryResourceIDString) GtIfPresent(value *string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r leaseQueryResourceIDString) Gte(value string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "resourceId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryResourceIDString) GteIfPresent(value *string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r leaseQueryResourceIDString) Contains(value string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "resourceId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryResourceIDString) ContainsIfPresent(value *string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r leaseQueryResourceIDString) StartsWith(value string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "resourceId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryResourceIDString) StartsWithIfPresent(value *string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r leaseQueryResourceIDString) EndsWith(value string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "resourceId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryResourceIDString) EndsWithIfPresent(value *string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r leaseQueryResourceIDString) Mode(value QueryMode) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "resourceId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryResourceIDString) ModeIfPresent(value *QueryMode) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r leaseQueryResourceIDString) Not(value string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "resourceId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryResourceIDString) NotIfPresent(value *string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r leaseQueryResourceIDString) HasPrefix(value string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "resourceId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r leaseQueryResourceIDString) HasPrefixIfPresent(value *string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r leaseQueryResourceIDString) HasSuffix(value string) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "resourceId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r leaseQueryResourceIDString) HasSuffixIfPresent(value *string) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r leaseQueryResourceIDString) Field() leasePrismaFields {
+	return leaseFieldResourceID
+}
+
+// base struct
+type leaseQueryKindLeaseKind struct{}
+
+// Set the required value of Kind
+func (r leaseQueryKindLeaseKind) Set(value LeaseKind) leaseWithPrismaKindSetParam {
+
+	return leaseWithPrismaKindSetParam{
+		data: builder.Field{
+			Name:  "kind",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Kind dynamically
+func (r leaseQueryKindLeaseKind) SetIfPresent(value *LeaseKind) leaseWithPrismaKindSetParam {
+	if value == nil {
+		return leaseWithPrismaKindSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r leaseQueryKindLeaseKind) Equals(value LeaseKind) leaseWithPrismaKindEqualsParam {
+
+	return leaseWithPrismaKindEqualsParam{
+		data: builder.Field{
+			Name: "kind",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryKindLeaseKind) EqualsIfPresent(value *LeaseKind) leaseWithPrismaKindEqualsParam {
+	if value == nil {
+		return leaseWithPrismaKindEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r leaseQueryKindLeaseKind) Order(direction SortOrder) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name:  "kind",
+			Value: direction,
+		},
+	}
+}
+
+func (r leaseQueryKindLeaseKind) Cursor(cursor LeaseKind) leaseCursorParam {
+	return leaseCursorParam{
+		data: builder.Field{
+			Name:  "kind",
+			Value: cursor,
+		},
+	}
+}
+
+func (r leaseQueryKindLeaseKind) In(value []LeaseKind) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "kind",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryKindLeaseKind) InIfPresent(value []LeaseKind) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r leaseQueryKindLeaseKind) NotIn(value []LeaseKind) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "kind",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryKindLeaseKind) NotInIfPresent(value []LeaseKind) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r leaseQueryKindLeaseKind) Not(value LeaseKind) leaseDefaultParam {
+	return leaseDefaultParam{
+		data: builder.Field{
+			Name: "kind",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r leaseQueryKindLeaseKind) NotIfPresent(value *LeaseKind) leaseDefaultParam {
+	if value == nil {
+		return leaseDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+func (r leaseQueryKindLeaseKind) Field() leasePrismaFields {
+	return leaseFieldKind
+}
+
 // --- template actions.gotpl ---
 var countOutput = []builder.Output{
 	{Name: "count"},
@@ -261710,6 +263437,573 @@ func (p securityCheckIdentWithPrismaIDEqualsUniqueParam) idField()              
 func (securityCheckIdentWithPrismaIDEqualsUniqueParam) unique() {}
 func (securityCheckIdentWithPrismaIDEqualsUniqueParam) equals() {}
 
+type leaseActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var leaseOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "expiresAt"},
+	{Name: "tenantId"},
+	{Name: "resourceId"},
+	{Name: "kind"},
+}
+
+type LeaseRelationWith interface {
+	getQuery() builder.Query
+	with()
+	leaseRelation()
+}
+
+type LeaseWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	leaseModel()
+}
+
+type leaseDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p leaseDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p leaseDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p leaseDefaultParam) leaseModel() {}
+
+type LeaseOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	leaseModel()
+}
+
+type leaseOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p leaseOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p leaseOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p leaseOrderByParam) leaseModel() {}
+
+type LeaseCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	leaseModel()
+	isCursor()
+}
+
+type leaseCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p leaseCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p leaseCursorParam) isCursor() {}
+
+func (p leaseCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p leaseCursorParam) leaseModel() {}
+
+type LeaseParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	leaseModel()
+}
+
+type leaseParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p leaseParamUnique) leaseModel() {}
+
+func (leaseParamUnique) unique() {}
+
+func (p leaseParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p leaseParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type LeaseEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	leaseModel()
+}
+
+type leaseEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p leaseEqualsParam) leaseModel() {}
+
+func (leaseEqualsParam) equals() {}
+
+func (p leaseEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p leaseEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type LeaseEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	leaseModel()
+}
+
+type leaseEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p leaseEqualsUniqueParam) leaseModel() {}
+
+func (leaseEqualsUniqueParam) unique() {}
+func (leaseEqualsUniqueParam) equals() {}
+
+func (p leaseEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p leaseEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type LeaseSetParam interface {
+	field() builder.Field
+	settable()
+	leaseModel()
+}
+
+type leaseSetParam struct {
+	data builder.Field
+}
+
+func (leaseSetParam) settable() {}
+
+func (p leaseSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p leaseSetParam) leaseModel() {}
+
+type LeaseWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	leaseModel()
+	idField()
+}
+
+type LeaseWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	leaseModel()
+	idField()
+}
+
+type leaseWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p leaseWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p leaseWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p leaseWithPrismaIDSetParam) leaseModel() {}
+
+func (p leaseWithPrismaIDSetParam) idField() {}
+
+type LeaseWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	leaseModel()
+	idField()
+}
+
+type leaseWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p leaseWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p leaseWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p leaseWithPrismaIDEqualsParam) leaseModel() {}
+
+func (p leaseWithPrismaIDEqualsParam) idField() {}
+
+func (leaseWithPrismaIDSetParam) settable()  {}
+func (leaseWithPrismaIDEqualsParam) equals() {}
+
+type leaseWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p leaseWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p leaseWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p leaseWithPrismaIDEqualsUniqueParam) leaseModel() {}
+func (p leaseWithPrismaIDEqualsUniqueParam) idField()    {}
+
+func (leaseWithPrismaIDEqualsUniqueParam) unique() {}
+func (leaseWithPrismaIDEqualsUniqueParam) equals() {}
+
+type LeaseWithPrismaExpiresAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	leaseModel()
+	expiresAtField()
+}
+
+type LeaseWithPrismaExpiresAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	leaseModel()
+	expiresAtField()
+}
+
+type leaseWithPrismaExpiresAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p leaseWithPrismaExpiresAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p leaseWithPrismaExpiresAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p leaseWithPrismaExpiresAtSetParam) leaseModel() {}
+
+func (p leaseWithPrismaExpiresAtSetParam) expiresAtField() {}
+
+type LeaseWithPrismaExpiresAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	leaseModel()
+	expiresAtField()
+}
+
+type leaseWithPrismaExpiresAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p leaseWithPrismaExpiresAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p leaseWithPrismaExpiresAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p leaseWithPrismaExpiresAtEqualsParam) leaseModel() {}
+
+func (p leaseWithPrismaExpiresAtEqualsParam) expiresAtField() {}
+
+func (leaseWithPrismaExpiresAtSetParam) settable()  {}
+func (leaseWithPrismaExpiresAtEqualsParam) equals() {}
+
+type leaseWithPrismaExpiresAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p leaseWithPrismaExpiresAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p leaseWithPrismaExpiresAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p leaseWithPrismaExpiresAtEqualsUniqueParam) leaseModel()     {}
+func (p leaseWithPrismaExpiresAtEqualsUniqueParam) expiresAtField() {}
+
+func (leaseWithPrismaExpiresAtEqualsUniqueParam) unique() {}
+func (leaseWithPrismaExpiresAtEqualsUniqueParam) equals() {}
+
+type LeaseWithPrismaTenantIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	leaseModel()
+	tenantIDField()
+}
+
+type LeaseWithPrismaTenantIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	leaseModel()
+	tenantIDField()
+}
+
+type leaseWithPrismaTenantIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p leaseWithPrismaTenantIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p leaseWithPrismaTenantIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p leaseWithPrismaTenantIDSetParam) leaseModel() {}
+
+func (p leaseWithPrismaTenantIDSetParam) tenantIDField() {}
+
+type LeaseWithPrismaTenantIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	leaseModel()
+	tenantIDField()
+}
+
+type leaseWithPrismaTenantIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p leaseWithPrismaTenantIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p leaseWithPrismaTenantIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p leaseWithPrismaTenantIDEqualsParam) leaseModel() {}
+
+func (p leaseWithPrismaTenantIDEqualsParam) tenantIDField() {}
+
+func (leaseWithPrismaTenantIDSetParam) settable()  {}
+func (leaseWithPrismaTenantIDEqualsParam) equals() {}
+
+type leaseWithPrismaTenantIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p leaseWithPrismaTenantIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p leaseWithPrismaTenantIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p leaseWithPrismaTenantIDEqualsUniqueParam) leaseModel()    {}
+func (p leaseWithPrismaTenantIDEqualsUniqueParam) tenantIDField() {}
+
+func (leaseWithPrismaTenantIDEqualsUniqueParam) unique() {}
+func (leaseWithPrismaTenantIDEqualsUniqueParam) equals() {}
+
+type LeaseWithPrismaResourceIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	leaseModel()
+	resourceIDField()
+}
+
+type LeaseWithPrismaResourceIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	leaseModel()
+	resourceIDField()
+}
+
+type leaseWithPrismaResourceIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p leaseWithPrismaResourceIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p leaseWithPrismaResourceIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p leaseWithPrismaResourceIDSetParam) leaseModel() {}
+
+func (p leaseWithPrismaResourceIDSetParam) resourceIDField() {}
+
+type LeaseWithPrismaResourceIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	leaseModel()
+	resourceIDField()
+}
+
+type leaseWithPrismaResourceIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p leaseWithPrismaResourceIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p leaseWithPrismaResourceIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p leaseWithPrismaResourceIDEqualsParam) leaseModel() {}
+
+func (p leaseWithPrismaResourceIDEqualsParam) resourceIDField() {}
+
+func (leaseWithPrismaResourceIDSetParam) settable()  {}
+func (leaseWithPrismaResourceIDEqualsParam) equals() {}
+
+type leaseWithPrismaResourceIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p leaseWithPrismaResourceIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p leaseWithPrismaResourceIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p leaseWithPrismaResourceIDEqualsUniqueParam) leaseModel()      {}
+func (p leaseWithPrismaResourceIDEqualsUniqueParam) resourceIDField() {}
+
+func (leaseWithPrismaResourceIDEqualsUniqueParam) unique() {}
+func (leaseWithPrismaResourceIDEqualsUniqueParam) equals() {}
+
+type LeaseWithPrismaKindEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	leaseModel()
+	kindField()
+}
+
+type LeaseWithPrismaKindSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	leaseModel()
+	kindField()
+}
+
+type leaseWithPrismaKindSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p leaseWithPrismaKindSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p leaseWithPrismaKindSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p leaseWithPrismaKindSetParam) leaseModel() {}
+
+func (p leaseWithPrismaKindSetParam) kindField() {}
+
+type LeaseWithPrismaKindWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	leaseModel()
+	kindField()
+}
+
+type leaseWithPrismaKindEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p leaseWithPrismaKindEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p leaseWithPrismaKindEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p leaseWithPrismaKindEqualsParam) leaseModel() {}
+
+func (p leaseWithPrismaKindEqualsParam) kindField() {}
+
+func (leaseWithPrismaKindSetParam) settable()  {}
+func (leaseWithPrismaKindEqualsParam) equals() {}
+
+type leaseWithPrismaKindEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p leaseWithPrismaKindEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p leaseWithPrismaKindEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p leaseWithPrismaKindEqualsUniqueParam) leaseModel() {}
+func (p leaseWithPrismaKindEqualsUniqueParam) kindField()  {}
+
+func (leaseWithPrismaKindEqualsUniqueParam) unique() {}
+func (leaseWithPrismaKindEqualsUniqueParam) equals() {}
+
 // --- template create.gotpl ---
 
 // Creates a single user.
@@ -266093,6 +268387,78 @@ func (r securityCheckIdentCreateOne) Exec(ctx context.Context) (*SecurityCheckId
 
 func (r securityCheckIdentCreateOne) Tx() SecurityCheckIdentUniqueTxResult {
 	v := newSecurityCheckIdentUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+// Creates a single lease.
+func (r leaseActions) CreateOne(
+	_tenantID LeaseWithPrismaTenantIDSetParam,
+	_resourceID LeaseWithPrismaResourceIDSetParam,
+	_kind LeaseWithPrismaKindSetParam,
+
+	optional ...LeaseSetParam,
+) leaseCreateOne {
+	var v leaseCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "Lease"
+	v.query.Outputs = leaseOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _tenantID.field())
+	fields = append(fields, _resourceID.field())
+	fields = append(fields, _kind.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r leaseCreateOne) With(params ...LeaseRelationWith) leaseCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type leaseCreateOne struct {
+	query builder.Query
+}
+
+func (p leaseCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p leaseCreateOne) leaseModel() {}
+
+func (r leaseCreateOne) Exec(ctx context.Context) (*LeaseModel, error) {
+	var v LeaseModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r leaseCreateOne) Tx() LeaseUniqueTxResult {
+	v := newLeaseUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -382860,6 +385226,656 @@ func (r securityCheckIdentDeleteMany) Tx() SecurityCheckIdentManyTxResult {
 	return v
 }
 
+type leaseFindUnique struct {
+	query builder.Query
+}
+
+func (r leaseFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r leaseFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r leaseFindUnique) with()          {}
+func (r leaseFindUnique) leaseModel()    {}
+func (r leaseFindUnique) leaseRelation() {}
+
+func (r leaseActions) FindUnique(
+	params LeaseEqualsUniqueWhereParam,
+) leaseFindUnique {
+	var v leaseFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "Lease"
+	v.query.Outputs = leaseOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r leaseFindUnique) With(params ...LeaseRelationWith) leaseFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r leaseFindUnique) Select(params ...leasePrismaFields) leaseFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r leaseFindUnique) Omit(params ...leasePrismaFields) leaseFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range leaseOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r leaseFindUnique) Exec(ctx context.Context) (
+	*LeaseModel,
+	error,
+) {
+	var v *LeaseModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r leaseFindUnique) ExecInner(ctx context.Context) (
+	*InnerLease,
+	error,
+) {
+	var v *InnerLease
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r leaseFindUnique) Update(params ...LeaseSetParam) leaseUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Lease"
+
+	var v leaseUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type leaseUpdateUnique struct {
+	query builder.Query
+}
+
+func (r leaseUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r leaseUpdateUnique) leaseModel() {}
+
+func (r leaseUpdateUnique) Exec(ctx context.Context) (*LeaseModel, error) {
+	var v LeaseModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r leaseUpdateUnique) Tx() LeaseUniqueTxResult {
+	v := newLeaseUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r leaseFindUnique) Delete() leaseDeleteUnique {
+	var v leaseDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Lease"
+
+	return v
+}
+
+type leaseDeleteUnique struct {
+	query builder.Query
+}
+
+func (r leaseDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p leaseDeleteUnique) leaseModel() {}
+
+func (r leaseDeleteUnique) Exec(ctx context.Context) (*LeaseModel, error) {
+	var v LeaseModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r leaseDeleteUnique) Tx() LeaseUniqueTxResult {
+	v := newLeaseUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type leaseFindFirst struct {
+	query builder.Query
+}
+
+func (r leaseFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r leaseFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r leaseFindFirst) with()          {}
+func (r leaseFindFirst) leaseModel()    {}
+func (r leaseFindFirst) leaseRelation() {}
+
+func (r leaseActions) FindFirst(
+	params ...LeaseWhereParam,
+) leaseFindFirst {
+	var v leaseFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "Lease"
+	v.query.Outputs = leaseOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r leaseFindFirst) With(params ...LeaseRelationWith) leaseFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r leaseFindFirst) Select(params ...leasePrismaFields) leaseFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r leaseFindFirst) Omit(params ...leasePrismaFields) leaseFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range leaseOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r leaseFindFirst) OrderBy(params ...LeaseOrderByParam) leaseFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r leaseFindFirst) Skip(count int) leaseFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r leaseFindFirst) Take(count int) leaseFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r leaseFindFirst) Cursor(cursor LeaseCursorParam) leaseFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r leaseFindFirst) Exec(ctx context.Context) (
+	*LeaseModel,
+	error,
+) {
+	var v *LeaseModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r leaseFindFirst) ExecInner(ctx context.Context) (
+	*InnerLease,
+	error,
+) {
+	var v *InnerLease
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type leaseFindMany struct {
+	query builder.Query
+}
+
+func (r leaseFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r leaseFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r leaseFindMany) with()          {}
+func (r leaseFindMany) leaseModel()    {}
+func (r leaseFindMany) leaseRelation() {}
+
+func (r leaseActions) FindMany(
+	params ...LeaseWhereParam,
+) leaseFindMany {
+	var v leaseFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "Lease"
+	v.query.Outputs = leaseOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r leaseFindMany) With(params ...LeaseRelationWith) leaseFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r leaseFindMany) Select(params ...leasePrismaFields) leaseFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r leaseFindMany) Omit(params ...leasePrismaFields) leaseFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range leaseOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r leaseFindMany) OrderBy(params ...LeaseOrderByParam) leaseFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r leaseFindMany) Skip(count int) leaseFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r leaseFindMany) Take(count int) leaseFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r leaseFindMany) Cursor(cursor LeaseCursorParam) leaseFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r leaseFindMany) Exec(ctx context.Context) (
+	[]LeaseModel,
+	error,
+) {
+	var v []LeaseModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r leaseFindMany) ExecInner(ctx context.Context) (
+	[]InnerLease,
+	error,
+) {
+	var v []InnerLease
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r leaseFindMany) Update(params ...LeaseSetParam) leaseUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Lease"
+
+	r.query.Outputs = countOutput
+
+	var v leaseUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type leaseUpdateMany struct {
+	query builder.Query
+}
+
+func (r leaseUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r leaseUpdateMany) leaseModel() {}
+
+func (r leaseUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r leaseUpdateMany) Tx() LeaseManyTxResult {
+	v := newLeaseManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r leaseFindMany) Delete() leaseDeleteMany {
+	var v leaseDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Lease"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type leaseDeleteMany struct {
+	query builder.Query
+}
+
+func (r leaseDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p leaseDeleteMany) leaseModel() {}
+
+func (r leaseDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r leaseDeleteMany) Tx() LeaseManyTxResult {
+	v := newLeaseManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 // --- template transaction.gotpl ---
 
 func newUserUniqueTxResult() UserUniqueTxResult {
@@ -385832,6 +388848,54 @@ func (p SecurityCheckIdentManyTxResult) ExtractQuery() builder.Query {
 func (p SecurityCheckIdentManyTxResult) IsTx() {}
 
 func (r SecurityCheckIdentManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newLeaseUniqueTxResult() LeaseUniqueTxResult {
+	return LeaseUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type LeaseUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p LeaseUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p LeaseUniqueTxResult) IsTx() {}
+
+func (r LeaseUniqueTxResult) Result() (v *LeaseModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newLeaseManyTxResult() LeaseManyTxResult {
+	return LeaseManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type LeaseManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p LeaseManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p LeaseManyTxResult) IsTx() {}
+
+func (r LeaseManyTxResult) Result() (v *BatchResult) {
 	if err := r.result.Get(r.query.TxResult, &v); err != nil {
 		panic(err)
 	}
@@ -392825,6 +395889,120 @@ func (r securityCheckIdentUpsertOne) Exec(ctx context.Context) (*SecurityCheckId
 
 func (r securityCheckIdentUpsertOne) Tx() SecurityCheckIdentUniqueTxResult {
 	v := newSecurityCheckIdentUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type leaseUpsertOne struct {
+	query builder.Query
+}
+
+func (r leaseUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r leaseUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r leaseUpsertOne) with()          {}
+func (r leaseUpsertOne) leaseModel()    {}
+func (r leaseUpsertOne) leaseRelation() {}
+
+func (r leaseActions) UpsertOne(
+	params LeaseEqualsUniqueWhereParam,
+) leaseUpsertOne {
+	var v leaseUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "Lease"
+	v.query.Outputs = leaseOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r leaseUpsertOne) Create(
+
+	_tenantID LeaseWithPrismaTenantIDSetParam,
+	_resourceID LeaseWithPrismaResourceIDSetParam,
+	_kind LeaseWithPrismaKindSetParam,
+
+	optional ...LeaseSetParam,
+) leaseUpsertOne {
+	var v leaseUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _tenantID.field())
+	fields = append(fields, _resourceID.field())
+	fields = append(fields, _kind.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r leaseUpsertOne) Update(
+	params ...LeaseSetParam,
+) leaseUpsertOne {
+	var v leaseUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r leaseUpsertOne) Exec(ctx context.Context) (*LeaseModel, error) {
+	var v LeaseModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r leaseUpsertOne) Tx() LeaseUniqueTxResult {
+	v := newLeaseUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
