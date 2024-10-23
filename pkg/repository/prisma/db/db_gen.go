@@ -239,6 +239,21 @@ model ControllerPartition {
   tenants Tenant[]
 }
 
+// SchedulerPartition represents an engine instance the handles scheduling.
+model SchedulerPartition {
+  id        String   @id @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  // lastHeartbeat is used for rebalancing partitions
+  lastHeartbeat DateTime?
+
+  // name of the partition
+  name String?
+
+  tenants Tenant[]
+}
+
 model TenantWorkerPartition {
   id        String   @id @unique
   createdAt DateTime @default(now())
@@ -271,6 +286,10 @@ model Tenant {
   // the parent controller partition, if exists
   controllerPartition   ControllerPartition? @relation(fields: [controllerPartitionId], references: [id], onDelete: SetNull, onUpdate: SetNull)
   controllerPartitionId String?
+
+  // the parent scheduler partition, if exists
+  schedulerPartition   SchedulerPartition? @relation(fields: [schedulerPartitionId], references: [id], onDelete: SetNull, onUpdate: SetNull)
+  schedulerPartitionId String?
 
   // the parent worker partition, if exists
   workerPartition   TenantWorkerPartition? @relation(fields: [workerPartitionId], references: [id], onDelete: SetNull, onUpdate: SetNull)
@@ -1401,7 +1420,10 @@ model Queue {
   tenantId String @db.Uuid
   name     String
 
+  lastActive DateTime?
+
   @@unique([tenantId, name])
+  @@index([tenantId, lastActive])
 }
 
 model QueueItem {
@@ -1964,6 +1986,7 @@ func newClient() *PrismaClient {
 	c.WebhookWorkerRequest = webhookWorkerRequestActions{client: c}
 	c.WebhookWorkerWorkflow = webhookWorkerWorkflowActions{client: c}
 	c.ControllerPartition = controllerPartitionActions{client: c}
+	c.SchedulerPartition = schedulerPartitionActions{client: c}
 	c.TenantWorkerPartition = tenantWorkerPartitionActions{client: c}
 	c.Tenant = tenantActions{client: c}
 	c.TenantResourceLimit = tenantResourceLimitActions{client: c}
@@ -2059,6 +2082,8 @@ type PrismaClient struct {
 	WebhookWorkerWorkflow webhookWorkerWorkflowActions
 	// ControllerPartition provides access to CRUD methods.
 	ControllerPartition controllerPartitionActions
+	// SchedulerPartition provides access to CRUD methods.
+	SchedulerPartition schedulerPartitionActions
 	// TenantWorkerPartition provides access to CRUD methods.
 	TenantWorkerPartition tenantWorkerPartitionActions
 	// Tenant provides access to CRUD methods.
@@ -2496,6 +2521,16 @@ const (
 	ControllerPartitionScalarFieldEnumName          ControllerPartitionScalarFieldEnum = "name"
 )
 
+type SchedulerPartitionScalarFieldEnum string
+
+const (
+	SchedulerPartitionScalarFieldEnumID            SchedulerPartitionScalarFieldEnum = "id"
+	SchedulerPartitionScalarFieldEnumCreatedAt     SchedulerPartitionScalarFieldEnum = "createdAt"
+	SchedulerPartitionScalarFieldEnumUpdatedAt     SchedulerPartitionScalarFieldEnum = "updatedAt"
+	SchedulerPartitionScalarFieldEnumLastHeartbeat SchedulerPartitionScalarFieldEnum = "lastHeartbeat"
+	SchedulerPartitionScalarFieldEnumName          SchedulerPartitionScalarFieldEnum = "name"
+)
+
 type TenantWorkerPartitionScalarFieldEnum string
 
 const (
@@ -2517,6 +2552,7 @@ const (
 	TenantScalarFieldEnumSlug                  TenantScalarFieldEnum = "slug"
 	TenantScalarFieldEnumAnalyticsOptOut       TenantScalarFieldEnum = "analyticsOptOut"
 	TenantScalarFieldEnumControllerPartitionID TenantScalarFieldEnum = "controllerPartitionId"
+	TenantScalarFieldEnumSchedulerPartitionID  TenantScalarFieldEnum = "schedulerPartitionId"
 	TenantScalarFieldEnumWorkerPartitionID     TenantScalarFieldEnum = "workerPartitionId"
 	TenantScalarFieldEnumDataRetentionPeriod   TenantScalarFieldEnum = "dataRetentionPeriod"
 	TenantScalarFieldEnumAlertMemberEmails     TenantScalarFieldEnum = "alertMemberEmails"
@@ -2983,9 +3019,10 @@ const (
 type QueueScalarFieldEnum string
 
 const (
-	QueueScalarFieldEnumID       QueueScalarFieldEnum = "id"
-	QueueScalarFieldEnumTenantID QueueScalarFieldEnum = "tenantId"
-	QueueScalarFieldEnumName     QueueScalarFieldEnum = "name"
+	QueueScalarFieldEnumID         QueueScalarFieldEnum = "id"
+	QueueScalarFieldEnumTenantID   QueueScalarFieldEnum = "tenantId"
+	QueueScalarFieldEnumName       QueueScalarFieldEnum = "name"
+	QueueScalarFieldEnumLastActive QueueScalarFieldEnum = "lastActive"
 )
 
 type QueueItemScalarFieldEnum string
@@ -3440,6 +3477,20 @@ const controllerPartitionFieldName controllerPartitionPrismaFields = "name"
 
 const controllerPartitionFieldTenants controllerPartitionPrismaFields = "tenants"
 
+type schedulerPartitionPrismaFields = prismaFields
+
+const schedulerPartitionFieldID schedulerPartitionPrismaFields = "id"
+
+const schedulerPartitionFieldCreatedAt schedulerPartitionPrismaFields = "createdAt"
+
+const schedulerPartitionFieldUpdatedAt schedulerPartitionPrismaFields = "updatedAt"
+
+const schedulerPartitionFieldLastHeartbeat schedulerPartitionPrismaFields = "lastHeartbeat"
+
+const schedulerPartitionFieldName schedulerPartitionPrismaFields = "name"
+
+const schedulerPartitionFieldTenants schedulerPartitionPrismaFields = "tenants"
+
 type tenantWorkerPartitionPrismaFields = prismaFields
 
 const tenantWorkerPartitionFieldID tenantWorkerPartitionPrismaFields = "id"
@@ -3473,6 +3524,10 @@ const tenantFieldAnalyticsOptOut tenantPrismaFields = "analyticsOptOut"
 const tenantFieldControllerPartition tenantPrismaFields = "controllerPartition"
 
 const tenantFieldControllerPartitionID tenantPrismaFields = "controllerPartitionId"
+
+const tenantFieldSchedulerPartition tenantPrismaFields = "schedulerPartition"
+
+const tenantFieldSchedulerPartitionID tenantPrismaFields = "schedulerPartitionId"
 
 const tenantFieldWorkerPartition tenantPrismaFields = "workerPartition"
 
@@ -4340,6 +4395,8 @@ const queueFieldTenantID queuePrismaFields = "tenantId"
 
 const queueFieldName queuePrismaFields = "name"
 
+const queueFieldLastActive queuePrismaFields = "lastActive"
+
 type queueItemPrismaFields = prismaFields
 
 const queueItemFieldID queueItemPrismaFields = "id"
@@ -4756,6 +4813,10 @@ func NewMock() (*PrismaClient, *Mock, func(t *testing.T)) {
 		mock: m,
 	}
 
+	m.SchedulerPartition = schedulerPartitionMock{
+		mock: m,
+	}
+
 	m.TenantWorkerPartition = tenantWorkerPartitionMock{
 		mock: m,
 	}
@@ -4997,6 +5058,8 @@ type Mock struct {
 	WebhookWorkerWorkflow webhookWorkerWorkflowMock
 
 	ControllerPartition controllerPartitionMock
+
+	SchedulerPartition schedulerPartitionMock
 
 	TenantWorkerPartition tenantWorkerPartitionMock
 
@@ -5439,6 +5502,48 @@ func (m *controllerPartitionMockExec) ReturnsMany(v []ControllerPartitionModel) 
 }
 
 func (m *controllerPartitionMockExec) Errors(err error) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query:   m.query,
+		WantErr: err,
+	})
+}
+
+type schedulerPartitionMock struct {
+	mock *Mock
+}
+
+type SchedulerPartitionMockExpectParam interface {
+	ExtractQuery() builder.Query
+	schedulerPartitionModel()
+}
+
+func (m *schedulerPartitionMock) Expect(query SchedulerPartitionMockExpectParam) *schedulerPartitionMockExec {
+	return &schedulerPartitionMockExec{
+		mock:  m.mock,
+		query: query.ExtractQuery(),
+	}
+}
+
+type schedulerPartitionMockExec struct {
+	mock  *Mock
+	query builder.Query
+}
+
+func (m *schedulerPartitionMockExec) Returns(v SchedulerPartitionModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *schedulerPartitionMockExec) ReturnsMany(v []SchedulerPartitionModel) {
+	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
+		Query: m.query,
+		Want:  &v,
+	})
+}
+
+func (m *schedulerPartitionMockExec) Errors(err error) {
 	*m.mock.Expectations = append(*m.mock.Expectations, mock.Expectation{
 		Query:   m.query,
 		WantErr: err,
@@ -8193,6 +8298,56 @@ func (r ControllerPartitionModel) Tenants() (value []TenantModel) {
 	return r.RelationsControllerPartition.Tenants
 }
 
+// SchedulerPartitionModel represents the SchedulerPartition model and is a wrapper for accessing fields and methods
+type SchedulerPartitionModel struct {
+	InnerSchedulerPartition
+	RelationsSchedulerPartition
+}
+
+// InnerSchedulerPartition holds the actual data
+type InnerSchedulerPartition struct {
+	ID            string    `json:"id"`
+	CreatedAt     DateTime  `json:"createdAt"`
+	UpdatedAt     DateTime  `json:"updatedAt"`
+	LastHeartbeat *DateTime `json:"lastHeartbeat,omitempty"`
+	Name          *string   `json:"name,omitempty"`
+}
+
+// RawSchedulerPartitionModel is a struct for SchedulerPartition when used in raw queries
+type RawSchedulerPartitionModel struct {
+	ID            RawString    `json:"id"`
+	CreatedAt     RawDateTime  `json:"createdAt"`
+	UpdatedAt     RawDateTime  `json:"updatedAt"`
+	LastHeartbeat *RawDateTime `json:"lastHeartbeat,omitempty"`
+	Name          *RawString   `json:"name,omitempty"`
+}
+
+// RelationsSchedulerPartition holds the relation data separately
+type RelationsSchedulerPartition struct {
+	Tenants []TenantModel `json:"tenants,omitempty"`
+}
+
+func (r SchedulerPartitionModel) LastHeartbeat() (value DateTime, ok bool) {
+	if r.InnerSchedulerPartition.LastHeartbeat == nil {
+		return value, false
+	}
+	return *r.InnerSchedulerPartition.LastHeartbeat, true
+}
+
+func (r SchedulerPartitionModel) Name() (value String, ok bool) {
+	if r.InnerSchedulerPartition.Name == nil {
+		return value, false
+	}
+	return *r.InnerSchedulerPartition.Name, true
+}
+
+func (r SchedulerPartitionModel) Tenants() (value []TenantModel) {
+	if r.RelationsSchedulerPartition.Tenants == nil {
+		panic("attempted to access tenants but did not fetch it using the .With() syntax")
+	}
+	return r.RelationsSchedulerPartition.Tenants
+}
+
 // TenantWorkerPartitionModel represents the TenantWorkerPartition model and is a wrapper for accessing fields and methods
 type TenantWorkerPartitionModel struct {
 	InnerTenantWorkerPartition
@@ -8259,6 +8414,7 @@ type InnerTenant struct {
 	Slug                  string    `json:"slug"`
 	AnalyticsOptOut       bool      `json:"analyticsOptOut"`
 	ControllerPartitionID *string   `json:"controllerPartitionId,omitempty"`
+	SchedulerPartitionID  *string   `json:"schedulerPartitionId,omitempty"`
 	WorkerPartitionID     *string   `json:"workerPartitionId,omitempty"`
 	DataRetentionPeriod   string    `json:"dataRetentionPeriod"`
 	AlertMemberEmails     bool      `json:"alertMemberEmails"`
@@ -8274,6 +8430,7 @@ type RawTenantModel struct {
 	Slug                  RawString    `json:"slug"`
 	AnalyticsOptOut       RawBoolean   `json:"analyticsOptOut"`
 	ControllerPartitionID *RawString   `json:"controllerPartitionId,omitempty"`
+	SchedulerPartitionID  *RawString   `json:"schedulerPartitionId,omitempty"`
 	WorkerPartitionID     *RawString   `json:"workerPartitionId,omitempty"`
 	DataRetentionPeriod   RawString    `json:"dataRetentionPeriod"`
 	AlertMemberEmails     RawBoolean   `json:"alertMemberEmails"`
@@ -8282,6 +8439,7 @@ type RawTenantModel struct {
 // RelationsTenant holds the relation data separately
 type RelationsTenant struct {
 	ControllerPartition *ControllerPartitionModel       `json:"controllerPartition,omitempty"`
+	SchedulerPartition  *SchedulerPartitionModel        `json:"schedulerPartition,omitempty"`
 	WorkerPartition     *TenantWorkerPartitionModel     `json:"workerPartition,omitempty"`
 	Triggers            []WorkflowTriggersModel         `json:"triggers,omitempty"`
 	Members             []TenantMemberModel             `json:"members,omitempty"`
@@ -8319,6 +8477,20 @@ func (r TenantModel) ControllerPartitionID() (value String, ok bool) {
 		return value, false
 	}
 	return *r.InnerTenant.ControllerPartitionID, true
+}
+
+func (r TenantModel) SchedulerPartition() (value *SchedulerPartitionModel, ok bool) {
+	if r.RelationsTenant.SchedulerPartition == nil {
+		return value, false
+	}
+	return r.RelationsTenant.SchedulerPartition, true
+}
+
+func (r TenantModel) SchedulerPartitionID() (value String, ok bool) {
+	if r.InnerTenant.SchedulerPartitionID == nil {
+		return value, false
+	}
+	return *r.InnerTenant.SchedulerPartitionID, true
 }
 
 func (r TenantModel) WorkerPartition() (value *TenantWorkerPartitionModel, ok bool) {
@@ -11023,20 +11195,29 @@ type QueueModel struct {
 
 // InnerQueue holds the actual data
 type InnerQueue struct {
-	ID       BigInt `json:"id"`
-	TenantID string `json:"tenantId"`
-	Name     string `json:"name"`
+	ID         BigInt    `json:"id"`
+	TenantID   string    `json:"tenantId"`
+	Name       string    `json:"name"`
+	LastActive *DateTime `json:"lastActive,omitempty"`
 }
 
 // RawQueueModel is a struct for Queue when used in raw queries
 type RawQueueModel struct {
-	ID       RawBigInt `json:"id"`
-	TenantID RawString `json:"tenantId"`
-	Name     RawString `json:"name"`
+	ID         RawBigInt    `json:"id"`
+	TenantID   RawString    `json:"tenantId"`
+	Name       RawString    `json:"name"`
+	LastActive *RawDateTime `json:"lastActive,omitempty"`
 }
 
 // RelationsQueue holds the relation data separately
 type RelationsQueue struct {
+}
+
+func (r QueueModel) LastActive() (value DateTime, ok bool) {
+	if r.InnerQueue.LastActive == nil {
+		return value, false
+	}
+	return *r.InnerQueue.LastActive, true
 }
 
 // QueueItemModel represents the QueueItem model and is a wrapper for accessing fields and methods
@@ -29908,6 +30089,1980 @@ func (r controllerPartitionQueryTenantsTenant) Field() controllerPartitionPrisma
 	return controllerPartitionFieldTenants
 }
 
+// SchedulerPartition acts as a namespaces to access query methods for the SchedulerPartition model
+var SchedulerPartition = schedulerPartitionQuery{}
+
+// schedulerPartitionQuery exposes query functions for the schedulerPartition model
+type schedulerPartitionQuery struct {
+
+	// ID
+	//
+	// @required
+	ID schedulerPartitionQueryIDString
+
+	// CreatedAt
+	//
+	// @required
+	CreatedAt schedulerPartitionQueryCreatedAtDateTime
+
+	// UpdatedAt
+	//
+	// @required
+	UpdatedAt schedulerPartitionQueryUpdatedAtDateTime
+
+	// LastHeartbeat
+	//
+	// @optional
+	LastHeartbeat schedulerPartitionQueryLastHeartbeatDateTime
+
+	// Name
+	//
+	// @optional
+	Name schedulerPartitionQueryNameString
+
+	Tenants schedulerPartitionQueryTenantsRelations
+}
+
+func (schedulerPartitionQuery) Not(params ...SchedulerPartitionWhereParam) schedulerPartitionDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name:     "NOT",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (schedulerPartitionQuery) Or(params ...SchedulerPartitionWhereParam) schedulerPartitionDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name:     "OR",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+func (schedulerPartitionQuery) And(params ...SchedulerPartitionWhereParam) schedulerPartitionDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name:     "AND",
+			List:     true,
+			WrapList: true,
+			Fields:   fields,
+		},
+	}
+}
+
+// base struct
+type schedulerPartitionQueryIDString struct{}
+
+// Set the required value of ID
+func (r schedulerPartitionQueryIDString) Set(value string) schedulerPartitionWithPrismaIDSetParam {
+
+	return schedulerPartitionWithPrismaIDSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r schedulerPartitionQueryIDString) SetIfPresent(value *String) schedulerPartitionWithPrismaIDSetParam {
+	if value == nil {
+		return schedulerPartitionWithPrismaIDSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r schedulerPartitionQueryIDString) Equals(value string) schedulerPartitionWithPrismaIDEqualsUniqueParam {
+
+	return schedulerPartitionWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryIDString) EqualsIfPresent(value *string) schedulerPartitionWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return schedulerPartitionWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r schedulerPartitionQueryIDString) Order(direction SortOrder) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r schedulerPartitionQueryIDString) Cursor(cursor string) schedulerPartitionCursorParam {
+	return schedulerPartitionCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r schedulerPartitionQueryIDString) In(value []string) schedulerPartitionParamUnique {
+	return schedulerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryIDString) InIfPresent(value []string) schedulerPartitionParamUnique {
+	if value == nil {
+		return schedulerPartitionParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r schedulerPartitionQueryIDString) NotIn(value []string) schedulerPartitionParamUnique {
+	return schedulerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryIDString) NotInIfPresent(value []string) schedulerPartitionParamUnique {
+	if value == nil {
+		return schedulerPartitionParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r schedulerPartitionQueryIDString) Lt(value string) schedulerPartitionParamUnique {
+	return schedulerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryIDString) LtIfPresent(value *string) schedulerPartitionParamUnique {
+	if value == nil {
+		return schedulerPartitionParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r schedulerPartitionQueryIDString) Lte(value string) schedulerPartitionParamUnique {
+	return schedulerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryIDString) LteIfPresent(value *string) schedulerPartitionParamUnique {
+	if value == nil {
+		return schedulerPartitionParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r schedulerPartitionQueryIDString) Gt(value string) schedulerPartitionParamUnique {
+	return schedulerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryIDString) GtIfPresent(value *string) schedulerPartitionParamUnique {
+	if value == nil {
+		return schedulerPartitionParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r schedulerPartitionQueryIDString) Gte(value string) schedulerPartitionParamUnique {
+	return schedulerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryIDString) GteIfPresent(value *string) schedulerPartitionParamUnique {
+	if value == nil {
+		return schedulerPartitionParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r schedulerPartitionQueryIDString) Contains(value string) schedulerPartitionParamUnique {
+	return schedulerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryIDString) ContainsIfPresent(value *string) schedulerPartitionParamUnique {
+	if value == nil {
+		return schedulerPartitionParamUnique{}
+	}
+	return r.Contains(*value)
+}
+
+func (r schedulerPartitionQueryIDString) StartsWith(value string) schedulerPartitionParamUnique {
+	return schedulerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryIDString) StartsWithIfPresent(value *string) schedulerPartitionParamUnique {
+	if value == nil {
+		return schedulerPartitionParamUnique{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r schedulerPartitionQueryIDString) EndsWith(value string) schedulerPartitionParamUnique {
+	return schedulerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryIDString) EndsWithIfPresent(value *string) schedulerPartitionParamUnique {
+	if value == nil {
+		return schedulerPartitionParamUnique{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r schedulerPartitionQueryIDString) Mode(value QueryMode) schedulerPartitionParamUnique {
+	return schedulerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryIDString) ModeIfPresent(value *QueryMode) schedulerPartitionParamUnique {
+	if value == nil {
+		return schedulerPartitionParamUnique{}
+	}
+	return r.Mode(*value)
+}
+
+func (r schedulerPartitionQueryIDString) Not(value string) schedulerPartitionParamUnique {
+	return schedulerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryIDString) NotIfPresent(value *string) schedulerPartitionParamUnique {
+	if value == nil {
+		return schedulerPartitionParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r schedulerPartitionQueryIDString) HasPrefix(value string) schedulerPartitionParamUnique {
+	return schedulerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r schedulerPartitionQueryIDString) HasPrefixIfPresent(value *string) schedulerPartitionParamUnique {
+	if value == nil {
+		return schedulerPartitionParamUnique{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r schedulerPartitionQueryIDString) HasSuffix(value string) schedulerPartitionParamUnique {
+	return schedulerPartitionParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r schedulerPartitionQueryIDString) HasSuffixIfPresent(value *string) schedulerPartitionParamUnique {
+	if value == nil {
+		return schedulerPartitionParamUnique{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r schedulerPartitionQueryIDString) Field() schedulerPartitionPrismaFields {
+	return schedulerPartitionFieldID
+}
+
+// base struct
+type schedulerPartitionQueryCreatedAtDateTime struct{}
+
+// Set the required value of CreatedAt
+func (r schedulerPartitionQueryCreatedAtDateTime) Set(value DateTime) schedulerPartitionSetParam {
+
+	return schedulerPartitionSetParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of CreatedAt dynamically
+func (r schedulerPartitionQueryCreatedAtDateTime) SetIfPresent(value *DateTime) schedulerPartitionSetParam {
+	if value == nil {
+		return schedulerPartitionSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r schedulerPartitionQueryCreatedAtDateTime) Equals(value DateTime) schedulerPartitionWithPrismaCreatedAtEqualsParam {
+
+	return schedulerPartitionWithPrismaCreatedAtEqualsParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryCreatedAtDateTime) EqualsIfPresent(value *DateTime) schedulerPartitionWithPrismaCreatedAtEqualsParam {
+	if value == nil {
+		return schedulerPartitionWithPrismaCreatedAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r schedulerPartitionQueryCreatedAtDateTime) Order(direction SortOrder) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r schedulerPartitionQueryCreatedAtDateTime) Cursor(cursor DateTime) schedulerPartitionCursorParam {
+	return schedulerPartitionCursorParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r schedulerPartitionQueryCreatedAtDateTime) In(value []DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryCreatedAtDateTime) InIfPresent(value []DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r schedulerPartitionQueryCreatedAtDateTime) NotIn(value []DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryCreatedAtDateTime) NotInIfPresent(value []DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r schedulerPartitionQueryCreatedAtDateTime) Lt(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryCreatedAtDateTime) LtIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r schedulerPartitionQueryCreatedAtDateTime) Lte(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryCreatedAtDateTime) LteIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r schedulerPartitionQueryCreatedAtDateTime) Gt(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryCreatedAtDateTime) GtIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r schedulerPartitionQueryCreatedAtDateTime) Gte(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryCreatedAtDateTime) GteIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r schedulerPartitionQueryCreatedAtDateTime) Not(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryCreatedAtDateTime) NotIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r schedulerPartitionQueryCreatedAtDateTime) Before(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r schedulerPartitionQueryCreatedAtDateTime) BeforeIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r schedulerPartitionQueryCreatedAtDateTime) After(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r schedulerPartitionQueryCreatedAtDateTime) AfterIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r schedulerPartitionQueryCreatedAtDateTime) BeforeEquals(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r schedulerPartitionQueryCreatedAtDateTime) BeforeEqualsIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r schedulerPartitionQueryCreatedAtDateTime) AfterEquals(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r schedulerPartitionQueryCreatedAtDateTime) AfterEqualsIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r schedulerPartitionQueryCreatedAtDateTime) Field() schedulerPartitionPrismaFields {
+	return schedulerPartitionFieldCreatedAt
+}
+
+// base struct
+type schedulerPartitionQueryUpdatedAtDateTime struct{}
+
+// Set the required value of UpdatedAt
+func (r schedulerPartitionQueryUpdatedAtDateTime) Set(value DateTime) schedulerPartitionSetParam {
+
+	return schedulerPartitionSetParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of UpdatedAt dynamically
+func (r schedulerPartitionQueryUpdatedAtDateTime) SetIfPresent(value *DateTime) schedulerPartitionSetParam {
+	if value == nil {
+		return schedulerPartitionSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r schedulerPartitionQueryUpdatedAtDateTime) Equals(value DateTime) schedulerPartitionWithPrismaUpdatedAtEqualsParam {
+
+	return schedulerPartitionWithPrismaUpdatedAtEqualsParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryUpdatedAtDateTime) EqualsIfPresent(value *DateTime) schedulerPartitionWithPrismaUpdatedAtEqualsParam {
+	if value == nil {
+		return schedulerPartitionWithPrismaUpdatedAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r schedulerPartitionQueryUpdatedAtDateTime) Order(direction SortOrder) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r schedulerPartitionQueryUpdatedAtDateTime) Cursor(cursor DateTime) schedulerPartitionCursorParam {
+	return schedulerPartitionCursorParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r schedulerPartitionQueryUpdatedAtDateTime) In(value []DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryUpdatedAtDateTime) InIfPresent(value []DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r schedulerPartitionQueryUpdatedAtDateTime) NotIn(value []DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryUpdatedAtDateTime) NotInIfPresent(value []DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r schedulerPartitionQueryUpdatedAtDateTime) Lt(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryUpdatedAtDateTime) LtIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r schedulerPartitionQueryUpdatedAtDateTime) Lte(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryUpdatedAtDateTime) LteIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r schedulerPartitionQueryUpdatedAtDateTime) Gt(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryUpdatedAtDateTime) GtIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r schedulerPartitionQueryUpdatedAtDateTime) Gte(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryUpdatedAtDateTime) GteIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r schedulerPartitionQueryUpdatedAtDateTime) Not(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryUpdatedAtDateTime) NotIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r schedulerPartitionQueryUpdatedAtDateTime) Before(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r schedulerPartitionQueryUpdatedAtDateTime) BeforeIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r schedulerPartitionQueryUpdatedAtDateTime) After(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r schedulerPartitionQueryUpdatedAtDateTime) AfterIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r schedulerPartitionQueryUpdatedAtDateTime) BeforeEquals(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r schedulerPartitionQueryUpdatedAtDateTime) BeforeEqualsIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r schedulerPartitionQueryUpdatedAtDateTime) AfterEquals(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r schedulerPartitionQueryUpdatedAtDateTime) AfterEqualsIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r schedulerPartitionQueryUpdatedAtDateTime) Field() schedulerPartitionPrismaFields {
+	return schedulerPartitionFieldUpdatedAt
+}
+
+// base struct
+type schedulerPartitionQueryLastHeartbeatDateTime struct{}
+
+// Set the optional value of LastHeartbeat
+func (r schedulerPartitionQueryLastHeartbeatDateTime) Set(value DateTime) schedulerPartitionSetParam {
+
+	return schedulerPartitionSetParam{
+		data: builder.Field{
+			Name:  "lastHeartbeat",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of LastHeartbeat dynamically
+func (r schedulerPartitionQueryLastHeartbeatDateTime) SetIfPresent(value *DateTime) schedulerPartitionSetParam {
+	if value == nil {
+		return schedulerPartitionSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of LastHeartbeat dynamically
+func (r schedulerPartitionQueryLastHeartbeatDateTime) SetOptional(value *DateTime) schedulerPartitionSetParam {
+	if value == nil {
+
+		var v *DateTime
+		return schedulerPartitionSetParam{
+			data: builder.Field{
+				Name:  "lastHeartbeat",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) Equals(value DateTime) schedulerPartitionWithPrismaLastHeartbeatEqualsParam {
+
+	return schedulerPartitionWithPrismaLastHeartbeatEqualsParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) EqualsIfPresent(value *DateTime) schedulerPartitionWithPrismaLastHeartbeatEqualsParam {
+	if value == nil {
+		return schedulerPartitionWithPrismaLastHeartbeatEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) EqualsOptional(value *DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) IsNull() schedulerPartitionDefaultParam {
+	var str *string = nil
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) Order(direction SortOrder) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name:  "lastHeartbeat",
+			Value: direction,
+		},
+	}
+}
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) Cursor(cursor DateTime) schedulerPartitionCursorParam {
+	return schedulerPartitionCursorParam{
+		data: builder.Field{
+			Name:  "lastHeartbeat",
+			Value: cursor,
+		},
+	}
+}
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) In(value []DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) InIfPresent(value []DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) NotIn(value []DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) NotInIfPresent(value []DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) Lt(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) LtIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) Lte(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) LteIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) Gt(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) GtIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) Gte(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) GteIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) Not(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) NotIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) Before(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r schedulerPartitionQueryLastHeartbeatDateTime) BeforeIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) After(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r schedulerPartitionQueryLastHeartbeatDateTime) AfterIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) BeforeEquals(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r schedulerPartitionQueryLastHeartbeatDateTime) BeforeEqualsIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) AfterEquals(value DateTime) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "lastHeartbeat",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r schedulerPartitionQueryLastHeartbeatDateTime) AfterEqualsIfPresent(value *DateTime) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r schedulerPartitionQueryLastHeartbeatDateTime) Field() schedulerPartitionPrismaFields {
+	return schedulerPartitionFieldLastHeartbeat
+}
+
+// base struct
+type schedulerPartitionQueryNameString struct{}
+
+// Set the optional value of Name
+func (r schedulerPartitionQueryNameString) Set(value string) schedulerPartitionSetParam {
+
+	return schedulerPartitionSetParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Name dynamically
+func (r schedulerPartitionQueryNameString) SetIfPresent(value *String) schedulerPartitionSetParam {
+	if value == nil {
+		return schedulerPartitionSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of Name dynamically
+func (r schedulerPartitionQueryNameString) SetOptional(value *String) schedulerPartitionSetParam {
+	if value == nil {
+
+		var v *string
+		return schedulerPartitionSetParam{
+			data: builder.Field{
+				Name:  "name",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r schedulerPartitionQueryNameString) Equals(value string) schedulerPartitionWithPrismaNameEqualsParam {
+
+	return schedulerPartitionWithPrismaNameEqualsParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryNameString) EqualsIfPresent(value *string) schedulerPartitionWithPrismaNameEqualsParam {
+	if value == nil {
+		return schedulerPartitionWithPrismaNameEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r schedulerPartitionQueryNameString) EqualsOptional(value *String) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryNameString) IsNull() schedulerPartitionDefaultParam {
+	var str *string = nil
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryNameString) Order(direction SortOrder) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: direction,
+		},
+	}
+}
+
+func (r schedulerPartitionQueryNameString) Cursor(cursor string) schedulerPartitionCursorParam {
+	return schedulerPartitionCursorParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: cursor,
+		},
+	}
+}
+
+func (r schedulerPartitionQueryNameString) In(value []string) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryNameString) InIfPresent(value []string) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r schedulerPartitionQueryNameString) NotIn(value []string) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryNameString) NotInIfPresent(value []string) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r schedulerPartitionQueryNameString) Lt(value string) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryNameString) LtIfPresent(value *string) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r schedulerPartitionQueryNameString) Lte(value string) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryNameString) LteIfPresent(value *string) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r schedulerPartitionQueryNameString) Gt(value string) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryNameString) GtIfPresent(value *string) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r schedulerPartitionQueryNameString) Gte(value string) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryNameString) GteIfPresent(value *string) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r schedulerPartitionQueryNameString) Contains(value string) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryNameString) ContainsIfPresent(value *string) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r schedulerPartitionQueryNameString) StartsWith(value string) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryNameString) StartsWithIfPresent(value *string) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r schedulerPartitionQueryNameString) EndsWith(value string) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryNameString) EndsWithIfPresent(value *string) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r schedulerPartitionQueryNameString) Mode(value QueryMode) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryNameString) ModeIfPresent(value *QueryMode) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r schedulerPartitionQueryNameString) Not(value string) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryNameString) NotIfPresent(value *string) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r schedulerPartitionQueryNameString) HasPrefix(value string) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r schedulerPartitionQueryNameString) HasPrefixIfPresent(value *string) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r schedulerPartitionQueryNameString) HasSuffix(value string) schedulerPartitionDefaultParam {
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r schedulerPartitionQueryNameString) HasSuffixIfPresent(value *string) schedulerPartitionDefaultParam {
+	if value == nil {
+		return schedulerPartitionDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r schedulerPartitionQueryNameString) Field() schedulerPartitionPrismaFields {
+	return schedulerPartitionFieldName
+}
+
+// base struct
+type schedulerPartitionQueryTenantsTenant struct{}
+
+type schedulerPartitionQueryTenantsRelations struct{}
+
+// SchedulerPartition -> Tenants
+//
+// @relation
+// @required
+func (schedulerPartitionQueryTenantsRelations) Some(
+	params ...TenantWhereParam,
+) schedulerPartitionDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "tenants",
+			Fields: []builder.Field{
+				{
+					Name:   "some",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// SchedulerPartition -> Tenants
+//
+// @relation
+// @required
+func (schedulerPartitionQueryTenantsRelations) Every(
+	params ...TenantWhereParam,
+) schedulerPartitionDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "tenants",
+			Fields: []builder.Field{
+				{
+					Name:   "every",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+// SchedulerPartition -> Tenants
+//
+// @relation
+// @required
+func (schedulerPartitionQueryTenantsRelations) None(
+	params ...TenantWhereParam,
+) schedulerPartitionDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return schedulerPartitionDefaultParam{
+		data: builder.Field{
+			Name: "tenants",
+			Fields: []builder.Field{
+				{
+					Name:   "none",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (schedulerPartitionQueryTenantsRelations) Fetch(
+
+	params ...TenantWhereParam,
+
+) schedulerPartitionToTenantsFindMany {
+	var v schedulerPartitionToTenantsFindMany
+
+	v.query.Operation = "query"
+	v.query.Method = "tenants"
+	v.query.Outputs = tenantOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r schedulerPartitionQueryTenantsRelations) Link(
+	params ...TenantWhereParam,
+) schedulerPartitionSetParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return schedulerPartitionSetParam{
+		data: builder.Field{
+			Name: "tenants",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+
+					List:     true,
+					WrapList: true,
+				},
+			},
+		},
+	}
+}
+
+func (r schedulerPartitionQueryTenantsRelations) Unlink(
+	params ...TenantWhereParam,
+) schedulerPartitionSetParam {
+	var v schedulerPartitionSetParam
+
+	var fields []builder.Field
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+	v = schedulerPartitionSetParam{
+		data: builder.Field{
+			Name: "tenants",
+			Fields: []builder.Field{
+				{
+					Name:     "disconnect",
+					List:     true,
+					WrapList: true,
+					Fields:   builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r schedulerPartitionQueryTenantsTenant) Field() schedulerPartitionPrismaFields {
+	return schedulerPartitionFieldTenants
+}
+
 // TenantWorkerPartition acts as a namespaces to access query methods for the TenantWorkerPartition model
 var TenantWorkerPartition = tenantWorkerPartitionQuery{}
 
@@ -31930,6 +34085,13 @@ type tenantQuery struct {
 	//
 	// @optional
 	ControllerPartitionID tenantQueryControllerPartitionIDString
+
+	SchedulerPartition tenantQuerySchedulerPartitionRelations
+
+	// SchedulerPartitionID
+	//
+	// @optional
+	SchedulerPartitionID tenantQuerySchedulerPartitionIDString
 
 	WorkerPartition tenantQueryWorkerPartitionRelations
 
@@ -34595,6 +36757,486 @@ func (r tenantQueryControllerPartitionIDString) HasSuffixIfPresent(value *string
 
 func (r tenantQueryControllerPartitionIDString) Field() tenantPrismaFields {
 	return tenantFieldControllerPartitionID
+}
+
+// base struct
+type tenantQuerySchedulerPartitionSchedulerPartition struct{}
+
+type tenantQuerySchedulerPartitionRelations struct{}
+
+// Tenant -> SchedulerPartition
+//
+// @relation
+// @optional
+func (tenantQuerySchedulerPartitionRelations) Where(
+	params ...SchedulerPartitionWhereParam,
+) tenantDefaultParam {
+	var fields []builder.Field
+
+	for _, q := range params {
+		fields = append(fields, q.field())
+	}
+
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "schedulerPartition",
+			Fields: []builder.Field{
+				{
+					Name:   "is",
+					Fields: fields,
+				},
+			},
+		},
+	}
+}
+
+func (tenantQuerySchedulerPartitionRelations) Fetch() tenantToSchedulerPartitionFindUnique {
+	var v tenantToSchedulerPartitionFindUnique
+
+	v.query.Operation = "query"
+	v.query.Method = "schedulerPartition"
+	v.query.Outputs = schedulerPartitionOutput
+
+	return v
+}
+
+func (r tenantQuerySchedulerPartitionRelations) Link(
+	params SchedulerPartitionWhereParam,
+) tenantSetParam {
+	var fields []builder.Field
+
+	f := params.field()
+	if f.Fields == nil && f.Value == nil {
+		return tenantSetParam{}
+	}
+
+	fields = append(fields, f)
+
+	return tenantSetParam{
+		data: builder.Field{
+			Name: "schedulerPartition",
+			Fields: []builder.Field{
+				{
+					Name:   "connect",
+					Fields: builder.TransformEquals(fields),
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQuerySchedulerPartitionRelations) Unlink() tenantSetParam {
+	var v tenantSetParam
+
+	v = tenantSetParam{
+		data: builder.Field{
+			Name: "schedulerPartition",
+			Fields: []builder.Field{
+				{
+					Name:  "disconnect",
+					Value: true,
+				},
+			},
+		},
+	}
+
+	return v
+}
+
+func (r tenantQuerySchedulerPartitionSchedulerPartition) Field() tenantPrismaFields {
+	return tenantFieldSchedulerPartition
+}
+
+// base struct
+type tenantQuerySchedulerPartitionIDString struct{}
+
+// Set the optional value of SchedulerPartitionID
+func (r tenantQuerySchedulerPartitionIDString) Set(value string) tenantSetParam {
+
+	return tenantSetParam{
+		data: builder.Field{
+			Name:  "schedulerPartitionId",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of SchedulerPartitionID dynamically
+func (r tenantQuerySchedulerPartitionIDString) SetIfPresent(value *String) tenantSetParam {
+	if value == nil {
+		return tenantSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of SchedulerPartitionID dynamically
+func (r tenantQuerySchedulerPartitionIDString) SetOptional(value *String) tenantSetParam {
+	if value == nil {
+
+		var v *string
+		return tenantSetParam{
+			data: builder.Field{
+				Name:  "schedulerPartitionId",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r tenantQuerySchedulerPartitionIDString) Equals(value string) tenantWithPrismaSchedulerPartitionIDEqualsParam {
+
+	return tenantWithPrismaSchedulerPartitionIDEqualsParam{
+		data: builder.Field{
+			Name: "schedulerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQuerySchedulerPartitionIDString) EqualsIfPresent(value *string) tenantWithPrismaSchedulerPartitionIDEqualsParam {
+	if value == nil {
+		return tenantWithPrismaSchedulerPartitionIDEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r tenantQuerySchedulerPartitionIDString) EqualsOptional(value *String) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "schedulerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQuerySchedulerPartitionIDString) IsNull() tenantDefaultParam {
+	var str *string = nil
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "schedulerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQuerySchedulerPartitionIDString) Order(direction SortOrder) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name:  "schedulerPartitionId",
+			Value: direction,
+		},
+	}
+}
+
+func (r tenantQuerySchedulerPartitionIDString) Cursor(cursor string) tenantCursorParam {
+	return tenantCursorParam{
+		data: builder.Field{
+			Name:  "schedulerPartitionId",
+			Value: cursor,
+		},
+	}
+}
+
+func (r tenantQuerySchedulerPartitionIDString) In(value []string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "schedulerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQuerySchedulerPartitionIDString) InIfPresent(value []string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r tenantQuerySchedulerPartitionIDString) NotIn(value []string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "schedulerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQuerySchedulerPartitionIDString) NotInIfPresent(value []string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r tenantQuerySchedulerPartitionIDString) Lt(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "schedulerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQuerySchedulerPartitionIDString) LtIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r tenantQuerySchedulerPartitionIDString) Lte(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "schedulerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQuerySchedulerPartitionIDString) LteIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r tenantQuerySchedulerPartitionIDString) Gt(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "schedulerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQuerySchedulerPartitionIDString) GtIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r tenantQuerySchedulerPartitionIDString) Gte(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "schedulerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQuerySchedulerPartitionIDString) GteIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r tenantQuerySchedulerPartitionIDString) Contains(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "schedulerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQuerySchedulerPartitionIDString) ContainsIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r tenantQuerySchedulerPartitionIDString) StartsWith(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "schedulerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQuerySchedulerPartitionIDString) StartsWithIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r tenantQuerySchedulerPartitionIDString) EndsWith(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "schedulerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQuerySchedulerPartitionIDString) EndsWithIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r tenantQuerySchedulerPartitionIDString) Mode(value QueryMode) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "schedulerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQuerySchedulerPartitionIDString) ModeIfPresent(value *QueryMode) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r tenantQuerySchedulerPartitionIDString) Not(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "schedulerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r tenantQuerySchedulerPartitionIDString) NotIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r tenantQuerySchedulerPartitionIDString) HasPrefix(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "schedulerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r tenantQuerySchedulerPartitionIDString) HasPrefixIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r tenantQuerySchedulerPartitionIDString) HasSuffix(value string) tenantDefaultParam {
+	return tenantDefaultParam{
+		data: builder.Field{
+			Name: "schedulerPartitionId",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r tenantQuerySchedulerPartitionIDString) HasSuffixIfPresent(value *string) tenantDefaultParam {
+	if value == nil {
+		return tenantDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r tenantQuerySchedulerPartitionIDString) Field() tenantPrismaFields {
+	return tenantFieldSchedulerPartitionID
 }
 
 // base struct
@@ -150322,6 +152964,11 @@ type queueQuery struct {
 	//
 	// @required
 	Name queueQueryNameString
+
+	// LastActive
+	//
+	// @optional
+	LastActive queueQueryLastActiveDateTime
 }
 
 func (queueQuery) Not(params ...QueueWhereParam) queueDefaultParam {
@@ -151388,6 +154035,362 @@ func (r queueQueryNameString) HasSuffixIfPresent(value *string) queueDefaultPara
 
 func (r queueQueryNameString) Field() queuePrismaFields {
 	return queueFieldName
+}
+
+// base struct
+type queueQueryLastActiveDateTime struct{}
+
+// Set the optional value of LastActive
+func (r queueQueryLastActiveDateTime) Set(value DateTime) queueSetParam {
+
+	return queueSetParam{
+		data: builder.Field{
+			Name:  "lastActive",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of LastActive dynamically
+func (r queueQueryLastActiveDateTime) SetIfPresent(value *DateTime) queueSetParam {
+	if value == nil {
+		return queueSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of LastActive dynamically
+func (r queueQueryLastActiveDateTime) SetOptional(value *DateTime) queueSetParam {
+	if value == nil {
+
+		var v *DateTime
+		return queueSetParam{
+			data: builder.Field{
+				Name:  "lastActive",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r queueQueryLastActiveDateTime) Equals(value DateTime) queueWithPrismaLastActiveEqualsParam {
+
+	return queueWithPrismaLastActiveEqualsParam{
+		data: builder.Field{
+			Name: "lastActive",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryLastActiveDateTime) EqualsIfPresent(value *DateTime) queueWithPrismaLastActiveEqualsParam {
+	if value == nil {
+		return queueWithPrismaLastActiveEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r queueQueryLastActiveDateTime) EqualsOptional(value *DateTime) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "lastActive",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryLastActiveDateTime) IsNull() queueDefaultParam {
+	var str *string = nil
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "lastActive",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryLastActiveDateTime) Order(direction SortOrder) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name:  "lastActive",
+			Value: direction,
+		},
+	}
+}
+
+func (r queueQueryLastActiveDateTime) Cursor(cursor DateTime) queueCursorParam {
+	return queueCursorParam{
+		data: builder.Field{
+			Name:  "lastActive",
+			Value: cursor,
+		},
+	}
+}
+
+func (r queueQueryLastActiveDateTime) In(value []DateTime) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "lastActive",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryLastActiveDateTime) InIfPresent(value []DateTime) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r queueQueryLastActiveDateTime) NotIn(value []DateTime) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "lastActive",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryLastActiveDateTime) NotInIfPresent(value []DateTime) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r queueQueryLastActiveDateTime) Lt(value DateTime) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "lastActive",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryLastActiveDateTime) LtIfPresent(value *DateTime) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r queueQueryLastActiveDateTime) Lte(value DateTime) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "lastActive",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryLastActiveDateTime) LteIfPresent(value *DateTime) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r queueQueryLastActiveDateTime) Gt(value DateTime) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "lastActive",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryLastActiveDateTime) GtIfPresent(value *DateTime) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r queueQueryLastActiveDateTime) Gte(value DateTime) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "lastActive",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryLastActiveDateTime) GteIfPresent(value *DateTime) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r queueQueryLastActiveDateTime) Not(value DateTime) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "lastActive",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r queueQueryLastActiveDateTime) NotIfPresent(value *DateTime) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r queueQueryLastActiveDateTime) Before(value DateTime) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "lastActive",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r queueQueryLastActiveDateTime) BeforeIfPresent(value *DateTime) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r queueQueryLastActiveDateTime) After(value DateTime) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "lastActive",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r queueQueryLastActiveDateTime) AfterIfPresent(value *DateTime) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r queueQueryLastActiveDateTime) BeforeEquals(value DateTime) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "lastActive",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r queueQueryLastActiveDateTime) BeforeEqualsIfPresent(value *DateTime) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r queueQueryLastActiveDateTime) AfterEquals(value DateTime) queueDefaultParam {
+	return queueDefaultParam{
+		data: builder.Field{
+			Name: "lastActive",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r queueQueryLastActiveDateTime) AfterEqualsIfPresent(value *DateTime) queueDefaultParam {
+	if value == nil {
+		return queueDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r queueQueryLastActiveDateTime) Field() queuePrismaFields {
+	return queueFieldLastActive
 }
 
 // QueueItem acts as a namespaces to access query methods for the QueueItem model
@@ -208616,6 +211619,651 @@ func (p controllerPartitionWithPrismaTenantsEqualsUniqueParam) tenantsField()   
 func (controllerPartitionWithPrismaTenantsEqualsUniqueParam) unique() {}
 func (controllerPartitionWithPrismaTenantsEqualsUniqueParam) equals() {}
 
+type schedulerPartitionActions struct {
+	// client holds the prisma client
+	client *PrismaClient
+}
+
+var schedulerPartitionOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "createdAt"},
+	{Name: "updatedAt"},
+	{Name: "lastHeartbeat"},
+	{Name: "name"},
+}
+
+type SchedulerPartitionRelationWith interface {
+	getQuery() builder.Query
+	with()
+	schedulerPartitionRelation()
+}
+
+type SchedulerPartitionWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	schedulerPartitionModel()
+}
+
+type schedulerPartitionDefaultParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionDefaultParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionDefaultParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p schedulerPartitionDefaultParam) schedulerPartitionModel() {}
+
+type SchedulerPartitionOrderByParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	schedulerPartitionModel()
+}
+
+type schedulerPartitionOrderByParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionOrderByParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionOrderByParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p schedulerPartitionOrderByParam) schedulerPartitionModel() {}
+
+type SchedulerPartitionCursorParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	schedulerPartitionModel()
+	isCursor()
+}
+
+type schedulerPartitionCursorParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionCursorParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionCursorParam) isCursor() {}
+
+func (p schedulerPartitionCursorParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p schedulerPartitionCursorParam) schedulerPartitionModel() {}
+
+type SchedulerPartitionParamUnique interface {
+	field() builder.Field
+	getQuery() builder.Query
+	unique()
+	schedulerPartitionModel()
+}
+
+type schedulerPartitionParamUnique struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionParamUnique) schedulerPartitionModel() {}
+
+func (schedulerPartitionParamUnique) unique() {}
+
+func (p schedulerPartitionParamUnique) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionParamUnique) getQuery() builder.Query {
+	return p.query
+}
+
+type SchedulerPartitionEqualsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	schedulerPartitionModel()
+}
+
+type schedulerPartitionEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionEqualsParam) schedulerPartitionModel() {}
+
+func (schedulerPartitionEqualsParam) equals() {}
+
+func (p schedulerPartitionEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+type SchedulerPartitionEqualsUniqueWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	unique()
+	schedulerPartitionModel()
+}
+
+type schedulerPartitionEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionEqualsUniqueParam) schedulerPartitionModel() {}
+
+func (schedulerPartitionEqualsUniqueParam) unique() {}
+func (schedulerPartitionEqualsUniqueParam) equals() {}
+
+func (p schedulerPartitionEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+type SchedulerPartitionSetParam interface {
+	field() builder.Field
+	settable()
+	schedulerPartitionModel()
+}
+
+type schedulerPartitionSetParam struct {
+	data builder.Field
+}
+
+func (schedulerPartitionSetParam) settable() {}
+
+func (p schedulerPartitionSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionSetParam) schedulerPartitionModel() {}
+
+type SchedulerPartitionWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	schedulerPartitionModel()
+	idField()
+}
+
+type SchedulerPartitionWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	schedulerPartitionModel()
+	idField()
+}
+
+type schedulerPartitionWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p schedulerPartitionWithPrismaIDSetParam) schedulerPartitionModel() {}
+
+func (p schedulerPartitionWithPrismaIDSetParam) idField() {}
+
+type SchedulerPartitionWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	schedulerPartitionModel()
+	idField()
+}
+
+type schedulerPartitionWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p schedulerPartitionWithPrismaIDEqualsParam) schedulerPartitionModel() {}
+
+func (p schedulerPartitionWithPrismaIDEqualsParam) idField() {}
+
+func (schedulerPartitionWithPrismaIDSetParam) settable()  {}
+func (schedulerPartitionWithPrismaIDEqualsParam) equals() {}
+
+type schedulerPartitionWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p schedulerPartitionWithPrismaIDEqualsUniqueParam) schedulerPartitionModel() {}
+func (p schedulerPartitionWithPrismaIDEqualsUniqueParam) idField()                 {}
+
+func (schedulerPartitionWithPrismaIDEqualsUniqueParam) unique() {}
+func (schedulerPartitionWithPrismaIDEqualsUniqueParam) equals() {}
+
+type SchedulerPartitionWithPrismaCreatedAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	schedulerPartitionModel()
+	createdAtField()
+}
+
+type SchedulerPartitionWithPrismaCreatedAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	schedulerPartitionModel()
+	createdAtField()
+}
+
+type schedulerPartitionWithPrismaCreatedAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionWithPrismaCreatedAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionWithPrismaCreatedAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p schedulerPartitionWithPrismaCreatedAtSetParam) schedulerPartitionModel() {}
+
+func (p schedulerPartitionWithPrismaCreatedAtSetParam) createdAtField() {}
+
+type SchedulerPartitionWithPrismaCreatedAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	schedulerPartitionModel()
+	createdAtField()
+}
+
+type schedulerPartitionWithPrismaCreatedAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionWithPrismaCreatedAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionWithPrismaCreatedAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p schedulerPartitionWithPrismaCreatedAtEqualsParam) schedulerPartitionModel() {}
+
+func (p schedulerPartitionWithPrismaCreatedAtEqualsParam) createdAtField() {}
+
+func (schedulerPartitionWithPrismaCreatedAtSetParam) settable()  {}
+func (schedulerPartitionWithPrismaCreatedAtEqualsParam) equals() {}
+
+type schedulerPartitionWithPrismaCreatedAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionWithPrismaCreatedAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionWithPrismaCreatedAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p schedulerPartitionWithPrismaCreatedAtEqualsUniqueParam) schedulerPartitionModel() {}
+func (p schedulerPartitionWithPrismaCreatedAtEqualsUniqueParam) createdAtField()          {}
+
+func (schedulerPartitionWithPrismaCreatedAtEqualsUniqueParam) unique() {}
+func (schedulerPartitionWithPrismaCreatedAtEqualsUniqueParam) equals() {}
+
+type SchedulerPartitionWithPrismaUpdatedAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	schedulerPartitionModel()
+	updatedAtField()
+}
+
+type SchedulerPartitionWithPrismaUpdatedAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	schedulerPartitionModel()
+	updatedAtField()
+}
+
+type schedulerPartitionWithPrismaUpdatedAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionWithPrismaUpdatedAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionWithPrismaUpdatedAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p schedulerPartitionWithPrismaUpdatedAtSetParam) schedulerPartitionModel() {}
+
+func (p schedulerPartitionWithPrismaUpdatedAtSetParam) updatedAtField() {}
+
+type SchedulerPartitionWithPrismaUpdatedAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	schedulerPartitionModel()
+	updatedAtField()
+}
+
+type schedulerPartitionWithPrismaUpdatedAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionWithPrismaUpdatedAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionWithPrismaUpdatedAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p schedulerPartitionWithPrismaUpdatedAtEqualsParam) schedulerPartitionModel() {}
+
+func (p schedulerPartitionWithPrismaUpdatedAtEqualsParam) updatedAtField() {}
+
+func (schedulerPartitionWithPrismaUpdatedAtSetParam) settable()  {}
+func (schedulerPartitionWithPrismaUpdatedAtEqualsParam) equals() {}
+
+type schedulerPartitionWithPrismaUpdatedAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionWithPrismaUpdatedAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionWithPrismaUpdatedAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p schedulerPartitionWithPrismaUpdatedAtEqualsUniqueParam) schedulerPartitionModel() {}
+func (p schedulerPartitionWithPrismaUpdatedAtEqualsUniqueParam) updatedAtField()          {}
+
+func (schedulerPartitionWithPrismaUpdatedAtEqualsUniqueParam) unique() {}
+func (schedulerPartitionWithPrismaUpdatedAtEqualsUniqueParam) equals() {}
+
+type SchedulerPartitionWithPrismaLastHeartbeatEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	schedulerPartitionModel()
+	lastHeartbeatField()
+}
+
+type SchedulerPartitionWithPrismaLastHeartbeatSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	schedulerPartitionModel()
+	lastHeartbeatField()
+}
+
+type schedulerPartitionWithPrismaLastHeartbeatSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionWithPrismaLastHeartbeatSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionWithPrismaLastHeartbeatSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p schedulerPartitionWithPrismaLastHeartbeatSetParam) schedulerPartitionModel() {}
+
+func (p schedulerPartitionWithPrismaLastHeartbeatSetParam) lastHeartbeatField() {}
+
+type SchedulerPartitionWithPrismaLastHeartbeatWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	schedulerPartitionModel()
+	lastHeartbeatField()
+}
+
+type schedulerPartitionWithPrismaLastHeartbeatEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionWithPrismaLastHeartbeatEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionWithPrismaLastHeartbeatEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p schedulerPartitionWithPrismaLastHeartbeatEqualsParam) schedulerPartitionModel() {}
+
+func (p schedulerPartitionWithPrismaLastHeartbeatEqualsParam) lastHeartbeatField() {}
+
+func (schedulerPartitionWithPrismaLastHeartbeatSetParam) settable()  {}
+func (schedulerPartitionWithPrismaLastHeartbeatEqualsParam) equals() {}
+
+type schedulerPartitionWithPrismaLastHeartbeatEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p schedulerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) schedulerPartitionModel() {}
+func (p schedulerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) lastHeartbeatField()      {}
+
+func (schedulerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) unique() {}
+func (schedulerPartitionWithPrismaLastHeartbeatEqualsUniqueParam) equals() {}
+
+type SchedulerPartitionWithPrismaNameEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	schedulerPartitionModel()
+	nameField()
+}
+
+type SchedulerPartitionWithPrismaNameSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	schedulerPartitionModel()
+	nameField()
+}
+
+type schedulerPartitionWithPrismaNameSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionWithPrismaNameSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionWithPrismaNameSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p schedulerPartitionWithPrismaNameSetParam) schedulerPartitionModel() {}
+
+func (p schedulerPartitionWithPrismaNameSetParam) nameField() {}
+
+type SchedulerPartitionWithPrismaNameWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	schedulerPartitionModel()
+	nameField()
+}
+
+type schedulerPartitionWithPrismaNameEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionWithPrismaNameEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionWithPrismaNameEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p schedulerPartitionWithPrismaNameEqualsParam) schedulerPartitionModel() {}
+
+func (p schedulerPartitionWithPrismaNameEqualsParam) nameField() {}
+
+func (schedulerPartitionWithPrismaNameSetParam) settable()  {}
+func (schedulerPartitionWithPrismaNameEqualsParam) equals() {}
+
+type schedulerPartitionWithPrismaNameEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionWithPrismaNameEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionWithPrismaNameEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p schedulerPartitionWithPrismaNameEqualsUniqueParam) schedulerPartitionModel() {}
+func (p schedulerPartitionWithPrismaNameEqualsUniqueParam) nameField()               {}
+
+func (schedulerPartitionWithPrismaNameEqualsUniqueParam) unique() {}
+func (schedulerPartitionWithPrismaNameEqualsUniqueParam) equals() {}
+
+type SchedulerPartitionWithPrismaTenantsEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	schedulerPartitionModel()
+	tenantsField()
+}
+
+type SchedulerPartitionWithPrismaTenantsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	schedulerPartitionModel()
+	tenantsField()
+}
+
+type schedulerPartitionWithPrismaTenantsSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionWithPrismaTenantsSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionWithPrismaTenantsSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p schedulerPartitionWithPrismaTenantsSetParam) schedulerPartitionModel() {}
+
+func (p schedulerPartitionWithPrismaTenantsSetParam) tenantsField() {}
+
+type SchedulerPartitionWithPrismaTenantsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	schedulerPartitionModel()
+	tenantsField()
+}
+
+type schedulerPartitionWithPrismaTenantsEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionWithPrismaTenantsEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionWithPrismaTenantsEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p schedulerPartitionWithPrismaTenantsEqualsParam) schedulerPartitionModel() {}
+
+func (p schedulerPartitionWithPrismaTenantsEqualsParam) tenantsField() {}
+
+func (schedulerPartitionWithPrismaTenantsSetParam) settable()  {}
+func (schedulerPartitionWithPrismaTenantsEqualsParam) equals() {}
+
+type schedulerPartitionWithPrismaTenantsEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p schedulerPartitionWithPrismaTenantsEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p schedulerPartitionWithPrismaTenantsEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p schedulerPartitionWithPrismaTenantsEqualsUniqueParam) schedulerPartitionModel() {}
+func (p schedulerPartitionWithPrismaTenantsEqualsUniqueParam) tenantsField()            {}
+
+func (schedulerPartitionWithPrismaTenantsEqualsUniqueParam) unique() {}
+func (schedulerPartitionWithPrismaTenantsEqualsUniqueParam) equals() {}
+
 type tenantWorkerPartitionActions struct {
 	// client holds the prisma client
 	client *PrismaClient
@@ -209275,6 +212923,7 @@ var tenantOutput = []builder.Output{
 	{Name: "slug"},
 	{Name: "analyticsOptOut"},
 	{Name: "controllerPartitionId"},
+	{Name: "schedulerPartitionId"},
 	{Name: "workerPartitionId"},
 	{Name: "dataRetentionPeriod"},
 	{Name: "alertMemberEmails"},
@@ -210145,6 +213794,162 @@ func (p tenantWithPrismaControllerPartitionIDEqualsUniqueParam) controllerPartit
 
 func (tenantWithPrismaControllerPartitionIDEqualsUniqueParam) unique() {}
 func (tenantWithPrismaControllerPartitionIDEqualsUniqueParam) equals() {}
+
+type TenantWithPrismaSchedulerPartitionEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tenantModel()
+	schedulerPartitionField()
+}
+
+type TenantWithPrismaSchedulerPartitionSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantModel()
+	schedulerPartitionField()
+}
+
+type tenantWithPrismaSchedulerPartitionSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaSchedulerPartitionSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaSchedulerPartitionSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaSchedulerPartitionSetParam) tenantModel() {}
+
+func (p tenantWithPrismaSchedulerPartitionSetParam) schedulerPartitionField() {}
+
+type TenantWithPrismaSchedulerPartitionWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantModel()
+	schedulerPartitionField()
+}
+
+type tenantWithPrismaSchedulerPartitionEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaSchedulerPartitionEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaSchedulerPartitionEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaSchedulerPartitionEqualsParam) tenantModel() {}
+
+func (p tenantWithPrismaSchedulerPartitionEqualsParam) schedulerPartitionField() {}
+
+func (tenantWithPrismaSchedulerPartitionSetParam) settable()  {}
+func (tenantWithPrismaSchedulerPartitionEqualsParam) equals() {}
+
+type tenantWithPrismaSchedulerPartitionEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaSchedulerPartitionEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaSchedulerPartitionEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaSchedulerPartitionEqualsUniqueParam) tenantModel()             {}
+func (p tenantWithPrismaSchedulerPartitionEqualsUniqueParam) schedulerPartitionField() {}
+
+func (tenantWithPrismaSchedulerPartitionEqualsUniqueParam) unique() {}
+func (tenantWithPrismaSchedulerPartitionEqualsUniqueParam) equals() {}
+
+type TenantWithPrismaSchedulerPartitionIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	tenantModel()
+	schedulerPartitionIDField()
+}
+
+type TenantWithPrismaSchedulerPartitionIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantModel()
+	schedulerPartitionIDField()
+}
+
+type tenantWithPrismaSchedulerPartitionIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaSchedulerPartitionIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaSchedulerPartitionIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaSchedulerPartitionIDSetParam) tenantModel() {}
+
+func (p tenantWithPrismaSchedulerPartitionIDSetParam) schedulerPartitionIDField() {}
+
+type TenantWithPrismaSchedulerPartitionIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	tenantModel()
+	schedulerPartitionIDField()
+}
+
+type tenantWithPrismaSchedulerPartitionIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaSchedulerPartitionIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaSchedulerPartitionIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaSchedulerPartitionIDEqualsParam) tenantModel() {}
+
+func (p tenantWithPrismaSchedulerPartitionIDEqualsParam) schedulerPartitionIDField() {}
+
+func (tenantWithPrismaSchedulerPartitionIDSetParam) settable()  {}
+func (tenantWithPrismaSchedulerPartitionIDEqualsParam) equals() {}
+
+type tenantWithPrismaSchedulerPartitionIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p tenantWithPrismaSchedulerPartitionIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p tenantWithPrismaSchedulerPartitionIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p tenantWithPrismaSchedulerPartitionIDEqualsUniqueParam) tenantModel()               {}
+func (p tenantWithPrismaSchedulerPartitionIDEqualsUniqueParam) schedulerPartitionIDField() {}
+
+func (tenantWithPrismaSchedulerPartitionIDEqualsUniqueParam) unique() {}
+func (tenantWithPrismaSchedulerPartitionIDEqualsUniqueParam) equals() {}
 
 type TenantWithPrismaWorkerPartitionEqualsSetParam interface {
 	field() builder.Field
@@ -246997,6 +250802,7 @@ var queueOutput = []builder.Output{
 	{Name: "id"},
 	{Name: "tenantId"},
 	{Name: "name"},
+	{Name: "lastActive"},
 }
 
 type QueueRelationWith interface {
@@ -247396,6 +251202,84 @@ func (p queueWithPrismaNameEqualsUniqueParam) nameField()  {}
 
 func (queueWithPrismaNameEqualsUniqueParam) unique() {}
 func (queueWithPrismaNameEqualsUniqueParam) equals() {}
+
+type QueueWithPrismaLastActiveEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	queueModel()
+	lastActiveField()
+}
+
+type QueueWithPrismaLastActiveSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueModel()
+	lastActiveField()
+}
+
+type queueWithPrismaLastActiveSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueWithPrismaLastActiveSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueWithPrismaLastActiveSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueWithPrismaLastActiveSetParam) queueModel() {}
+
+func (p queueWithPrismaLastActiveSetParam) lastActiveField() {}
+
+type QueueWithPrismaLastActiveWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	queueModel()
+	lastActiveField()
+}
+
+type queueWithPrismaLastActiveEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueWithPrismaLastActiveEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueWithPrismaLastActiveEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueWithPrismaLastActiveEqualsParam) queueModel() {}
+
+func (p queueWithPrismaLastActiveEqualsParam) lastActiveField() {}
+
+func (queueWithPrismaLastActiveSetParam) settable()  {}
+func (queueWithPrismaLastActiveEqualsParam) equals() {}
+
+type queueWithPrismaLastActiveEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p queueWithPrismaLastActiveEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p queueWithPrismaLastActiveEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p queueWithPrismaLastActiveEqualsUniqueParam) queueModel()      {}
+func (p queueWithPrismaLastActiveEqualsUniqueParam) lastActiveField() {}
+
+func (queueWithPrismaLastActiveEqualsUniqueParam) unique() {}
+func (queueWithPrismaLastActiveEqualsUniqueParam) equals() {}
 
 type queueItemActions struct {
 	// client holds the prisma client
@@ -264567,6 +268451,74 @@ func (r controllerPartitionCreateOne) Exec(ctx context.Context) (*ControllerPart
 
 func (r controllerPartitionCreateOne) Tx() ControllerPartitionUniqueTxResult {
 	v := newControllerPartitionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+// Creates a single schedulerPartition.
+func (r schedulerPartitionActions) CreateOne(
+	_id SchedulerPartitionWithPrismaIDSetParam,
+
+	optional ...SchedulerPartitionSetParam,
+) schedulerPartitionCreateOne {
+	var v schedulerPartitionCreateOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "createOne"
+	v.query.Model = "SchedulerPartition"
+	v.query.Outputs = schedulerPartitionOutput
+
+	var fields []builder.Field
+
+	fields = append(fields, _id.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+func (r schedulerPartitionCreateOne) With(params ...SchedulerPartitionRelationWith) schedulerPartitionCreateOne {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+type schedulerPartitionCreateOne struct {
+	query builder.Query
+}
+
+func (p schedulerPartitionCreateOne) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p schedulerPartitionCreateOne) schedulerPartitionModel() {}
+
+func (r schedulerPartitionCreateOne) Exec(ctx context.Context) (*SchedulerPartitionModel, error) {
+	var v SchedulerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r schedulerPartitionCreateOne) Tx() SchedulerPartitionUniqueTxResult {
+	v := newSchedulerPartitionUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
@@ -282532,6 +286484,1210 @@ func (r controllerPartitionDeleteMany) Tx() ControllerPartitionManyTxResult {
 	return v
 }
 
+type schedulerPartitionToTenantsFindUnique struct {
+	query builder.Query
+}
+
+func (r schedulerPartitionToTenantsFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r schedulerPartitionToTenantsFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r schedulerPartitionToTenantsFindUnique) with()                       {}
+func (r schedulerPartitionToTenantsFindUnique) schedulerPartitionModel()    {}
+func (r schedulerPartitionToTenantsFindUnique) schedulerPartitionRelation() {}
+
+func (r schedulerPartitionToTenantsFindUnique) With(params ...TenantRelationWith) schedulerPartitionToTenantsFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r schedulerPartitionToTenantsFindUnique) Select(params ...schedulerPartitionPrismaFields) schedulerPartitionToTenantsFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r schedulerPartitionToTenantsFindUnique) Omit(params ...schedulerPartitionPrismaFields) schedulerPartitionToTenantsFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range schedulerPartitionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r schedulerPartitionToTenantsFindUnique) Exec(ctx context.Context) (
+	*SchedulerPartitionModel,
+	error,
+) {
+	var v *SchedulerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r schedulerPartitionToTenantsFindUnique) ExecInner(ctx context.Context) (
+	*InnerSchedulerPartition,
+	error,
+) {
+	var v *InnerSchedulerPartition
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r schedulerPartitionToTenantsFindUnique) Update(params ...SchedulerPartitionSetParam) schedulerPartitionToTenantsUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "SchedulerPartition"
+
+	var v schedulerPartitionToTenantsUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type schedulerPartitionToTenantsUpdateUnique struct {
+	query builder.Query
+}
+
+func (r schedulerPartitionToTenantsUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r schedulerPartitionToTenantsUpdateUnique) schedulerPartitionModel() {}
+
+func (r schedulerPartitionToTenantsUpdateUnique) Exec(ctx context.Context) (*SchedulerPartitionModel, error) {
+	var v SchedulerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r schedulerPartitionToTenantsUpdateUnique) Tx() SchedulerPartitionUniqueTxResult {
+	v := newSchedulerPartitionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r schedulerPartitionToTenantsFindUnique) Delete() schedulerPartitionToTenantsDeleteUnique {
+	var v schedulerPartitionToTenantsDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "SchedulerPartition"
+
+	return v
+}
+
+type schedulerPartitionToTenantsDeleteUnique struct {
+	query builder.Query
+}
+
+func (r schedulerPartitionToTenantsDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p schedulerPartitionToTenantsDeleteUnique) schedulerPartitionModel() {}
+
+func (r schedulerPartitionToTenantsDeleteUnique) Exec(ctx context.Context) (*SchedulerPartitionModel, error) {
+	var v SchedulerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r schedulerPartitionToTenantsDeleteUnique) Tx() SchedulerPartitionUniqueTxResult {
+	v := newSchedulerPartitionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type schedulerPartitionToTenantsFindFirst struct {
+	query builder.Query
+}
+
+func (r schedulerPartitionToTenantsFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r schedulerPartitionToTenantsFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r schedulerPartitionToTenantsFindFirst) with()                       {}
+func (r schedulerPartitionToTenantsFindFirst) schedulerPartitionModel()    {}
+func (r schedulerPartitionToTenantsFindFirst) schedulerPartitionRelation() {}
+
+func (r schedulerPartitionToTenantsFindFirst) With(params ...TenantRelationWith) schedulerPartitionToTenantsFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r schedulerPartitionToTenantsFindFirst) Select(params ...schedulerPartitionPrismaFields) schedulerPartitionToTenantsFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r schedulerPartitionToTenantsFindFirst) Omit(params ...schedulerPartitionPrismaFields) schedulerPartitionToTenantsFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range schedulerPartitionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r schedulerPartitionToTenantsFindFirst) OrderBy(params ...TenantOrderByParam) schedulerPartitionToTenantsFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r schedulerPartitionToTenantsFindFirst) Skip(count int) schedulerPartitionToTenantsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r schedulerPartitionToTenantsFindFirst) Take(count int) schedulerPartitionToTenantsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r schedulerPartitionToTenantsFindFirst) Cursor(cursor SchedulerPartitionCursorParam) schedulerPartitionToTenantsFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r schedulerPartitionToTenantsFindFirst) Exec(ctx context.Context) (
+	*SchedulerPartitionModel,
+	error,
+) {
+	var v *SchedulerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r schedulerPartitionToTenantsFindFirst) ExecInner(ctx context.Context) (
+	*InnerSchedulerPartition,
+	error,
+) {
+	var v *InnerSchedulerPartition
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type schedulerPartitionToTenantsFindMany struct {
+	query builder.Query
+}
+
+func (r schedulerPartitionToTenantsFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r schedulerPartitionToTenantsFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r schedulerPartitionToTenantsFindMany) with()                       {}
+func (r schedulerPartitionToTenantsFindMany) schedulerPartitionModel()    {}
+func (r schedulerPartitionToTenantsFindMany) schedulerPartitionRelation() {}
+
+func (r schedulerPartitionToTenantsFindMany) With(params ...TenantRelationWith) schedulerPartitionToTenantsFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r schedulerPartitionToTenantsFindMany) Select(params ...schedulerPartitionPrismaFields) schedulerPartitionToTenantsFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r schedulerPartitionToTenantsFindMany) Omit(params ...schedulerPartitionPrismaFields) schedulerPartitionToTenantsFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range schedulerPartitionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r schedulerPartitionToTenantsFindMany) OrderBy(params ...TenantOrderByParam) schedulerPartitionToTenantsFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r schedulerPartitionToTenantsFindMany) Skip(count int) schedulerPartitionToTenantsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r schedulerPartitionToTenantsFindMany) Take(count int) schedulerPartitionToTenantsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r schedulerPartitionToTenantsFindMany) Cursor(cursor SchedulerPartitionCursorParam) schedulerPartitionToTenantsFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r schedulerPartitionToTenantsFindMany) Exec(ctx context.Context) (
+	[]SchedulerPartitionModel,
+	error,
+) {
+	var v []SchedulerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r schedulerPartitionToTenantsFindMany) ExecInner(ctx context.Context) (
+	[]InnerSchedulerPartition,
+	error,
+) {
+	var v []InnerSchedulerPartition
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r schedulerPartitionToTenantsFindMany) Update(params ...SchedulerPartitionSetParam) schedulerPartitionToTenantsUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "SchedulerPartition"
+
+	r.query.Outputs = countOutput
+
+	var v schedulerPartitionToTenantsUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type schedulerPartitionToTenantsUpdateMany struct {
+	query builder.Query
+}
+
+func (r schedulerPartitionToTenantsUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r schedulerPartitionToTenantsUpdateMany) schedulerPartitionModel() {}
+
+func (r schedulerPartitionToTenantsUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r schedulerPartitionToTenantsUpdateMany) Tx() SchedulerPartitionManyTxResult {
+	v := newSchedulerPartitionManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r schedulerPartitionToTenantsFindMany) Delete() schedulerPartitionToTenantsDeleteMany {
+	var v schedulerPartitionToTenantsDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "SchedulerPartition"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type schedulerPartitionToTenantsDeleteMany struct {
+	query builder.Query
+}
+
+func (r schedulerPartitionToTenantsDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p schedulerPartitionToTenantsDeleteMany) schedulerPartitionModel() {}
+
+func (r schedulerPartitionToTenantsDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r schedulerPartitionToTenantsDeleteMany) Tx() SchedulerPartitionManyTxResult {
+	v := newSchedulerPartitionManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type schedulerPartitionFindUnique struct {
+	query builder.Query
+}
+
+func (r schedulerPartitionFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r schedulerPartitionFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r schedulerPartitionFindUnique) with()                       {}
+func (r schedulerPartitionFindUnique) schedulerPartitionModel()    {}
+func (r schedulerPartitionFindUnique) schedulerPartitionRelation() {}
+
+func (r schedulerPartitionActions) FindUnique(
+	params SchedulerPartitionEqualsUniqueWhereParam,
+) schedulerPartitionFindUnique {
+	var v schedulerPartitionFindUnique
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findUnique"
+
+	v.query.Model = "SchedulerPartition"
+	v.query.Outputs = schedulerPartitionOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r schedulerPartitionFindUnique) With(params ...SchedulerPartitionRelationWith) schedulerPartitionFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r schedulerPartitionFindUnique) Select(params ...schedulerPartitionPrismaFields) schedulerPartitionFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r schedulerPartitionFindUnique) Omit(params ...schedulerPartitionPrismaFields) schedulerPartitionFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range schedulerPartitionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r schedulerPartitionFindUnique) Exec(ctx context.Context) (
+	*SchedulerPartitionModel,
+	error,
+) {
+	var v *SchedulerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r schedulerPartitionFindUnique) ExecInner(ctx context.Context) (
+	*InnerSchedulerPartition,
+	error,
+) {
+	var v *InnerSchedulerPartition
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r schedulerPartitionFindUnique) Update(params ...SchedulerPartitionSetParam) schedulerPartitionUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "SchedulerPartition"
+
+	var v schedulerPartitionUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type schedulerPartitionUpdateUnique struct {
+	query builder.Query
+}
+
+func (r schedulerPartitionUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r schedulerPartitionUpdateUnique) schedulerPartitionModel() {}
+
+func (r schedulerPartitionUpdateUnique) Exec(ctx context.Context) (*SchedulerPartitionModel, error) {
+	var v SchedulerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r schedulerPartitionUpdateUnique) Tx() SchedulerPartitionUniqueTxResult {
+	v := newSchedulerPartitionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r schedulerPartitionFindUnique) Delete() schedulerPartitionDeleteUnique {
+	var v schedulerPartitionDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "SchedulerPartition"
+
+	return v
+}
+
+type schedulerPartitionDeleteUnique struct {
+	query builder.Query
+}
+
+func (r schedulerPartitionDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p schedulerPartitionDeleteUnique) schedulerPartitionModel() {}
+
+func (r schedulerPartitionDeleteUnique) Exec(ctx context.Context) (*SchedulerPartitionModel, error) {
+	var v SchedulerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r schedulerPartitionDeleteUnique) Tx() SchedulerPartitionUniqueTxResult {
+	v := newSchedulerPartitionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type schedulerPartitionFindFirst struct {
+	query builder.Query
+}
+
+func (r schedulerPartitionFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r schedulerPartitionFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r schedulerPartitionFindFirst) with()                       {}
+func (r schedulerPartitionFindFirst) schedulerPartitionModel()    {}
+func (r schedulerPartitionFindFirst) schedulerPartitionRelation() {}
+
+func (r schedulerPartitionActions) FindFirst(
+	params ...SchedulerPartitionWhereParam,
+) schedulerPartitionFindFirst {
+	var v schedulerPartitionFindFirst
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findFirst"
+
+	v.query.Model = "SchedulerPartition"
+	v.query.Outputs = schedulerPartitionOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r schedulerPartitionFindFirst) With(params ...SchedulerPartitionRelationWith) schedulerPartitionFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r schedulerPartitionFindFirst) Select(params ...schedulerPartitionPrismaFields) schedulerPartitionFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r schedulerPartitionFindFirst) Omit(params ...schedulerPartitionPrismaFields) schedulerPartitionFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range schedulerPartitionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r schedulerPartitionFindFirst) OrderBy(params ...SchedulerPartitionOrderByParam) schedulerPartitionFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r schedulerPartitionFindFirst) Skip(count int) schedulerPartitionFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r schedulerPartitionFindFirst) Take(count int) schedulerPartitionFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r schedulerPartitionFindFirst) Cursor(cursor SchedulerPartitionCursorParam) schedulerPartitionFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r schedulerPartitionFindFirst) Exec(ctx context.Context) (
+	*SchedulerPartitionModel,
+	error,
+) {
+	var v *SchedulerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r schedulerPartitionFindFirst) ExecInner(ctx context.Context) (
+	*InnerSchedulerPartition,
+	error,
+) {
+	var v *InnerSchedulerPartition
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type schedulerPartitionFindMany struct {
+	query builder.Query
+}
+
+func (r schedulerPartitionFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r schedulerPartitionFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r schedulerPartitionFindMany) with()                       {}
+func (r schedulerPartitionFindMany) schedulerPartitionModel()    {}
+func (r schedulerPartitionFindMany) schedulerPartitionRelation() {}
+
+func (r schedulerPartitionActions) FindMany(
+	params ...SchedulerPartitionWhereParam,
+) schedulerPartitionFindMany {
+	var v schedulerPartitionFindMany
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "query"
+
+	v.query.Method = "findMany"
+
+	v.query.Model = "SchedulerPartition"
+	v.query.Outputs = schedulerPartitionOutput
+
+	var where []builder.Field
+	for _, q := range params {
+		if query := q.getQuery(); query.Operation != "" {
+			v.query.Outputs = append(v.query.Outputs, builder.Output{
+				Name:    query.Method,
+				Inputs:  query.Inputs,
+				Outputs: query.Outputs,
+			})
+		} else {
+			where = append(where, q.field())
+		}
+	}
+
+	if len(where) > 0 {
+		v.query.Inputs = append(v.query.Inputs, builder.Input{
+			Name:   "where",
+			Fields: where,
+		})
+	}
+
+	return v
+}
+
+func (r schedulerPartitionFindMany) With(params ...SchedulerPartitionRelationWith) schedulerPartitionFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r schedulerPartitionFindMany) Select(params ...schedulerPartitionPrismaFields) schedulerPartitionFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r schedulerPartitionFindMany) Omit(params ...schedulerPartitionPrismaFields) schedulerPartitionFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range schedulerPartitionOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r schedulerPartitionFindMany) OrderBy(params ...SchedulerPartitionOrderByParam) schedulerPartitionFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r schedulerPartitionFindMany) Skip(count int) schedulerPartitionFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r schedulerPartitionFindMany) Take(count int) schedulerPartitionFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r schedulerPartitionFindMany) Cursor(cursor SchedulerPartitionCursorParam) schedulerPartitionFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r schedulerPartitionFindMany) Exec(ctx context.Context) (
+	[]SchedulerPartitionModel,
+	error,
+) {
+	var v []SchedulerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r schedulerPartitionFindMany) ExecInner(ctx context.Context) (
+	[]InnerSchedulerPartition,
+	error,
+) {
+	var v []InnerSchedulerPartition
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r schedulerPartitionFindMany) Update(params ...SchedulerPartitionSetParam) schedulerPartitionUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "SchedulerPartition"
+
+	r.query.Outputs = countOutput
+
+	var v schedulerPartitionUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type schedulerPartitionUpdateMany struct {
+	query builder.Query
+}
+
+func (r schedulerPartitionUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r schedulerPartitionUpdateMany) schedulerPartitionModel() {}
+
+func (r schedulerPartitionUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r schedulerPartitionUpdateMany) Tx() SchedulerPartitionManyTxResult {
+	v := newSchedulerPartitionManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r schedulerPartitionFindMany) Delete() schedulerPartitionDeleteMany {
+	var v schedulerPartitionDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "SchedulerPartition"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type schedulerPartitionDeleteMany struct {
+	query builder.Query
+}
+
+func (r schedulerPartitionDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p schedulerPartitionDeleteMany) schedulerPartitionModel() {}
+
+func (r schedulerPartitionDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r schedulerPartitionDeleteMany) Tx() SchedulerPartitionManyTxResult {
+	v := newSchedulerPartitionManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
 type tenantWorkerPartitionToTenantsFindUnique struct {
 	query builder.Query
 }
@@ -284284,6 +289440,560 @@ func (r tenantToControllerPartitionDeleteMany) Exec(ctx context.Context) (*Batch
 }
 
 func (r tenantToControllerPartitionDeleteMany) Tx() TenantManyTxResult {
+	v := newTenantManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type tenantToSchedulerPartitionFindUnique struct {
+	query builder.Query
+}
+
+func (r tenantToSchedulerPartitionFindUnique) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToSchedulerPartitionFindUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToSchedulerPartitionFindUnique) with()           {}
+func (r tenantToSchedulerPartitionFindUnique) tenantModel()    {}
+func (r tenantToSchedulerPartitionFindUnique) tenantRelation() {}
+
+func (r tenantToSchedulerPartitionFindUnique) With(params ...SchedulerPartitionRelationWith) tenantToSchedulerPartitionFindUnique {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tenantToSchedulerPartitionFindUnique) Select(params ...tenantPrismaFields) tenantToSchedulerPartitionFindUnique {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToSchedulerPartitionFindUnique) Omit(params ...tenantPrismaFields) tenantToSchedulerPartitionFindUnique {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tenantOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToSchedulerPartitionFindUnique) Exec(ctx context.Context) (
+	*TenantModel,
+	error,
+) {
+	var v *TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tenantToSchedulerPartitionFindUnique) ExecInner(ctx context.Context) (
+	*InnerTenant,
+	error,
+) {
+	var v *InnerTenant
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tenantToSchedulerPartitionFindUnique) Update(params ...TenantSetParam) tenantToSchedulerPartitionUpdateUnique {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateOne"
+	r.query.Model = "Tenant"
+
+	var v tenantToSchedulerPartitionUpdateUnique
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type tenantToSchedulerPartitionUpdateUnique struct {
+	query builder.Query
+}
+
+func (r tenantToSchedulerPartitionUpdateUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToSchedulerPartitionUpdateUnique) tenantModel() {}
+
+func (r tenantToSchedulerPartitionUpdateUnique) Exec(ctx context.Context) (*TenantModel, error) {
+	var v TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantToSchedulerPartitionUpdateUnique) Tx() TenantUniqueTxResult {
+	v := newTenantUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r tenantToSchedulerPartitionFindUnique) Delete() tenantToSchedulerPartitionDeleteUnique {
+	var v tenantToSchedulerPartitionDeleteUnique
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteOne"
+	v.query.Model = "Tenant"
+
+	return v
+}
+
+type tenantToSchedulerPartitionDeleteUnique struct {
+	query builder.Query
+}
+
+func (r tenantToSchedulerPartitionDeleteUnique) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p tenantToSchedulerPartitionDeleteUnique) tenantModel() {}
+
+func (r tenantToSchedulerPartitionDeleteUnique) Exec(ctx context.Context) (*TenantModel, error) {
+	var v TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantToSchedulerPartitionDeleteUnique) Tx() TenantUniqueTxResult {
+	v := newTenantUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type tenantToSchedulerPartitionFindFirst struct {
+	query builder.Query
+}
+
+func (r tenantToSchedulerPartitionFindFirst) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToSchedulerPartitionFindFirst) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToSchedulerPartitionFindFirst) with()           {}
+func (r tenantToSchedulerPartitionFindFirst) tenantModel()    {}
+func (r tenantToSchedulerPartitionFindFirst) tenantRelation() {}
+
+func (r tenantToSchedulerPartitionFindFirst) With(params ...SchedulerPartitionRelationWith) tenantToSchedulerPartitionFindFirst {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tenantToSchedulerPartitionFindFirst) Select(params ...tenantPrismaFields) tenantToSchedulerPartitionFindFirst {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToSchedulerPartitionFindFirst) Omit(params ...tenantPrismaFields) tenantToSchedulerPartitionFindFirst {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tenantOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToSchedulerPartitionFindFirst) OrderBy(params ...SchedulerPartitionOrderByParam) tenantToSchedulerPartitionFindFirst {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r tenantToSchedulerPartitionFindFirst) Skip(count int) tenantToSchedulerPartitionFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantToSchedulerPartitionFindFirst) Take(count int) tenantToSchedulerPartitionFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantToSchedulerPartitionFindFirst) Cursor(cursor TenantCursorParam) tenantToSchedulerPartitionFindFirst {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r tenantToSchedulerPartitionFindFirst) Exec(ctx context.Context) (
+	*TenantModel,
+	error,
+) {
+	var v *TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+func (r tenantToSchedulerPartitionFindFirst) ExecInner(ctx context.Context) (
+	*InnerTenant,
+	error,
+) {
+	var v *InnerTenant
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	if v == nil {
+		return nil, ErrNotFound
+	}
+
+	return v, nil
+}
+
+type tenantToSchedulerPartitionFindMany struct {
+	query builder.Query
+}
+
+func (r tenantToSchedulerPartitionFindMany) getQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToSchedulerPartitionFindMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToSchedulerPartitionFindMany) with()           {}
+func (r tenantToSchedulerPartitionFindMany) tenantModel()    {}
+func (r tenantToSchedulerPartitionFindMany) tenantRelation() {}
+
+func (r tenantToSchedulerPartitionFindMany) With(params ...SchedulerPartitionRelationWith) tenantToSchedulerPartitionFindMany {
+	for _, q := range params {
+		query := q.getQuery()
+		r.query.Outputs = append(r.query.Outputs, builder.Output{
+			Name:    query.Method,
+			Inputs:  query.Inputs,
+			Outputs: query.Outputs,
+		})
+	}
+
+	return r
+}
+
+func (r tenantToSchedulerPartitionFindMany) Select(params ...tenantPrismaFields) tenantToSchedulerPartitionFindMany {
+	var outputs []builder.Output
+
+	for _, param := range params {
+		outputs = append(outputs, builder.Output{
+			Name: string(param),
+		})
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToSchedulerPartitionFindMany) Omit(params ...tenantPrismaFields) tenantToSchedulerPartitionFindMany {
+	var outputs []builder.Output
+
+	var raw []string
+	for _, param := range params {
+		raw = append(raw, string(param))
+	}
+
+	for _, output := range tenantOutput {
+		if !slices.Contains(raw, output.Name) {
+			outputs = append(outputs, output)
+		}
+	}
+
+	r.query.Outputs = outputs
+
+	return r
+}
+
+func (r tenantToSchedulerPartitionFindMany) OrderBy(params ...SchedulerPartitionOrderByParam) tenantToSchedulerPartitionFindMany {
+	var fields []builder.Field
+
+	for _, param := range params {
+		fields = append(fields, builder.Field{
+			Name:   param.field().Name,
+			Value:  param.field().Value,
+			Fields: param.field().Fields,
+		})
+	}
+
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:     "orderBy",
+		Fields:   fields,
+		WrapList: true,
+	})
+
+	return r
+}
+
+func (r tenantToSchedulerPartitionFindMany) Skip(count int) tenantToSchedulerPartitionFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "skip",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantToSchedulerPartitionFindMany) Take(count int) tenantToSchedulerPartitionFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:  "take",
+		Value: count,
+	})
+	return r
+}
+
+func (r tenantToSchedulerPartitionFindMany) Cursor(cursor TenantCursorParam) tenantToSchedulerPartitionFindMany {
+	r.query.Inputs = append(r.query.Inputs, builder.Input{
+		Name:   "cursor",
+		Fields: []builder.Field{cursor.field()},
+	})
+	return r
+}
+
+func (r tenantToSchedulerPartitionFindMany) Exec(ctx context.Context) (
+	[]TenantModel,
+	error,
+) {
+	var v []TenantModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r tenantToSchedulerPartitionFindMany) ExecInner(ctx context.Context) (
+	[]InnerTenant,
+	error,
+) {
+	var v []InnerTenant
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
+func (r tenantToSchedulerPartitionFindMany) Update(params ...TenantSetParam) tenantToSchedulerPartitionUpdateMany {
+	r.query.Operation = "mutation"
+	r.query.Method = "updateMany"
+	r.query.Model = "Tenant"
+
+	r.query.Outputs = countOutput
+
+	var v tenantToSchedulerPartitionUpdateMany
+	v.query = r.query
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "data",
+		Fields: fields,
+	})
+	return v
+}
+
+type tenantToSchedulerPartitionUpdateMany struct {
+	query builder.Query
+}
+
+func (r tenantToSchedulerPartitionUpdateMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r tenantToSchedulerPartitionUpdateMany) tenantModel() {}
+
+func (r tenantToSchedulerPartitionUpdateMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantToSchedulerPartitionUpdateMany) Tx() TenantManyTxResult {
+	v := newTenantManyTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+func (r tenantToSchedulerPartitionFindMany) Delete() tenantToSchedulerPartitionDeleteMany {
+	var v tenantToSchedulerPartitionDeleteMany
+	v.query = r.query
+	v.query.Operation = "mutation"
+	v.query.Method = "deleteMany"
+	v.query.Model = "Tenant"
+
+	v.query.Outputs = countOutput
+
+	return v
+}
+
+type tenantToSchedulerPartitionDeleteMany struct {
+	query builder.Query
+}
+
+func (r tenantToSchedulerPartitionDeleteMany) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (p tenantToSchedulerPartitionDeleteMany) tenantModel() {}
+
+func (r tenantToSchedulerPartitionDeleteMany) Exec(ctx context.Context) (*BatchResult, error) {
+	var v BatchResult
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r tenantToSchedulerPartitionDeleteMany) Tx() TenantManyTxResult {
 	v := newTenantManyTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
@@ -386264,6 +391974,54 @@ func (r ControllerPartitionManyTxResult) Result() (v *BatchResult) {
 	return v
 }
 
+func newSchedulerPartitionUniqueTxResult() SchedulerPartitionUniqueTxResult {
+	return SchedulerPartitionUniqueTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type SchedulerPartitionUniqueTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p SchedulerPartitionUniqueTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p SchedulerPartitionUniqueTxResult) IsTx() {}
+
+func (r SchedulerPartitionUniqueTxResult) Result() (v *SchedulerPartitionModel) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func newSchedulerPartitionManyTxResult() SchedulerPartitionManyTxResult {
+	return SchedulerPartitionManyTxResult{
+		result: &transaction.Result{},
+	}
+}
+
+type SchedulerPartitionManyTxResult struct {
+	query  builder.Query
+	result *transaction.Result
+}
+
+func (p SchedulerPartitionManyTxResult) ExtractQuery() builder.Query {
+	return p.query
+}
+
+func (p SchedulerPartitionManyTxResult) IsTx() {}
+
+func (r SchedulerPartitionManyTxResult) Result() (v *BatchResult) {
+	if err := r.result.Get(r.query.TxResult, &v); err != nil {
+		panic(err)
+	}
+	return v
+}
+
 func newTenantWorkerPartitionUniqueTxResult() TenantWorkerPartitionUniqueTxResult {
 	return TenantWorkerPartitionUniqueTxResult{
 		result: &transaction.Result{},
@@ -389801,6 +395559,116 @@ func (r controllerPartitionUpsertOne) Exec(ctx context.Context) (*ControllerPart
 
 func (r controllerPartitionUpsertOne) Tx() ControllerPartitionUniqueTxResult {
 	v := newControllerPartitionUniqueTxResult()
+	v.query = r.query
+	v.query.TxResult = make(chan []byte, 1)
+	return v
+}
+
+type schedulerPartitionUpsertOne struct {
+	query builder.Query
+}
+
+func (r schedulerPartitionUpsertOne) getQuery() builder.Query {
+	return r.query
+}
+
+func (r schedulerPartitionUpsertOne) ExtractQuery() builder.Query {
+	return r.query
+}
+
+func (r schedulerPartitionUpsertOne) with()                       {}
+func (r schedulerPartitionUpsertOne) schedulerPartitionModel()    {}
+func (r schedulerPartitionUpsertOne) schedulerPartitionRelation() {}
+
+func (r schedulerPartitionActions) UpsertOne(
+	params SchedulerPartitionEqualsUniqueWhereParam,
+) schedulerPartitionUpsertOne {
+	var v schedulerPartitionUpsertOne
+	v.query = builder.NewQuery()
+	v.query.Engine = r.client
+
+	v.query.Operation = "mutation"
+	v.query.Method = "upsertOne"
+	v.query.Model = "SchedulerPartition"
+	v.query.Outputs = schedulerPartitionOutput
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "where",
+		Fields: builder.TransformEquals([]builder.Field{params.field()}),
+	})
+
+	return v
+}
+
+func (r schedulerPartitionUpsertOne) Create(
+
+	_id SchedulerPartitionWithPrismaIDSetParam,
+
+	optional ...SchedulerPartitionSetParam,
+) schedulerPartitionUpsertOne {
+	var v schedulerPartitionUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	fields = append(fields, _id.field())
+
+	for _, q := range optional {
+		fields = append(fields, q.field())
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "create",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r schedulerPartitionUpsertOne) Update(
+	params ...SchedulerPartitionSetParam,
+) schedulerPartitionUpsertOne {
+	var v schedulerPartitionUpsertOne
+	v.query = r.query
+
+	var fields []builder.Field
+	for _, q := range params {
+
+		field := q.field()
+
+		_, isJson := field.Value.(types.JSON)
+		if field.Value != nil && !isJson {
+			v := field.Value
+			field.Fields = []builder.Field{
+				{
+					Name:  "set",
+					Value: v,
+				},
+			}
+
+			field.Value = nil
+		}
+
+		fields = append(fields, field)
+	}
+
+	v.query.Inputs = append(v.query.Inputs, builder.Input{
+		Name:   "update",
+		Fields: fields,
+	})
+
+	return v
+}
+
+func (r schedulerPartitionUpsertOne) Exec(ctx context.Context) (*SchedulerPartitionModel, error) {
+	var v SchedulerPartitionModel
+	if err := r.query.Exec(ctx, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func (r schedulerPartitionUpsertOne) Tx() SchedulerPartitionUniqueTxResult {
+	v := newSchedulerPartitionUniqueTxResult()
 	v.query = r.query
 	v.query.TxResult = make(chan []byte, 1)
 	return v
