@@ -1672,6 +1672,13 @@ enum WorkerType {
   SELFHOSTED
 }
 
+enum WorkerSDKS {
+  UNKNOWN
+  GO
+  PYTHON
+  TYPESCRIPT
+}
+
 model Worker {
   // base fields
   id        String    @id @unique @default(uuid()) @db.Uuid
@@ -1721,6 +1728,12 @@ model Worker {
 
   webhook   WebhookWorker? @relation(fields: [webhookId], references: [id], onDelete: SetNull, onUpdate: Cascade)
   webhookId String?        @unique @db.Uuid
+
+  sdkVersion      String?
+  language        WorkerSDKS?
+  languageVersion String?
+  os              String?
+  runtimeExtra    String?
 }
 
 model WorkerAssignEvent {
@@ -2399,6 +2412,16 @@ const (
 )
 
 type RawWorkerType WorkerType
+type WorkerSDKS string
+
+const (
+	WorkerSDKSUnknown    WorkerSDKS = "UNKNOWN"
+	WorkerSDKSGo         WorkerSDKS = "GO"
+	WorkerSDKSPython     WorkerSDKS = "PYTHON"
+	WorkerSDKSTypescript WorkerSDKS = "TYPESCRIPT"
+)
+
+type RawWorkerSDKS WorkerSDKS
 type VcsProvider string
 
 const (
@@ -3159,6 +3182,11 @@ const (
 	WorkerScalarFieldEnumDispatcherID            WorkerScalarFieldEnum = "dispatcherId"
 	WorkerScalarFieldEnumMaxRuns                 WorkerScalarFieldEnum = "maxRuns"
 	WorkerScalarFieldEnumWebhookID               WorkerScalarFieldEnum = "webhookId"
+	WorkerScalarFieldEnumSdkVersion              WorkerScalarFieldEnum = "sdkVersion"
+	WorkerScalarFieldEnumLanguage                WorkerScalarFieldEnum = "language"
+	WorkerScalarFieldEnumLanguageVersion         WorkerScalarFieldEnum = "languageVersion"
+	WorkerScalarFieldEnumOs                      WorkerScalarFieldEnum = "os"
+	WorkerScalarFieldEnumRuntimeExtra            WorkerScalarFieldEnum = "runtimeExtra"
 )
 
 type WorkerAssignEventScalarFieldEnum string
@@ -4618,6 +4646,16 @@ const workerFieldAssignedEvents workerPrismaFields = "assignedEvents"
 const workerFieldWebhook workerPrismaFields = "webhook"
 
 const workerFieldWebhookID workerPrismaFields = "webhookId"
+
+const workerFieldSdkVersion workerPrismaFields = "sdkVersion"
+
+const workerFieldLanguage workerPrismaFields = "language"
+
+const workerFieldLanguageVersion workerPrismaFields = "languageVersion"
+
+const workerFieldOs workerPrismaFields = "os"
+
+const workerFieldRuntimeExtra workerPrismaFields = "runtimeExtra"
 
 type workerAssignEventPrismaFields = prismaFields
 
@@ -11779,38 +11817,48 @@ type WorkerModel struct {
 
 // InnerWorker holds the actual data
 type InnerWorker struct {
-	ID                      string     `json:"id"`
-	CreatedAt               DateTime   `json:"createdAt"`
-	UpdatedAt               DateTime   `json:"updatedAt"`
-	DeletedAt               *DateTime  `json:"deletedAt,omitempty"`
-	Type                    WorkerType `json:"type"`
-	TenantID                string     `json:"tenantId"`
-	LastHeartbeatAt         *DateTime  `json:"lastHeartbeatAt,omitempty"`
-	IsPaused                bool       `json:"isPaused"`
-	IsActive                bool       `json:"isActive"`
-	LastListenerEstablished *DateTime  `json:"lastListenerEstablished,omitempty"`
-	Name                    string     `json:"name"`
-	DispatcherID            *string    `json:"dispatcherId,omitempty"`
-	MaxRuns                 int        `json:"maxRuns"`
-	WebhookID               *string    `json:"webhookId,omitempty"`
+	ID                      string      `json:"id"`
+	CreatedAt               DateTime    `json:"createdAt"`
+	UpdatedAt               DateTime    `json:"updatedAt"`
+	DeletedAt               *DateTime   `json:"deletedAt,omitempty"`
+	Type                    WorkerType  `json:"type"`
+	TenantID                string      `json:"tenantId"`
+	LastHeartbeatAt         *DateTime   `json:"lastHeartbeatAt,omitempty"`
+	IsPaused                bool        `json:"isPaused"`
+	IsActive                bool        `json:"isActive"`
+	LastListenerEstablished *DateTime   `json:"lastListenerEstablished,omitempty"`
+	Name                    string      `json:"name"`
+	DispatcherID            *string     `json:"dispatcherId,omitempty"`
+	MaxRuns                 int         `json:"maxRuns"`
+	WebhookID               *string     `json:"webhookId,omitempty"`
+	SdkVersion              *string     `json:"sdkVersion,omitempty"`
+	Language                *WorkerSDKS `json:"language,omitempty"`
+	LanguageVersion         *string     `json:"languageVersion,omitempty"`
+	Os                      *string     `json:"os,omitempty"`
+	RuntimeExtra            *string     `json:"runtimeExtra,omitempty"`
 }
 
 // RawWorkerModel is a struct for Worker when used in raw queries
 type RawWorkerModel struct {
-	ID                      RawString     `json:"id"`
-	CreatedAt               RawDateTime   `json:"createdAt"`
-	UpdatedAt               RawDateTime   `json:"updatedAt"`
-	DeletedAt               *RawDateTime  `json:"deletedAt,omitempty"`
-	Type                    RawWorkerType `json:"type"`
-	TenantID                RawString     `json:"tenantId"`
-	LastHeartbeatAt         *RawDateTime  `json:"lastHeartbeatAt,omitempty"`
-	IsPaused                RawBoolean    `json:"isPaused"`
-	IsActive                RawBoolean    `json:"isActive"`
-	LastListenerEstablished *RawDateTime  `json:"lastListenerEstablished,omitempty"`
-	Name                    RawString     `json:"name"`
-	DispatcherID            *RawString    `json:"dispatcherId,omitempty"`
-	MaxRuns                 RawInt        `json:"maxRuns"`
-	WebhookID               *RawString    `json:"webhookId,omitempty"`
+	ID                      RawString      `json:"id"`
+	CreatedAt               RawDateTime    `json:"createdAt"`
+	UpdatedAt               RawDateTime    `json:"updatedAt"`
+	DeletedAt               *RawDateTime   `json:"deletedAt,omitempty"`
+	Type                    RawWorkerType  `json:"type"`
+	TenantID                RawString      `json:"tenantId"`
+	LastHeartbeatAt         *RawDateTime   `json:"lastHeartbeatAt,omitempty"`
+	IsPaused                RawBoolean     `json:"isPaused"`
+	IsActive                RawBoolean     `json:"isActive"`
+	LastListenerEstablished *RawDateTime   `json:"lastListenerEstablished,omitempty"`
+	Name                    RawString      `json:"name"`
+	DispatcherID            *RawString     `json:"dispatcherId,omitempty"`
+	MaxRuns                 RawInt         `json:"maxRuns"`
+	WebhookID               *RawString     `json:"webhookId,omitempty"`
+	SdkVersion              *RawString     `json:"sdkVersion,omitempty"`
+	Language                *RawWorkerSDKS `json:"language,omitempty"`
+	LanguageVersion         *RawString     `json:"languageVersion,omitempty"`
+	Os                      *RawString     `json:"os,omitempty"`
+	RuntimeExtra            *RawString     `json:"runtimeExtra,omitempty"`
 }
 
 // RelationsWorker holds the relation data separately
@@ -11914,6 +11962,41 @@ func (r WorkerModel) WebhookID() (value String, ok bool) {
 		return value, false
 	}
 	return *r.InnerWorker.WebhookID, true
+}
+
+func (r WorkerModel) SdkVersion() (value String, ok bool) {
+	if r.InnerWorker.SdkVersion == nil {
+		return value, false
+	}
+	return *r.InnerWorker.SdkVersion, true
+}
+
+func (r WorkerModel) Language() (value WorkerSDKS, ok bool) {
+	if r.InnerWorker.Language == nil {
+		return value, false
+	}
+	return *r.InnerWorker.Language, true
+}
+
+func (r WorkerModel) LanguageVersion() (value String, ok bool) {
+	if r.InnerWorker.LanguageVersion == nil {
+		return value, false
+	}
+	return *r.InnerWorker.LanguageVersion, true
+}
+
+func (r WorkerModel) Os() (value String, ok bool) {
+	if r.InnerWorker.Os == nil {
+		return value, false
+	}
+	return *r.InnerWorker.Os, true
+}
+
+func (r WorkerModel) RuntimeExtra() (value String, ok bool) {
+	if r.InnerWorker.RuntimeExtra == nil {
+		return value, false
+	}
+	return *r.InnerWorker.RuntimeExtra, true
 }
 
 // WorkerAssignEventModel represents the WorkerAssignEvent model and is a wrapper for accessing fields and methods
@@ -179635,6 +179718,31 @@ type workerQuery struct {
 	// @optional
 	// @unique
 	WebhookID workerQueryWebhookIDString
+
+	// SdkVersion
+	//
+	// @optional
+	SdkVersion workerQuerySdkVersionString
+
+	// Language
+	//
+	// @optional
+	Language workerQueryLanguageWorkerSDKS
+
+	// LanguageVersion
+	//
+	// @optional
+	LanguageVersion workerQueryLanguageVersionString
+
+	// Os
+	//
+	// @optional
+	Os workerQueryOsString
+
+	// RuntimeExtra
+	//
+	// @optional
+	RuntimeExtra workerQueryRuntimeExtraString
 }
 
 func (workerQuery) Not(params ...WorkerWhereParam) workerDefaultParam {
@@ -185075,6 +185183,1750 @@ func (r workerQueryWebhookIDString) HasSuffixIfPresent(value *string) workerPara
 
 func (r workerQueryWebhookIDString) Field() workerPrismaFields {
 	return workerFieldWebhookID
+}
+
+// base struct
+type workerQuerySdkVersionString struct{}
+
+// Set the optional value of SdkVersion
+func (r workerQuerySdkVersionString) Set(value string) workerSetParam {
+
+	return workerSetParam{
+		data: builder.Field{
+			Name:  "sdkVersion",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of SdkVersion dynamically
+func (r workerQuerySdkVersionString) SetIfPresent(value *String) workerSetParam {
+	if value == nil {
+		return workerSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of SdkVersion dynamically
+func (r workerQuerySdkVersionString) SetOptional(value *String) workerSetParam {
+	if value == nil {
+
+		var v *string
+		return workerSetParam{
+			data: builder.Field{
+				Name:  "sdkVersion",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workerQuerySdkVersionString) Equals(value string) workerWithPrismaSdkVersionEqualsParam {
+
+	return workerWithPrismaSdkVersionEqualsParam{
+		data: builder.Field{
+			Name: "sdkVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQuerySdkVersionString) EqualsIfPresent(value *string) workerWithPrismaSdkVersionEqualsParam {
+	if value == nil {
+		return workerWithPrismaSdkVersionEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workerQuerySdkVersionString) EqualsOptional(value *String) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "sdkVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQuerySdkVersionString) IsNull() workerDefaultParam {
+	var str *string = nil
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "sdkVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQuerySdkVersionString) Order(direction SortOrder) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name:  "sdkVersion",
+			Value: direction,
+		},
+	}
+}
+
+func (r workerQuerySdkVersionString) Cursor(cursor string) workerCursorParam {
+	return workerCursorParam{
+		data: builder.Field{
+			Name:  "sdkVersion",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workerQuerySdkVersionString) In(value []string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "sdkVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQuerySdkVersionString) InIfPresent(value []string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workerQuerySdkVersionString) NotIn(value []string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "sdkVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQuerySdkVersionString) NotInIfPresent(value []string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workerQuerySdkVersionString) Lt(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "sdkVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQuerySdkVersionString) LtIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workerQuerySdkVersionString) Lte(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "sdkVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQuerySdkVersionString) LteIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workerQuerySdkVersionString) Gt(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "sdkVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQuerySdkVersionString) GtIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workerQuerySdkVersionString) Gte(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "sdkVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQuerySdkVersionString) GteIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workerQuerySdkVersionString) Contains(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "sdkVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQuerySdkVersionString) ContainsIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r workerQuerySdkVersionString) StartsWith(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "sdkVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQuerySdkVersionString) StartsWithIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r workerQuerySdkVersionString) EndsWith(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "sdkVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQuerySdkVersionString) EndsWithIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r workerQuerySdkVersionString) Mode(value QueryMode) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "sdkVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQuerySdkVersionString) ModeIfPresent(value *QueryMode) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r workerQuerySdkVersionString) Not(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "sdkVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQuerySdkVersionString) NotIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r workerQuerySdkVersionString) HasPrefix(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "sdkVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r workerQuerySdkVersionString) HasPrefixIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r workerQuerySdkVersionString) HasSuffix(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "sdkVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r workerQuerySdkVersionString) HasSuffixIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r workerQuerySdkVersionString) Field() workerPrismaFields {
+	return workerFieldSdkVersion
+}
+
+// base struct
+type workerQueryLanguageWorkerSDKS struct{}
+
+// Set the optional value of Language
+func (r workerQueryLanguageWorkerSDKS) Set(value WorkerSDKS) workerSetParam {
+
+	return workerSetParam{
+		data: builder.Field{
+			Name:  "language",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Language dynamically
+func (r workerQueryLanguageWorkerSDKS) SetIfPresent(value *WorkerSDKS) workerSetParam {
+	if value == nil {
+		return workerSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of Language dynamically
+func (r workerQueryLanguageWorkerSDKS) SetOptional(value *WorkerSDKS) workerSetParam {
+	if value == nil {
+
+		var v *WorkerSDKS
+		return workerSetParam{
+			data: builder.Field{
+				Name:  "language",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workerQueryLanguageWorkerSDKS) Equals(value WorkerSDKS) workerWithPrismaLanguageEqualsParam {
+
+	return workerWithPrismaLanguageEqualsParam{
+		data: builder.Field{
+			Name: "language",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryLanguageWorkerSDKS) EqualsIfPresent(value *WorkerSDKS) workerWithPrismaLanguageEqualsParam {
+	if value == nil {
+		return workerWithPrismaLanguageEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workerQueryLanguageWorkerSDKS) EqualsOptional(value *WorkerSDKS) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "language",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryLanguageWorkerSDKS) IsNull() workerDefaultParam {
+	var str *string = nil
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "language",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryLanguageWorkerSDKS) Order(direction SortOrder) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name:  "language",
+			Value: direction,
+		},
+	}
+}
+
+func (r workerQueryLanguageWorkerSDKS) Cursor(cursor WorkerSDKS) workerCursorParam {
+	return workerCursorParam{
+		data: builder.Field{
+			Name:  "language",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workerQueryLanguageWorkerSDKS) In(value []WorkerSDKS) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "language",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryLanguageWorkerSDKS) InIfPresent(value []WorkerSDKS) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workerQueryLanguageWorkerSDKS) NotIn(value []WorkerSDKS) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "language",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryLanguageWorkerSDKS) NotInIfPresent(value []WorkerSDKS) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workerQueryLanguageWorkerSDKS) Not(value WorkerSDKS) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "language",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryLanguageWorkerSDKS) NotIfPresent(value *WorkerSDKS) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+func (r workerQueryLanguageWorkerSDKS) Field() workerPrismaFields {
+	return workerFieldLanguage
+}
+
+// base struct
+type workerQueryLanguageVersionString struct{}
+
+// Set the optional value of LanguageVersion
+func (r workerQueryLanguageVersionString) Set(value string) workerSetParam {
+
+	return workerSetParam{
+		data: builder.Field{
+			Name:  "languageVersion",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of LanguageVersion dynamically
+func (r workerQueryLanguageVersionString) SetIfPresent(value *String) workerSetParam {
+	if value == nil {
+		return workerSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of LanguageVersion dynamically
+func (r workerQueryLanguageVersionString) SetOptional(value *String) workerSetParam {
+	if value == nil {
+
+		var v *string
+		return workerSetParam{
+			data: builder.Field{
+				Name:  "languageVersion",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workerQueryLanguageVersionString) Equals(value string) workerWithPrismaLanguageVersionEqualsParam {
+
+	return workerWithPrismaLanguageVersionEqualsParam{
+		data: builder.Field{
+			Name: "languageVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryLanguageVersionString) EqualsIfPresent(value *string) workerWithPrismaLanguageVersionEqualsParam {
+	if value == nil {
+		return workerWithPrismaLanguageVersionEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workerQueryLanguageVersionString) EqualsOptional(value *String) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "languageVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryLanguageVersionString) IsNull() workerDefaultParam {
+	var str *string = nil
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "languageVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryLanguageVersionString) Order(direction SortOrder) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name:  "languageVersion",
+			Value: direction,
+		},
+	}
+}
+
+func (r workerQueryLanguageVersionString) Cursor(cursor string) workerCursorParam {
+	return workerCursorParam{
+		data: builder.Field{
+			Name:  "languageVersion",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workerQueryLanguageVersionString) In(value []string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "languageVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryLanguageVersionString) InIfPresent(value []string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workerQueryLanguageVersionString) NotIn(value []string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "languageVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryLanguageVersionString) NotInIfPresent(value []string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workerQueryLanguageVersionString) Lt(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "languageVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryLanguageVersionString) LtIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workerQueryLanguageVersionString) Lte(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "languageVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryLanguageVersionString) LteIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workerQueryLanguageVersionString) Gt(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "languageVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryLanguageVersionString) GtIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workerQueryLanguageVersionString) Gte(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "languageVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryLanguageVersionString) GteIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workerQueryLanguageVersionString) Contains(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "languageVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryLanguageVersionString) ContainsIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r workerQueryLanguageVersionString) StartsWith(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "languageVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryLanguageVersionString) StartsWithIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r workerQueryLanguageVersionString) EndsWith(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "languageVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryLanguageVersionString) EndsWithIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r workerQueryLanguageVersionString) Mode(value QueryMode) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "languageVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryLanguageVersionString) ModeIfPresent(value *QueryMode) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r workerQueryLanguageVersionString) Not(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "languageVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryLanguageVersionString) NotIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r workerQueryLanguageVersionString) HasPrefix(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "languageVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r workerQueryLanguageVersionString) HasPrefixIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r workerQueryLanguageVersionString) HasSuffix(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "languageVersion",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r workerQueryLanguageVersionString) HasSuffixIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r workerQueryLanguageVersionString) Field() workerPrismaFields {
+	return workerFieldLanguageVersion
+}
+
+// base struct
+type workerQueryOsString struct{}
+
+// Set the optional value of Os
+func (r workerQueryOsString) Set(value string) workerSetParam {
+
+	return workerSetParam{
+		data: builder.Field{
+			Name:  "os",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Os dynamically
+func (r workerQueryOsString) SetIfPresent(value *String) workerSetParam {
+	if value == nil {
+		return workerSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of Os dynamically
+func (r workerQueryOsString) SetOptional(value *String) workerSetParam {
+	if value == nil {
+
+		var v *string
+		return workerSetParam{
+			data: builder.Field{
+				Name:  "os",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workerQueryOsString) Equals(value string) workerWithPrismaOsEqualsParam {
+
+	return workerWithPrismaOsEqualsParam{
+		data: builder.Field{
+			Name: "os",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryOsString) EqualsIfPresent(value *string) workerWithPrismaOsEqualsParam {
+	if value == nil {
+		return workerWithPrismaOsEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workerQueryOsString) EqualsOptional(value *String) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "os",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryOsString) IsNull() workerDefaultParam {
+	var str *string = nil
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "os",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryOsString) Order(direction SortOrder) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name:  "os",
+			Value: direction,
+		},
+	}
+}
+
+func (r workerQueryOsString) Cursor(cursor string) workerCursorParam {
+	return workerCursorParam{
+		data: builder.Field{
+			Name:  "os",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workerQueryOsString) In(value []string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "os",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryOsString) InIfPresent(value []string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workerQueryOsString) NotIn(value []string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "os",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryOsString) NotInIfPresent(value []string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workerQueryOsString) Lt(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "os",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryOsString) LtIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workerQueryOsString) Lte(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "os",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryOsString) LteIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workerQueryOsString) Gt(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "os",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryOsString) GtIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workerQueryOsString) Gte(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "os",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryOsString) GteIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workerQueryOsString) Contains(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "os",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryOsString) ContainsIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r workerQueryOsString) StartsWith(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "os",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryOsString) StartsWithIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r workerQueryOsString) EndsWith(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "os",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryOsString) EndsWithIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r workerQueryOsString) Mode(value QueryMode) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "os",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryOsString) ModeIfPresent(value *QueryMode) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r workerQueryOsString) Not(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "os",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryOsString) NotIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r workerQueryOsString) HasPrefix(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "os",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r workerQueryOsString) HasPrefixIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r workerQueryOsString) HasSuffix(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "os",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r workerQueryOsString) HasSuffixIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r workerQueryOsString) Field() workerPrismaFields {
+	return workerFieldOs
+}
+
+// base struct
+type workerQueryRuntimeExtraString struct{}
+
+// Set the optional value of RuntimeExtra
+func (r workerQueryRuntimeExtraString) Set(value string) workerSetParam {
+
+	return workerSetParam{
+		data: builder.Field{
+			Name:  "runtimeExtra",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of RuntimeExtra dynamically
+func (r workerQueryRuntimeExtraString) SetIfPresent(value *String) workerSetParam {
+	if value == nil {
+		return workerSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of RuntimeExtra dynamically
+func (r workerQueryRuntimeExtraString) SetOptional(value *String) workerSetParam {
+	if value == nil {
+
+		var v *string
+		return workerSetParam{
+			data: builder.Field{
+				Name:  "runtimeExtra",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workerQueryRuntimeExtraString) Equals(value string) workerWithPrismaRuntimeExtraEqualsParam {
+
+	return workerWithPrismaRuntimeExtraEqualsParam{
+		data: builder.Field{
+			Name: "runtimeExtra",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryRuntimeExtraString) EqualsIfPresent(value *string) workerWithPrismaRuntimeExtraEqualsParam {
+	if value == nil {
+		return workerWithPrismaRuntimeExtraEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workerQueryRuntimeExtraString) EqualsOptional(value *String) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "runtimeExtra",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryRuntimeExtraString) IsNull() workerDefaultParam {
+	var str *string = nil
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "runtimeExtra",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryRuntimeExtraString) Order(direction SortOrder) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name:  "runtimeExtra",
+			Value: direction,
+		},
+	}
+}
+
+func (r workerQueryRuntimeExtraString) Cursor(cursor string) workerCursorParam {
+	return workerCursorParam{
+		data: builder.Field{
+			Name:  "runtimeExtra",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workerQueryRuntimeExtraString) In(value []string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "runtimeExtra",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryRuntimeExtraString) InIfPresent(value []string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workerQueryRuntimeExtraString) NotIn(value []string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "runtimeExtra",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryRuntimeExtraString) NotInIfPresent(value []string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workerQueryRuntimeExtraString) Lt(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "runtimeExtra",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryRuntimeExtraString) LtIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workerQueryRuntimeExtraString) Lte(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "runtimeExtra",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryRuntimeExtraString) LteIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workerQueryRuntimeExtraString) Gt(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "runtimeExtra",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryRuntimeExtraString) GtIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workerQueryRuntimeExtraString) Gte(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "runtimeExtra",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryRuntimeExtraString) GteIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workerQueryRuntimeExtraString) Contains(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "runtimeExtra",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryRuntimeExtraString) ContainsIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r workerQueryRuntimeExtraString) StartsWith(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "runtimeExtra",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryRuntimeExtraString) StartsWithIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r workerQueryRuntimeExtraString) EndsWith(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "runtimeExtra",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryRuntimeExtraString) EndsWithIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r workerQueryRuntimeExtraString) Mode(value QueryMode) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "runtimeExtra",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryRuntimeExtraString) ModeIfPresent(value *QueryMode) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r workerQueryRuntimeExtraString) Not(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "runtimeExtra",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workerQueryRuntimeExtraString) NotIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r workerQueryRuntimeExtraString) HasPrefix(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "runtimeExtra",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r workerQueryRuntimeExtraString) HasPrefixIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r workerQueryRuntimeExtraString) HasSuffix(value string) workerDefaultParam {
+	return workerDefaultParam{
+		data: builder.Field{
+			Name: "runtimeExtra",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r workerQueryRuntimeExtraString) HasSuffixIfPresent(value *string) workerDefaultParam {
+	if value == nil {
+		return workerDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r workerQueryRuntimeExtraString) Field() workerPrismaFields {
+	return workerFieldRuntimeExtra
 }
 
 // WorkerAssignEvent acts as a namespaces to access query methods for the WorkerAssignEvent model
@@ -259083,6 +260935,11 @@ var workerOutput = []builder.Output{
 	{Name: "dispatcherId"},
 	{Name: "maxRuns"},
 	{Name: "webhookId"},
+	{Name: "sdkVersion"},
+	{Name: "language"},
+	{Name: "languageVersion"},
+	{Name: "os"},
+	{Name: "runtimeExtra"},
 }
 
 type WorkerRelationWith interface {
@@ -260964,6 +262821,396 @@ func (p workerWithPrismaWebhookIDEqualsUniqueParam) webhookIDField() {}
 
 func (workerWithPrismaWebhookIDEqualsUniqueParam) unique() {}
 func (workerWithPrismaWebhookIDEqualsUniqueParam) equals() {}
+
+type WorkerWithPrismaSdkVersionEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerModel()
+	sdkVersionField()
+}
+
+type WorkerWithPrismaSdkVersionSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerModel()
+	sdkVersionField()
+}
+
+type workerWithPrismaSdkVersionSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaSdkVersionSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaSdkVersionSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaSdkVersionSetParam) workerModel() {}
+
+func (p workerWithPrismaSdkVersionSetParam) sdkVersionField() {}
+
+type WorkerWithPrismaSdkVersionWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerModel()
+	sdkVersionField()
+}
+
+type workerWithPrismaSdkVersionEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaSdkVersionEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaSdkVersionEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaSdkVersionEqualsParam) workerModel() {}
+
+func (p workerWithPrismaSdkVersionEqualsParam) sdkVersionField() {}
+
+func (workerWithPrismaSdkVersionSetParam) settable()  {}
+func (workerWithPrismaSdkVersionEqualsParam) equals() {}
+
+type workerWithPrismaSdkVersionEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaSdkVersionEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaSdkVersionEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaSdkVersionEqualsUniqueParam) workerModel()     {}
+func (p workerWithPrismaSdkVersionEqualsUniqueParam) sdkVersionField() {}
+
+func (workerWithPrismaSdkVersionEqualsUniqueParam) unique() {}
+func (workerWithPrismaSdkVersionEqualsUniqueParam) equals() {}
+
+type WorkerWithPrismaLanguageEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerModel()
+	languageField()
+}
+
+type WorkerWithPrismaLanguageSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerModel()
+	languageField()
+}
+
+type workerWithPrismaLanguageSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaLanguageSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaLanguageSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaLanguageSetParam) workerModel() {}
+
+func (p workerWithPrismaLanguageSetParam) languageField() {}
+
+type WorkerWithPrismaLanguageWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerModel()
+	languageField()
+}
+
+type workerWithPrismaLanguageEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaLanguageEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaLanguageEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaLanguageEqualsParam) workerModel() {}
+
+func (p workerWithPrismaLanguageEqualsParam) languageField() {}
+
+func (workerWithPrismaLanguageSetParam) settable()  {}
+func (workerWithPrismaLanguageEqualsParam) equals() {}
+
+type workerWithPrismaLanguageEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaLanguageEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaLanguageEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaLanguageEqualsUniqueParam) workerModel()   {}
+func (p workerWithPrismaLanguageEqualsUniqueParam) languageField() {}
+
+func (workerWithPrismaLanguageEqualsUniqueParam) unique() {}
+func (workerWithPrismaLanguageEqualsUniqueParam) equals() {}
+
+type WorkerWithPrismaLanguageVersionEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerModel()
+	languageVersionField()
+}
+
+type WorkerWithPrismaLanguageVersionSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerModel()
+	languageVersionField()
+}
+
+type workerWithPrismaLanguageVersionSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaLanguageVersionSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaLanguageVersionSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaLanguageVersionSetParam) workerModel() {}
+
+func (p workerWithPrismaLanguageVersionSetParam) languageVersionField() {}
+
+type WorkerWithPrismaLanguageVersionWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerModel()
+	languageVersionField()
+}
+
+type workerWithPrismaLanguageVersionEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaLanguageVersionEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaLanguageVersionEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaLanguageVersionEqualsParam) workerModel() {}
+
+func (p workerWithPrismaLanguageVersionEqualsParam) languageVersionField() {}
+
+func (workerWithPrismaLanguageVersionSetParam) settable()  {}
+func (workerWithPrismaLanguageVersionEqualsParam) equals() {}
+
+type workerWithPrismaLanguageVersionEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaLanguageVersionEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaLanguageVersionEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaLanguageVersionEqualsUniqueParam) workerModel()          {}
+func (p workerWithPrismaLanguageVersionEqualsUniqueParam) languageVersionField() {}
+
+func (workerWithPrismaLanguageVersionEqualsUniqueParam) unique() {}
+func (workerWithPrismaLanguageVersionEqualsUniqueParam) equals() {}
+
+type WorkerWithPrismaOsEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerModel()
+	osField()
+}
+
+type WorkerWithPrismaOsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerModel()
+	osField()
+}
+
+type workerWithPrismaOsSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaOsSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaOsSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaOsSetParam) workerModel() {}
+
+func (p workerWithPrismaOsSetParam) osField() {}
+
+type WorkerWithPrismaOsWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerModel()
+	osField()
+}
+
+type workerWithPrismaOsEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaOsEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaOsEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaOsEqualsParam) workerModel() {}
+
+func (p workerWithPrismaOsEqualsParam) osField() {}
+
+func (workerWithPrismaOsSetParam) settable()  {}
+func (workerWithPrismaOsEqualsParam) equals() {}
+
+type workerWithPrismaOsEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaOsEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaOsEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaOsEqualsUniqueParam) workerModel() {}
+func (p workerWithPrismaOsEqualsUniqueParam) osField()     {}
+
+func (workerWithPrismaOsEqualsUniqueParam) unique() {}
+func (workerWithPrismaOsEqualsUniqueParam) equals() {}
+
+type WorkerWithPrismaRuntimeExtraEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workerModel()
+	runtimeExtraField()
+}
+
+type WorkerWithPrismaRuntimeExtraSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerModel()
+	runtimeExtraField()
+}
+
+type workerWithPrismaRuntimeExtraSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaRuntimeExtraSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaRuntimeExtraSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaRuntimeExtraSetParam) workerModel() {}
+
+func (p workerWithPrismaRuntimeExtraSetParam) runtimeExtraField() {}
+
+type WorkerWithPrismaRuntimeExtraWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workerModel()
+	runtimeExtraField()
+}
+
+type workerWithPrismaRuntimeExtraEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaRuntimeExtraEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaRuntimeExtraEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaRuntimeExtraEqualsParam) workerModel() {}
+
+func (p workerWithPrismaRuntimeExtraEqualsParam) runtimeExtraField() {}
+
+func (workerWithPrismaRuntimeExtraSetParam) settable()  {}
+func (workerWithPrismaRuntimeExtraEqualsParam) equals() {}
+
+type workerWithPrismaRuntimeExtraEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workerWithPrismaRuntimeExtraEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workerWithPrismaRuntimeExtraEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workerWithPrismaRuntimeExtraEqualsUniqueParam) workerModel()       {}
+func (p workerWithPrismaRuntimeExtraEqualsUniqueParam) runtimeExtraField() {}
+
+func (workerWithPrismaRuntimeExtraEqualsUniqueParam) unique() {}
+func (workerWithPrismaRuntimeExtraEqualsUniqueParam) equals() {}
 
 type workerAssignEventActions struct {
 	// client holds the prisma client
