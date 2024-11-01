@@ -723,8 +723,11 @@ model WorkflowTriggerCronRef {
   parent   WorkflowTriggers @relation(fields: [parentId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   parentId String           @db.Uuid
 
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
   // the cron expression
-  cron String
+  cron      String
 
   // whether this cron is enabled or not
   enabled Boolean @default(true)
@@ -738,12 +741,18 @@ model WorkflowTriggerCronRef {
   // the input parameters to the scheduled workflow
   input Json?
 
+  additionalMetadata Json?
+
   // cron references must be unique per workflow
   @@unique([parentId, cron])
 }
 
 model WorkflowTriggerScheduledRef {
   id String @id @unique @default(uuid()) @db.Uuid
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
 
   // the parent workflow
   parent   WorkflowVersion @relation(fields: [parentId], references: [id], onDelete: Cascade, onUpdate: Cascade)
@@ -773,6 +782,8 @@ model WorkflowTriggerScheduledRef {
   childKey String?
 
   triggered WorkflowRunTriggeredBy?
+
+  additionalMetadata Json?
 
   @@unique([parentId, parentStepRunId, childKey])
 }
@@ -2765,17 +2776,24 @@ const (
 type WorkflowTriggerCronRefScalarFieldEnum string
 
 const (
-	WorkflowTriggerCronRefScalarFieldEnumParentID WorkflowTriggerCronRefScalarFieldEnum = "parentId"
-	WorkflowTriggerCronRefScalarFieldEnumCron     WorkflowTriggerCronRefScalarFieldEnum = "cron"
-	WorkflowTriggerCronRefScalarFieldEnumEnabled  WorkflowTriggerCronRefScalarFieldEnum = "enabled"
-	WorkflowTriggerCronRefScalarFieldEnumTickerID WorkflowTriggerCronRefScalarFieldEnum = "tickerId"
-	WorkflowTriggerCronRefScalarFieldEnumInput    WorkflowTriggerCronRefScalarFieldEnum = "input"
+	WorkflowTriggerCronRefScalarFieldEnumParentID           WorkflowTriggerCronRefScalarFieldEnum = "parentId"
+	WorkflowTriggerCronRefScalarFieldEnumCreatedAt          WorkflowTriggerCronRefScalarFieldEnum = "createdAt"
+	WorkflowTriggerCronRefScalarFieldEnumUpdatedAt          WorkflowTriggerCronRefScalarFieldEnum = "updatedAt"
+	WorkflowTriggerCronRefScalarFieldEnumDeletedAt          WorkflowTriggerCronRefScalarFieldEnum = "deletedAt"
+	WorkflowTriggerCronRefScalarFieldEnumCron               WorkflowTriggerCronRefScalarFieldEnum = "cron"
+	WorkflowTriggerCronRefScalarFieldEnumEnabled            WorkflowTriggerCronRefScalarFieldEnum = "enabled"
+	WorkflowTriggerCronRefScalarFieldEnumTickerID           WorkflowTriggerCronRefScalarFieldEnum = "tickerId"
+	WorkflowTriggerCronRefScalarFieldEnumInput              WorkflowTriggerCronRefScalarFieldEnum = "input"
+	WorkflowTriggerCronRefScalarFieldEnumAdditionalMetadata WorkflowTriggerCronRefScalarFieldEnum = "additionalMetadata"
 )
 
 type WorkflowTriggerScheduledRefScalarFieldEnum string
 
 const (
 	WorkflowTriggerScheduledRefScalarFieldEnumID                  WorkflowTriggerScheduledRefScalarFieldEnum = "id"
+	WorkflowTriggerScheduledRefScalarFieldEnumCreatedAt           WorkflowTriggerScheduledRefScalarFieldEnum = "createdAt"
+	WorkflowTriggerScheduledRefScalarFieldEnumUpdatedAt           WorkflowTriggerScheduledRefScalarFieldEnum = "updatedAt"
+	WorkflowTriggerScheduledRefScalarFieldEnumDeletedAt           WorkflowTriggerScheduledRefScalarFieldEnum = "deletedAt"
 	WorkflowTriggerScheduledRefScalarFieldEnumParentID            WorkflowTriggerScheduledRefScalarFieldEnum = "parentId"
 	WorkflowTriggerScheduledRefScalarFieldEnumTriggerAt           WorkflowTriggerScheduledRefScalarFieldEnum = "triggerAt"
 	WorkflowTriggerScheduledRefScalarFieldEnumTickerID            WorkflowTriggerScheduledRefScalarFieldEnum = "tickerId"
@@ -2784,6 +2802,7 @@ const (
 	WorkflowTriggerScheduledRefScalarFieldEnumParentStepRunID     WorkflowTriggerScheduledRefScalarFieldEnum = "parentStepRunId"
 	WorkflowTriggerScheduledRefScalarFieldEnumChildIndex          WorkflowTriggerScheduledRefScalarFieldEnum = "childIndex"
 	WorkflowTriggerScheduledRefScalarFieldEnumChildKey            WorkflowTriggerScheduledRefScalarFieldEnum = "childKey"
+	WorkflowTriggerScheduledRefScalarFieldEnumAdditionalMetadata  WorkflowTriggerScheduledRefScalarFieldEnum = "additionalMetadata"
 )
 
 type JobScalarFieldEnum string
@@ -3913,6 +3932,12 @@ const workflowTriggerCronRefFieldParent workflowTriggerCronRefPrismaFields = "pa
 
 const workflowTriggerCronRefFieldParentID workflowTriggerCronRefPrismaFields = "parentId"
 
+const workflowTriggerCronRefFieldCreatedAt workflowTriggerCronRefPrismaFields = "createdAt"
+
+const workflowTriggerCronRefFieldUpdatedAt workflowTriggerCronRefPrismaFields = "updatedAt"
+
+const workflowTriggerCronRefFieldDeletedAt workflowTriggerCronRefPrismaFields = "deletedAt"
+
 const workflowTriggerCronRefFieldCron workflowTriggerCronRefPrismaFields = "cron"
 
 const workflowTriggerCronRefFieldEnabled workflowTriggerCronRefPrismaFields = "enabled"
@@ -3925,9 +3950,17 @@ const workflowTriggerCronRefFieldTriggered workflowTriggerCronRefPrismaFields = 
 
 const workflowTriggerCronRefFieldInput workflowTriggerCronRefPrismaFields = "input"
 
+const workflowTriggerCronRefFieldAdditionalMetadata workflowTriggerCronRefPrismaFields = "additionalMetadata"
+
 type workflowTriggerScheduledRefPrismaFields = prismaFields
 
 const workflowTriggerScheduledRefFieldID workflowTriggerScheduledRefPrismaFields = "id"
+
+const workflowTriggerScheduledRefFieldCreatedAt workflowTriggerScheduledRefPrismaFields = "createdAt"
+
+const workflowTriggerScheduledRefFieldUpdatedAt workflowTriggerScheduledRefPrismaFields = "updatedAt"
+
+const workflowTriggerScheduledRefFieldDeletedAt workflowTriggerScheduledRefPrismaFields = "deletedAt"
 
 const workflowTriggerScheduledRefFieldParent workflowTriggerScheduledRefPrismaFields = "parent"
 
@@ -3954,6 +3987,8 @@ const workflowTriggerScheduledRefFieldChildIndex workflowTriggerScheduledRefPris
 const workflowTriggerScheduledRefFieldChildKey workflowTriggerScheduledRefPrismaFields = "childKey"
 
 const workflowTriggerScheduledRefFieldTriggered workflowTriggerScheduledRefPrismaFields = "triggered"
+
+const workflowTriggerScheduledRefFieldAdditionalMetadata workflowTriggerScheduledRefPrismaFields = "additionalMetadata"
 
 type jobPrismaFields = prismaFields
 
@@ -9555,20 +9590,28 @@ type WorkflowTriggerCronRefModel struct {
 
 // InnerWorkflowTriggerCronRef holds the actual data
 type InnerWorkflowTriggerCronRef struct {
-	ParentID string  `json:"parentId"`
-	Cron     string  `json:"cron"`
-	Enabled  bool    `json:"enabled"`
-	TickerID *string `json:"tickerId,omitempty"`
-	Input    *JSON   `json:"input,omitempty"`
+	ParentID           string    `json:"parentId"`
+	CreatedAt          DateTime  `json:"createdAt"`
+	UpdatedAt          DateTime  `json:"updatedAt"`
+	DeletedAt          *DateTime `json:"deletedAt,omitempty"`
+	Cron               string    `json:"cron"`
+	Enabled            bool      `json:"enabled"`
+	TickerID           *string   `json:"tickerId,omitempty"`
+	Input              *JSON     `json:"input,omitempty"`
+	AdditionalMetadata *JSON     `json:"additionalMetadata,omitempty"`
 }
 
 // RawWorkflowTriggerCronRefModel is a struct for WorkflowTriggerCronRef when used in raw queries
 type RawWorkflowTriggerCronRefModel struct {
-	ParentID RawString  `json:"parentId"`
-	Cron     RawString  `json:"cron"`
-	Enabled  RawBoolean `json:"enabled"`
-	TickerID *RawString `json:"tickerId,omitempty"`
-	Input    *RawJSON   `json:"input,omitempty"`
+	ParentID           RawString    `json:"parentId"`
+	CreatedAt          RawDateTime  `json:"createdAt"`
+	UpdatedAt          RawDateTime  `json:"updatedAt"`
+	DeletedAt          *RawDateTime `json:"deletedAt,omitempty"`
+	Cron               RawString    `json:"cron"`
+	Enabled            RawBoolean   `json:"enabled"`
+	TickerID           *RawString   `json:"tickerId,omitempty"`
+	Input              *RawJSON     `json:"input,omitempty"`
+	AdditionalMetadata *RawJSON     `json:"additionalMetadata,omitempty"`
 }
 
 // RelationsWorkflowTriggerCronRef holds the relation data separately
@@ -9583,6 +9626,13 @@ func (r WorkflowTriggerCronRefModel) Parent() (value *WorkflowTriggersModel) {
 		panic("attempted to access parent but did not fetch it using the .With() syntax")
 	}
 	return r.RelationsWorkflowTriggerCronRef.Parent
+}
+
+func (r WorkflowTriggerCronRefModel) DeletedAt() (value DateTime, ok bool) {
+	if r.InnerWorkflowTriggerCronRef.DeletedAt == nil {
+		return value, false
+	}
+	return *r.InnerWorkflowTriggerCronRef.DeletedAt, true
 }
 
 func (r WorkflowTriggerCronRefModel) Ticker() (value *TickerModel, ok bool) {
@@ -9613,6 +9663,13 @@ func (r WorkflowTriggerCronRefModel) Input() (value JSON, ok bool) {
 	return *r.InnerWorkflowTriggerCronRef.Input, true
 }
 
+func (r WorkflowTriggerCronRefModel) AdditionalMetadata() (value JSON, ok bool) {
+	if r.InnerWorkflowTriggerCronRef.AdditionalMetadata == nil {
+		return value, false
+	}
+	return *r.InnerWorkflowTriggerCronRef.AdditionalMetadata, true
+}
+
 // WorkflowTriggerScheduledRefModel represents the WorkflowTriggerScheduledRef model and is a wrapper for accessing fields and methods
 type WorkflowTriggerScheduledRefModel struct {
 	InnerWorkflowTriggerScheduledRef
@@ -9621,28 +9678,36 @@ type WorkflowTriggerScheduledRefModel struct {
 
 // InnerWorkflowTriggerScheduledRef holds the actual data
 type InnerWorkflowTriggerScheduledRef struct {
-	ID                  string   `json:"id"`
-	ParentID            string   `json:"parentId"`
-	TriggerAt           DateTime `json:"triggerAt"`
-	TickerID            *string  `json:"tickerId,omitempty"`
-	Input               *JSON    `json:"input,omitempty"`
-	ParentWorkflowRunID *string  `json:"parentWorkflowRunId,omitempty"`
-	ParentStepRunID     *string  `json:"parentStepRunId,omitempty"`
-	ChildIndex          *int     `json:"childIndex,omitempty"`
-	ChildKey            *string  `json:"childKey,omitempty"`
+	ID                  string    `json:"id"`
+	CreatedAt           DateTime  `json:"createdAt"`
+	UpdatedAt           DateTime  `json:"updatedAt"`
+	DeletedAt           *DateTime `json:"deletedAt,omitempty"`
+	ParentID            string    `json:"parentId"`
+	TriggerAt           DateTime  `json:"triggerAt"`
+	TickerID            *string   `json:"tickerId,omitempty"`
+	Input               *JSON     `json:"input,omitempty"`
+	ParentWorkflowRunID *string   `json:"parentWorkflowRunId,omitempty"`
+	ParentStepRunID     *string   `json:"parentStepRunId,omitempty"`
+	ChildIndex          *int      `json:"childIndex,omitempty"`
+	ChildKey            *string   `json:"childKey,omitempty"`
+	AdditionalMetadata  *JSON     `json:"additionalMetadata,omitempty"`
 }
 
 // RawWorkflowTriggerScheduledRefModel is a struct for WorkflowTriggerScheduledRef when used in raw queries
 type RawWorkflowTriggerScheduledRefModel struct {
-	ID                  RawString   `json:"id"`
-	ParentID            RawString   `json:"parentId"`
-	TriggerAt           RawDateTime `json:"triggerAt"`
-	TickerID            *RawString  `json:"tickerId,omitempty"`
-	Input               *RawJSON    `json:"input,omitempty"`
-	ParentWorkflowRunID *RawString  `json:"parentWorkflowRunId,omitempty"`
-	ParentStepRunID     *RawString  `json:"parentStepRunId,omitempty"`
-	ChildIndex          *RawInt     `json:"childIndex,omitempty"`
-	ChildKey            *RawString  `json:"childKey,omitempty"`
+	ID                  RawString    `json:"id"`
+	CreatedAt           RawDateTime  `json:"createdAt"`
+	UpdatedAt           RawDateTime  `json:"updatedAt"`
+	DeletedAt           *RawDateTime `json:"deletedAt,omitempty"`
+	ParentID            RawString    `json:"parentId"`
+	TriggerAt           RawDateTime  `json:"triggerAt"`
+	TickerID            *RawString   `json:"tickerId,omitempty"`
+	Input               *RawJSON     `json:"input,omitempty"`
+	ParentWorkflowRunID *RawString   `json:"parentWorkflowRunId,omitempty"`
+	ParentStepRunID     *RawString   `json:"parentStepRunId,omitempty"`
+	ChildIndex          *RawInt      `json:"childIndex,omitempty"`
+	ChildKey            *RawString   `json:"childKey,omitempty"`
+	AdditionalMetadata  *RawJSON     `json:"additionalMetadata,omitempty"`
 }
 
 // RelationsWorkflowTriggerScheduledRef holds the relation data separately
@@ -9652,6 +9717,13 @@ type RelationsWorkflowTriggerScheduledRef struct {
 	ParentWorkflowRun *WorkflowRunModel            `json:"parentWorkflowRun,omitempty"`
 	ParentStepRun     *StepRunModel                `json:"parentStepRun,omitempty"`
 	Triggered         *WorkflowRunTriggeredByModel `json:"triggered,omitempty"`
+}
+
+func (r WorkflowTriggerScheduledRefModel) DeletedAt() (value DateTime, ok bool) {
+	if r.InnerWorkflowTriggerScheduledRef.DeletedAt == nil {
+		return value, false
+	}
+	return *r.InnerWorkflowTriggerScheduledRef.DeletedAt, true
 }
 
 func (r WorkflowTriggerScheduledRefModel) Parent() (value *WorkflowVersionModel) {
@@ -9729,6 +9801,13 @@ func (r WorkflowTriggerScheduledRefModel) Triggered() (value *WorkflowRunTrigger
 		return value, false
 	}
 	return r.RelationsWorkflowTriggerScheduledRef.Triggered, true
+}
+
+func (r WorkflowTriggerScheduledRefModel) AdditionalMetadata() (value JSON, ok bool) {
+	if r.InnerWorkflowTriggerScheduledRef.AdditionalMetadata == nil {
+		return value, false
+	}
+	return *r.InnerWorkflowTriggerScheduledRef.AdditionalMetadata, true
 }
 
 // JobModel represents the Job model and is a wrapper for accessing fields and methods
@@ -80712,6 +80791,21 @@ type workflowTriggerCronRefQuery struct {
 	// @required
 	ParentID workflowTriggerCronRefQueryParentIDString
 
+	// CreatedAt
+	//
+	// @required
+	CreatedAt workflowTriggerCronRefQueryCreatedAtDateTime
+
+	// UpdatedAt
+	//
+	// @required
+	UpdatedAt workflowTriggerCronRefQueryUpdatedAtDateTime
+
+	// DeletedAt
+	//
+	// @optional
+	DeletedAt workflowTriggerCronRefQueryDeletedAtDateTime
+
 	// Cron
 	//
 	// @required
@@ -80735,6 +80829,11 @@ type workflowTriggerCronRefQuery struct {
 	//
 	// @optional
 	Input workflowTriggerCronRefQueryInputJson
+
+	// AdditionalMetadata
+	//
+	// @optional
+	AdditionalMetadata workflowTriggerCronRefQueryAdditionalMetadataJson
 }
 
 func (workflowTriggerCronRefQuery) Not(params ...WorkflowTriggerCronRefWhereParam) workflowTriggerCronRefDefaultParam {
@@ -81239,6 +81338,984 @@ func (r workflowTriggerCronRefQueryParentIDString) HasSuffixIfPresent(value *str
 
 func (r workflowTriggerCronRefQueryParentIDString) Field() workflowTriggerCronRefPrismaFields {
 	return workflowTriggerCronRefFieldParentID
+}
+
+// base struct
+type workflowTriggerCronRefQueryCreatedAtDateTime struct{}
+
+// Set the required value of CreatedAt
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) Set(value DateTime) workflowTriggerCronRefSetParam {
+
+	return workflowTriggerCronRefSetParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of CreatedAt dynamically
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) SetIfPresent(value *DateTime) workflowTriggerCronRefSetParam {
+	if value == nil {
+		return workflowTriggerCronRefSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) Equals(value DateTime) workflowTriggerCronRefWithPrismaCreatedAtEqualsParam {
+
+	return workflowTriggerCronRefWithPrismaCreatedAtEqualsParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) EqualsIfPresent(value *DateTime) workflowTriggerCronRefWithPrismaCreatedAtEqualsParam {
+	if value == nil {
+		return workflowTriggerCronRefWithPrismaCreatedAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) Order(direction SortOrder) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) Cursor(cursor DateTime) workflowTriggerCronRefCursorParam {
+	return workflowTriggerCronRefCursorParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) In(value []DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) InIfPresent(value []DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) NotIn(value []DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) NotInIfPresent(value []DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) Lt(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) LtIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) Lte(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) LteIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) Gt(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) GtIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) Gte(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) GteIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) Not(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) NotIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) Before(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) BeforeIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) After(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) AfterIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) BeforeEquals(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) BeforeEqualsIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) AfterEquals(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) AfterEqualsIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r workflowTriggerCronRefQueryCreatedAtDateTime) Field() workflowTriggerCronRefPrismaFields {
+	return workflowTriggerCronRefFieldCreatedAt
+}
+
+// base struct
+type workflowTriggerCronRefQueryUpdatedAtDateTime struct{}
+
+// Set the required value of UpdatedAt
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) Set(value DateTime) workflowTriggerCronRefSetParam {
+
+	return workflowTriggerCronRefSetParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of UpdatedAt dynamically
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) SetIfPresent(value *DateTime) workflowTriggerCronRefSetParam {
+	if value == nil {
+		return workflowTriggerCronRefSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) Equals(value DateTime) workflowTriggerCronRefWithPrismaUpdatedAtEqualsParam {
+
+	return workflowTriggerCronRefWithPrismaUpdatedAtEqualsParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) EqualsIfPresent(value *DateTime) workflowTriggerCronRefWithPrismaUpdatedAtEqualsParam {
+	if value == nil {
+		return workflowTriggerCronRefWithPrismaUpdatedAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) Order(direction SortOrder) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) Cursor(cursor DateTime) workflowTriggerCronRefCursorParam {
+	return workflowTriggerCronRefCursorParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) In(value []DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) InIfPresent(value []DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) NotIn(value []DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) NotInIfPresent(value []DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) Lt(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) LtIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) Lte(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) LteIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) Gt(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) GtIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) Gte(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) GteIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) Not(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) NotIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) Before(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) BeforeIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) After(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) AfterIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) BeforeEquals(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) BeforeEqualsIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) AfterEquals(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) AfterEqualsIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r workflowTriggerCronRefQueryUpdatedAtDateTime) Field() workflowTriggerCronRefPrismaFields {
+	return workflowTriggerCronRefFieldUpdatedAt
+}
+
+// base struct
+type workflowTriggerCronRefQueryDeletedAtDateTime struct{}
+
+// Set the optional value of DeletedAt
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) Set(value DateTime) workflowTriggerCronRefSetParam {
+
+	return workflowTriggerCronRefSetParam{
+		data: builder.Field{
+			Name:  "deletedAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of DeletedAt dynamically
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) SetIfPresent(value *DateTime) workflowTriggerCronRefSetParam {
+	if value == nil {
+		return workflowTriggerCronRefSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of DeletedAt dynamically
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) SetOptional(value *DateTime) workflowTriggerCronRefSetParam {
+	if value == nil {
+
+		var v *DateTime
+		return workflowTriggerCronRefSetParam{
+			data: builder.Field{
+				Name:  "deletedAt",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) Equals(value DateTime) workflowTriggerCronRefWithPrismaDeletedAtEqualsParam {
+
+	return workflowTriggerCronRefWithPrismaDeletedAtEqualsParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) EqualsIfPresent(value *DateTime) workflowTriggerCronRefWithPrismaDeletedAtEqualsParam {
+	if value == nil {
+		return workflowTriggerCronRefWithPrismaDeletedAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) EqualsOptional(value *DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) IsNull() workflowTriggerCronRefDefaultParam {
+	var str *string = nil
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) Order(direction SortOrder) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name:  "deletedAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) Cursor(cursor DateTime) workflowTriggerCronRefCursorParam {
+	return workflowTriggerCronRefCursorParam{
+		data: builder.Field{
+			Name:  "deletedAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) In(value []DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) InIfPresent(value []DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) NotIn(value []DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) NotInIfPresent(value []DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) Lt(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) LtIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) Lte(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) LteIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) Gt(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) GtIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) Gte(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) GteIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) Not(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) NotIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) Before(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) BeforeIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) After(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) AfterIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) BeforeEquals(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) BeforeEqualsIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) AfterEquals(value DateTime) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) AfterEqualsIfPresent(value *DateTime) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r workflowTriggerCronRefQueryDeletedAtDateTime) Field() workflowTriggerCronRefPrismaFields {
+	return workflowTriggerCronRefFieldDeletedAt
 }
 
 // base struct
@@ -82673,6 +83750,371 @@ func (r workflowTriggerCronRefQueryInputJson) Field() workflowTriggerCronRefPris
 	return workflowTriggerCronRefFieldInput
 }
 
+// base struct
+type workflowTriggerCronRefQueryAdditionalMetadataJson struct{}
+
+// Set the optional value of AdditionalMetadata
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) Set(value JSON) workflowTriggerCronRefSetParam {
+
+	return workflowTriggerCronRefSetParam{
+		data: builder.Field{
+			Name:  "additionalMetadata",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of AdditionalMetadata dynamically
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) SetIfPresent(value *JSON) workflowTriggerCronRefSetParam {
+	if value == nil {
+		return workflowTriggerCronRefSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of AdditionalMetadata dynamically
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) SetOptional(value *JSON) workflowTriggerCronRefSetParam {
+	if value == nil {
+
+		var v *JSON
+		return workflowTriggerCronRefSetParam{
+			data: builder.Field{
+				Name:  "additionalMetadata",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) Equals(value JSON) workflowTriggerCronRefWithPrismaAdditionalMetadataEqualsParam {
+
+	return workflowTriggerCronRefWithPrismaAdditionalMetadataEqualsParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) EqualsIfPresent(value *JSON) workflowTriggerCronRefWithPrismaAdditionalMetadataEqualsParam {
+	if value == nil {
+		return workflowTriggerCronRefWithPrismaAdditionalMetadataEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) EqualsOptional(value *JSON) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) IsNull() workflowTriggerCronRefDefaultParam {
+	var str *string = nil
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) Order(direction SortOrder) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name:  "additionalMetadata",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) Cursor(cursor JSON) workflowTriggerCronRefCursorParam {
+	return workflowTriggerCronRefCursorParam{
+		data: builder.Field{
+			Name:  "additionalMetadata",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) Path(value []string) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "path",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) PathIfPresent(value []string) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Path(value)
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) StringContains(value string) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "string_contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) StringContainsIfPresent(value *string) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.StringContains(*value)
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) StringStartsWith(value string) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "string_starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) StringStartsWithIfPresent(value *string) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.StringStartsWith(*value)
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) StringEndsWith(value string) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "string_ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) StringEndsWithIfPresent(value *string) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.StringEndsWith(*value)
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) ArrayContains(value JSON) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "array_contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) ArrayContainsIfPresent(value *JSON) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.ArrayContains(*value)
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) ArrayStartsWith(value JSON) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "array_starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) ArrayStartsWithIfPresent(value *JSON) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.ArrayStartsWith(*value)
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) ArrayEndsWith(value JSON) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "array_ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) ArrayEndsWithIfPresent(value *JSON) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.ArrayEndsWith(*value)
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) Lt(value JSON) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) LtIfPresent(value *JSON) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) Lte(value JSON) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) LteIfPresent(value *JSON) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) Gt(value JSON) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) GtIfPresent(value *JSON) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) Gte(value JSON) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) GteIfPresent(value *JSON) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) Not(value JSONNullValueFilter) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) NotIfPresent(value *JSONNullValueFilter) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+func (r workflowTriggerCronRefQueryAdditionalMetadataJson) Field() workflowTriggerCronRefPrismaFields {
+	return workflowTriggerCronRefFieldAdditionalMetadata
+}
+
 // WorkflowTriggerScheduledRef acts as a namespaces to access query methods for the WorkflowTriggerScheduledRef model
 var WorkflowTriggerScheduledRef = workflowTriggerScheduledRefQuery{}
 
@@ -82683,6 +84125,21 @@ type workflowTriggerScheduledRefQuery struct {
 	//
 	// @required
 	ID workflowTriggerScheduledRefQueryIDString
+
+	// CreatedAt
+	//
+	// @required
+	CreatedAt workflowTriggerScheduledRefQueryCreatedAtDateTime
+
+	// UpdatedAt
+	//
+	// @required
+	UpdatedAt workflowTriggerScheduledRefQueryUpdatedAtDateTime
+
+	// DeletedAt
+	//
+	// @optional
+	DeletedAt workflowTriggerScheduledRefQueryDeletedAtDateTime
 
 	Parent workflowTriggerScheduledRefQueryParentRelations
 
@@ -82733,6 +84190,11 @@ type workflowTriggerScheduledRefQuery struct {
 	ChildKey workflowTriggerScheduledRefQueryChildKeyString
 
 	Triggered workflowTriggerScheduledRefQueryTriggeredRelations
+
+	// AdditionalMetadata
+	//
+	// @optional
+	AdditionalMetadata workflowTriggerScheduledRefQueryAdditionalMetadataJson
 }
 
 func (workflowTriggerScheduledRefQuery) Not(params ...WorkflowTriggerScheduledRefWhereParam) workflowTriggerScheduledRefDefaultParam {
@@ -83152,6 +84614,984 @@ func (r workflowTriggerScheduledRefQueryIDString) HasSuffixIfPresent(value *stri
 
 func (r workflowTriggerScheduledRefQueryIDString) Field() workflowTriggerScheduledRefPrismaFields {
 	return workflowTriggerScheduledRefFieldID
+}
+
+// base struct
+type workflowTriggerScheduledRefQueryCreatedAtDateTime struct{}
+
+// Set the required value of CreatedAt
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) Set(value DateTime) workflowTriggerScheduledRefSetParam {
+
+	return workflowTriggerScheduledRefSetParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of CreatedAt dynamically
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) SetIfPresent(value *DateTime) workflowTriggerScheduledRefSetParam {
+	if value == nil {
+		return workflowTriggerScheduledRefSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) Equals(value DateTime) workflowTriggerScheduledRefWithPrismaCreatedAtEqualsParam {
+
+	return workflowTriggerScheduledRefWithPrismaCreatedAtEqualsParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) EqualsIfPresent(value *DateTime) workflowTriggerScheduledRefWithPrismaCreatedAtEqualsParam {
+	if value == nil {
+		return workflowTriggerScheduledRefWithPrismaCreatedAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) Order(direction SortOrder) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) Cursor(cursor DateTime) workflowTriggerScheduledRefCursorParam {
+	return workflowTriggerScheduledRefCursorParam{
+		data: builder.Field{
+			Name:  "createdAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) In(value []DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) InIfPresent(value []DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) NotIn(value []DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) NotInIfPresent(value []DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) Lt(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) LtIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) Lte(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) LteIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) Gt(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) GtIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) Gte(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) GteIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) Not(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) NotIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) Before(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) BeforeIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) After(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) AfterIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) BeforeEquals(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) BeforeEqualsIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) AfterEquals(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "createdAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) AfterEqualsIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryCreatedAtDateTime) Field() workflowTriggerScheduledRefPrismaFields {
+	return workflowTriggerScheduledRefFieldCreatedAt
+}
+
+// base struct
+type workflowTriggerScheduledRefQueryUpdatedAtDateTime struct{}
+
+// Set the required value of UpdatedAt
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) Set(value DateTime) workflowTriggerScheduledRefSetParam {
+
+	return workflowTriggerScheduledRefSetParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of UpdatedAt dynamically
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) SetIfPresent(value *DateTime) workflowTriggerScheduledRefSetParam {
+	if value == nil {
+		return workflowTriggerScheduledRefSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) Equals(value DateTime) workflowTriggerScheduledRefWithPrismaUpdatedAtEqualsParam {
+
+	return workflowTriggerScheduledRefWithPrismaUpdatedAtEqualsParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) EqualsIfPresent(value *DateTime) workflowTriggerScheduledRefWithPrismaUpdatedAtEqualsParam {
+	if value == nil {
+		return workflowTriggerScheduledRefWithPrismaUpdatedAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) Order(direction SortOrder) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) Cursor(cursor DateTime) workflowTriggerScheduledRefCursorParam {
+	return workflowTriggerScheduledRefCursorParam{
+		data: builder.Field{
+			Name:  "updatedAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) In(value []DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) InIfPresent(value []DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) NotIn(value []DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) NotInIfPresent(value []DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) Lt(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) LtIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) Lte(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) LteIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) Gt(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) GtIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) Gte(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) GteIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) Not(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) NotIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) Before(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) BeforeIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) After(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) AfterIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) BeforeEquals(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) BeforeEqualsIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) AfterEquals(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "updatedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) AfterEqualsIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryUpdatedAtDateTime) Field() workflowTriggerScheduledRefPrismaFields {
+	return workflowTriggerScheduledRefFieldUpdatedAt
+}
+
+// base struct
+type workflowTriggerScheduledRefQueryDeletedAtDateTime struct{}
+
+// Set the optional value of DeletedAt
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) Set(value DateTime) workflowTriggerScheduledRefSetParam {
+
+	return workflowTriggerScheduledRefSetParam{
+		data: builder.Field{
+			Name:  "deletedAt",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of DeletedAt dynamically
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) SetIfPresent(value *DateTime) workflowTriggerScheduledRefSetParam {
+	if value == nil {
+		return workflowTriggerScheduledRefSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of DeletedAt dynamically
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) SetOptional(value *DateTime) workflowTriggerScheduledRefSetParam {
+	if value == nil {
+
+		var v *DateTime
+		return workflowTriggerScheduledRefSetParam{
+			data: builder.Field{
+				Name:  "deletedAt",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) Equals(value DateTime) workflowTriggerScheduledRefWithPrismaDeletedAtEqualsParam {
+
+	return workflowTriggerScheduledRefWithPrismaDeletedAtEqualsParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) EqualsIfPresent(value *DateTime) workflowTriggerScheduledRefWithPrismaDeletedAtEqualsParam {
+	if value == nil {
+		return workflowTriggerScheduledRefWithPrismaDeletedAtEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) EqualsOptional(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) IsNull() workflowTriggerScheduledRefDefaultParam {
+	var str *string = nil
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) Order(direction SortOrder) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name:  "deletedAt",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) Cursor(cursor DateTime) workflowTriggerScheduledRefCursorParam {
+	return workflowTriggerScheduledRefCursorParam{
+		data: builder.Field{
+			Name:  "deletedAt",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) In(value []DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) InIfPresent(value []DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) NotIn(value []DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) NotInIfPresent(value []DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) Lt(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) LtIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) Lte(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) LteIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) Gt(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) GtIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) Gte(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) GteIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) Not(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) NotIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) Before(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) BeforeIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Before(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) After(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) AfterIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.After(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) BeforeEquals(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) BeforeEqualsIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.BeforeEquals(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) AfterEquals(value DateTime) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "deletedAt",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) AfterEqualsIfPresent(value *DateTime) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.AfterEquals(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryDeletedAtDateTime) Field() workflowTriggerScheduledRefPrismaFields {
+	return workflowTriggerScheduledRefFieldDeletedAt
 }
 
 // base struct
@@ -86627,6 +89067,371 @@ func (r workflowTriggerScheduledRefQueryTriggeredRelations) Unlink() workflowTri
 
 func (r workflowTriggerScheduledRefQueryTriggeredWorkflowRunTriggeredBy) Field() workflowTriggerScheduledRefPrismaFields {
 	return workflowTriggerScheduledRefFieldTriggered
+}
+
+// base struct
+type workflowTriggerScheduledRefQueryAdditionalMetadataJson struct{}
+
+// Set the optional value of AdditionalMetadata
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) Set(value JSON) workflowTriggerScheduledRefSetParam {
+
+	return workflowTriggerScheduledRefSetParam{
+		data: builder.Field{
+			Name:  "additionalMetadata",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of AdditionalMetadata dynamically
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) SetIfPresent(value *JSON) workflowTriggerScheduledRefSetParam {
+	if value == nil {
+		return workflowTriggerScheduledRefSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of AdditionalMetadata dynamically
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) SetOptional(value *JSON) workflowTriggerScheduledRefSetParam {
+	if value == nil {
+
+		var v *JSON
+		return workflowTriggerScheduledRefSetParam{
+			data: builder.Field{
+				Name:  "additionalMetadata",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) Equals(value JSON) workflowTriggerScheduledRefWithPrismaAdditionalMetadataEqualsParam {
+
+	return workflowTriggerScheduledRefWithPrismaAdditionalMetadataEqualsParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) EqualsIfPresent(value *JSON) workflowTriggerScheduledRefWithPrismaAdditionalMetadataEqualsParam {
+	if value == nil {
+		return workflowTriggerScheduledRefWithPrismaAdditionalMetadataEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) EqualsOptional(value *JSON) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) IsNull() workflowTriggerScheduledRefDefaultParam {
+	var str *string = nil
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) Order(direction SortOrder) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name:  "additionalMetadata",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) Cursor(cursor JSON) workflowTriggerScheduledRefCursorParam {
+	return workflowTriggerScheduledRefCursorParam{
+		data: builder.Field{
+			Name:  "additionalMetadata",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) Path(value []string) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "path",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) PathIfPresent(value []string) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Path(value)
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) StringContains(value string) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "string_contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) StringContainsIfPresent(value *string) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.StringContains(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) StringStartsWith(value string) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "string_starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) StringStartsWithIfPresent(value *string) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.StringStartsWith(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) StringEndsWith(value string) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "string_ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) StringEndsWithIfPresent(value *string) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.StringEndsWith(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) ArrayContains(value JSON) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "array_contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) ArrayContainsIfPresent(value *JSON) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.ArrayContains(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) ArrayStartsWith(value JSON) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "array_starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) ArrayStartsWithIfPresent(value *JSON) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.ArrayStartsWith(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) ArrayEndsWith(value JSON) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "array_ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) ArrayEndsWithIfPresent(value *JSON) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.ArrayEndsWith(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) Lt(value JSON) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) LtIfPresent(value *JSON) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) Lte(value JSON) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) LteIfPresent(value *JSON) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) Gt(value JSON) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) GtIfPresent(value *JSON) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) Gte(value JSON) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) GteIfPresent(value *JSON) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) Not(value JSONNullValueFilter) workflowTriggerScheduledRefDefaultParam {
+	return workflowTriggerScheduledRefDefaultParam{
+		data: builder.Field{
+			Name: "additionalMetadata",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) NotIfPresent(value *JSONNullValueFilter) workflowTriggerScheduledRefDefaultParam {
+	if value == nil {
+		return workflowTriggerScheduledRefDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+func (r workflowTriggerScheduledRefQueryAdditionalMetadataJson) Field() workflowTriggerScheduledRefPrismaFields {
+	return workflowTriggerScheduledRefFieldAdditionalMetadata
 }
 
 // Job acts as a namespaces to access query methods for the Job model
@@ -230924,10 +233729,14 @@ type workflowTriggerCronRefActions struct {
 
 var workflowTriggerCronRefOutput = []builder.Output{
 	{Name: "parentId"},
+	{Name: "createdAt"},
+	{Name: "updatedAt"},
+	{Name: "deletedAt"},
 	{Name: "cron"},
 	{Name: "enabled"},
 	{Name: "tickerId"},
 	{Name: "input"},
+	{Name: "additionalMetadata"},
 }
 
 type WorkflowTriggerCronRefRelationWith interface {
@@ -231249,6 +234058,240 @@ func (p workflowTriggerCronRefWithPrismaParentIDEqualsUniqueParam) parentIDField
 
 func (workflowTriggerCronRefWithPrismaParentIDEqualsUniqueParam) unique() {}
 func (workflowTriggerCronRefWithPrismaParentIDEqualsUniqueParam) equals() {}
+
+type WorkflowTriggerCronRefWithPrismaCreatedAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowTriggerCronRefModel()
+	createdAtField()
+}
+
+type WorkflowTriggerCronRefWithPrismaCreatedAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowTriggerCronRefModel()
+	createdAtField()
+}
+
+type workflowTriggerCronRefWithPrismaCreatedAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerCronRefWithPrismaCreatedAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerCronRefWithPrismaCreatedAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerCronRefWithPrismaCreatedAtSetParam) workflowTriggerCronRefModel() {}
+
+func (p workflowTriggerCronRefWithPrismaCreatedAtSetParam) createdAtField() {}
+
+type WorkflowTriggerCronRefWithPrismaCreatedAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowTriggerCronRefModel()
+	createdAtField()
+}
+
+type workflowTriggerCronRefWithPrismaCreatedAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerCronRefWithPrismaCreatedAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerCronRefWithPrismaCreatedAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerCronRefWithPrismaCreatedAtEqualsParam) workflowTriggerCronRefModel() {}
+
+func (p workflowTriggerCronRefWithPrismaCreatedAtEqualsParam) createdAtField() {}
+
+func (workflowTriggerCronRefWithPrismaCreatedAtSetParam) settable()  {}
+func (workflowTriggerCronRefWithPrismaCreatedAtEqualsParam) equals() {}
+
+type workflowTriggerCronRefWithPrismaCreatedAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerCronRefWithPrismaCreatedAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerCronRefWithPrismaCreatedAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerCronRefWithPrismaCreatedAtEqualsUniqueParam) workflowTriggerCronRefModel() {}
+func (p workflowTriggerCronRefWithPrismaCreatedAtEqualsUniqueParam) createdAtField()              {}
+
+func (workflowTriggerCronRefWithPrismaCreatedAtEqualsUniqueParam) unique() {}
+func (workflowTriggerCronRefWithPrismaCreatedAtEqualsUniqueParam) equals() {}
+
+type WorkflowTriggerCronRefWithPrismaUpdatedAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowTriggerCronRefModel()
+	updatedAtField()
+}
+
+type WorkflowTriggerCronRefWithPrismaUpdatedAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowTriggerCronRefModel()
+	updatedAtField()
+}
+
+type workflowTriggerCronRefWithPrismaUpdatedAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerCronRefWithPrismaUpdatedAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerCronRefWithPrismaUpdatedAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerCronRefWithPrismaUpdatedAtSetParam) workflowTriggerCronRefModel() {}
+
+func (p workflowTriggerCronRefWithPrismaUpdatedAtSetParam) updatedAtField() {}
+
+type WorkflowTriggerCronRefWithPrismaUpdatedAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowTriggerCronRefModel()
+	updatedAtField()
+}
+
+type workflowTriggerCronRefWithPrismaUpdatedAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerCronRefWithPrismaUpdatedAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerCronRefWithPrismaUpdatedAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerCronRefWithPrismaUpdatedAtEqualsParam) workflowTriggerCronRefModel() {}
+
+func (p workflowTriggerCronRefWithPrismaUpdatedAtEqualsParam) updatedAtField() {}
+
+func (workflowTriggerCronRefWithPrismaUpdatedAtSetParam) settable()  {}
+func (workflowTriggerCronRefWithPrismaUpdatedAtEqualsParam) equals() {}
+
+type workflowTriggerCronRefWithPrismaUpdatedAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerCronRefWithPrismaUpdatedAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerCronRefWithPrismaUpdatedAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerCronRefWithPrismaUpdatedAtEqualsUniqueParam) workflowTriggerCronRefModel() {}
+func (p workflowTriggerCronRefWithPrismaUpdatedAtEqualsUniqueParam) updatedAtField()              {}
+
+func (workflowTriggerCronRefWithPrismaUpdatedAtEqualsUniqueParam) unique() {}
+func (workflowTriggerCronRefWithPrismaUpdatedAtEqualsUniqueParam) equals() {}
+
+type WorkflowTriggerCronRefWithPrismaDeletedAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowTriggerCronRefModel()
+	deletedAtField()
+}
+
+type WorkflowTriggerCronRefWithPrismaDeletedAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowTriggerCronRefModel()
+	deletedAtField()
+}
+
+type workflowTriggerCronRefWithPrismaDeletedAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerCronRefWithPrismaDeletedAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerCronRefWithPrismaDeletedAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerCronRefWithPrismaDeletedAtSetParam) workflowTriggerCronRefModel() {}
+
+func (p workflowTriggerCronRefWithPrismaDeletedAtSetParam) deletedAtField() {}
+
+type WorkflowTriggerCronRefWithPrismaDeletedAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowTriggerCronRefModel()
+	deletedAtField()
+}
+
+type workflowTriggerCronRefWithPrismaDeletedAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerCronRefWithPrismaDeletedAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerCronRefWithPrismaDeletedAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerCronRefWithPrismaDeletedAtEqualsParam) workflowTriggerCronRefModel() {}
+
+func (p workflowTriggerCronRefWithPrismaDeletedAtEqualsParam) deletedAtField() {}
+
+func (workflowTriggerCronRefWithPrismaDeletedAtSetParam) settable()  {}
+func (workflowTriggerCronRefWithPrismaDeletedAtEqualsParam) equals() {}
+
+type workflowTriggerCronRefWithPrismaDeletedAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerCronRefWithPrismaDeletedAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerCronRefWithPrismaDeletedAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerCronRefWithPrismaDeletedAtEqualsUniqueParam) workflowTriggerCronRefModel() {}
+func (p workflowTriggerCronRefWithPrismaDeletedAtEqualsUniqueParam) deletedAtField()              {}
+
+func (workflowTriggerCronRefWithPrismaDeletedAtEqualsUniqueParam) unique() {}
+func (workflowTriggerCronRefWithPrismaDeletedAtEqualsUniqueParam) equals() {}
 
 type WorkflowTriggerCronRefWithPrismaCronEqualsSetParam interface {
 	field() builder.Field
@@ -231718,6 +234761,87 @@ func (p workflowTriggerCronRefWithPrismaInputEqualsUniqueParam) inputField()    
 func (workflowTriggerCronRefWithPrismaInputEqualsUniqueParam) unique() {}
 func (workflowTriggerCronRefWithPrismaInputEqualsUniqueParam) equals() {}
 
+type WorkflowTriggerCronRefWithPrismaAdditionalMetadataEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowTriggerCronRefModel()
+	additionalMetadataField()
+}
+
+type WorkflowTriggerCronRefWithPrismaAdditionalMetadataSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowTriggerCronRefModel()
+	additionalMetadataField()
+}
+
+type workflowTriggerCronRefWithPrismaAdditionalMetadataSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerCronRefWithPrismaAdditionalMetadataSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerCronRefWithPrismaAdditionalMetadataSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerCronRefWithPrismaAdditionalMetadataSetParam) workflowTriggerCronRefModel() {}
+
+func (p workflowTriggerCronRefWithPrismaAdditionalMetadataSetParam) additionalMetadataField() {}
+
+type WorkflowTriggerCronRefWithPrismaAdditionalMetadataWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowTriggerCronRefModel()
+	additionalMetadataField()
+}
+
+type workflowTriggerCronRefWithPrismaAdditionalMetadataEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerCronRefWithPrismaAdditionalMetadataEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerCronRefWithPrismaAdditionalMetadataEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerCronRefWithPrismaAdditionalMetadataEqualsParam) workflowTriggerCronRefModel() {
+}
+
+func (p workflowTriggerCronRefWithPrismaAdditionalMetadataEqualsParam) additionalMetadataField() {}
+
+func (workflowTriggerCronRefWithPrismaAdditionalMetadataSetParam) settable()  {}
+func (workflowTriggerCronRefWithPrismaAdditionalMetadataEqualsParam) equals() {}
+
+type workflowTriggerCronRefWithPrismaAdditionalMetadataEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerCronRefWithPrismaAdditionalMetadataEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerCronRefWithPrismaAdditionalMetadataEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerCronRefWithPrismaAdditionalMetadataEqualsUniqueParam) workflowTriggerCronRefModel() {
+}
+func (p workflowTriggerCronRefWithPrismaAdditionalMetadataEqualsUniqueParam) additionalMetadataField() {
+}
+
+func (workflowTriggerCronRefWithPrismaAdditionalMetadataEqualsUniqueParam) unique() {}
+func (workflowTriggerCronRefWithPrismaAdditionalMetadataEqualsUniqueParam) equals() {}
+
 type workflowTriggerScheduledRefActions struct {
 	// client holds the prisma client
 	client *PrismaClient
@@ -231725,6 +234849,9 @@ type workflowTriggerScheduledRefActions struct {
 
 var workflowTriggerScheduledRefOutput = []builder.Output{
 	{Name: "id"},
+	{Name: "createdAt"},
+	{Name: "updatedAt"},
+	{Name: "deletedAt"},
 	{Name: "parentId"},
 	{Name: "triggerAt"},
 	{Name: "tickerId"},
@@ -231733,6 +234860,7 @@ var workflowTriggerScheduledRefOutput = []builder.Output{
 	{Name: "parentStepRunId"},
 	{Name: "childIndex"},
 	{Name: "childKey"},
+	{Name: "additionalMetadata"},
 }
 
 type WorkflowTriggerScheduledRefRelationWith interface {
@@ -231977,6 +235105,246 @@ func (p workflowTriggerScheduledRefWithPrismaIDEqualsUniqueParam) idField() {}
 
 func (workflowTriggerScheduledRefWithPrismaIDEqualsUniqueParam) unique() {}
 func (workflowTriggerScheduledRefWithPrismaIDEqualsUniqueParam) equals() {}
+
+type WorkflowTriggerScheduledRefWithPrismaCreatedAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowTriggerScheduledRefModel()
+	createdAtField()
+}
+
+type WorkflowTriggerScheduledRefWithPrismaCreatedAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowTriggerScheduledRefModel()
+	createdAtField()
+}
+
+type workflowTriggerScheduledRefWithPrismaCreatedAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaCreatedAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerScheduledRefWithPrismaCreatedAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaCreatedAtSetParam) workflowTriggerScheduledRefModel() {}
+
+func (p workflowTriggerScheduledRefWithPrismaCreatedAtSetParam) createdAtField() {}
+
+type WorkflowTriggerScheduledRefWithPrismaCreatedAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowTriggerScheduledRefModel()
+	createdAtField()
+}
+
+type workflowTriggerScheduledRefWithPrismaCreatedAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaCreatedAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerScheduledRefWithPrismaCreatedAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaCreatedAtEqualsParam) workflowTriggerScheduledRefModel() {
+}
+
+func (p workflowTriggerScheduledRefWithPrismaCreatedAtEqualsParam) createdAtField() {}
+
+func (workflowTriggerScheduledRefWithPrismaCreatedAtSetParam) settable()  {}
+func (workflowTriggerScheduledRefWithPrismaCreatedAtEqualsParam) equals() {}
+
+type workflowTriggerScheduledRefWithPrismaCreatedAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaCreatedAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerScheduledRefWithPrismaCreatedAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaCreatedAtEqualsUniqueParam) workflowTriggerScheduledRefModel() {
+}
+func (p workflowTriggerScheduledRefWithPrismaCreatedAtEqualsUniqueParam) createdAtField() {}
+
+func (workflowTriggerScheduledRefWithPrismaCreatedAtEqualsUniqueParam) unique() {}
+func (workflowTriggerScheduledRefWithPrismaCreatedAtEqualsUniqueParam) equals() {}
+
+type WorkflowTriggerScheduledRefWithPrismaUpdatedAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowTriggerScheduledRefModel()
+	updatedAtField()
+}
+
+type WorkflowTriggerScheduledRefWithPrismaUpdatedAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowTriggerScheduledRefModel()
+	updatedAtField()
+}
+
+type workflowTriggerScheduledRefWithPrismaUpdatedAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaUpdatedAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerScheduledRefWithPrismaUpdatedAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaUpdatedAtSetParam) workflowTriggerScheduledRefModel() {}
+
+func (p workflowTriggerScheduledRefWithPrismaUpdatedAtSetParam) updatedAtField() {}
+
+type WorkflowTriggerScheduledRefWithPrismaUpdatedAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowTriggerScheduledRefModel()
+	updatedAtField()
+}
+
+type workflowTriggerScheduledRefWithPrismaUpdatedAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaUpdatedAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerScheduledRefWithPrismaUpdatedAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaUpdatedAtEqualsParam) workflowTriggerScheduledRefModel() {
+}
+
+func (p workflowTriggerScheduledRefWithPrismaUpdatedAtEqualsParam) updatedAtField() {}
+
+func (workflowTriggerScheduledRefWithPrismaUpdatedAtSetParam) settable()  {}
+func (workflowTriggerScheduledRefWithPrismaUpdatedAtEqualsParam) equals() {}
+
+type workflowTriggerScheduledRefWithPrismaUpdatedAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaUpdatedAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerScheduledRefWithPrismaUpdatedAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaUpdatedAtEqualsUniqueParam) workflowTriggerScheduledRefModel() {
+}
+func (p workflowTriggerScheduledRefWithPrismaUpdatedAtEqualsUniqueParam) updatedAtField() {}
+
+func (workflowTriggerScheduledRefWithPrismaUpdatedAtEqualsUniqueParam) unique() {}
+func (workflowTriggerScheduledRefWithPrismaUpdatedAtEqualsUniqueParam) equals() {}
+
+type WorkflowTriggerScheduledRefWithPrismaDeletedAtEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowTriggerScheduledRefModel()
+	deletedAtField()
+}
+
+type WorkflowTriggerScheduledRefWithPrismaDeletedAtSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowTriggerScheduledRefModel()
+	deletedAtField()
+}
+
+type workflowTriggerScheduledRefWithPrismaDeletedAtSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaDeletedAtSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerScheduledRefWithPrismaDeletedAtSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaDeletedAtSetParam) workflowTriggerScheduledRefModel() {}
+
+func (p workflowTriggerScheduledRefWithPrismaDeletedAtSetParam) deletedAtField() {}
+
+type WorkflowTriggerScheduledRefWithPrismaDeletedAtWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowTriggerScheduledRefModel()
+	deletedAtField()
+}
+
+type workflowTriggerScheduledRefWithPrismaDeletedAtEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaDeletedAtEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerScheduledRefWithPrismaDeletedAtEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaDeletedAtEqualsParam) workflowTriggerScheduledRefModel() {
+}
+
+func (p workflowTriggerScheduledRefWithPrismaDeletedAtEqualsParam) deletedAtField() {}
+
+func (workflowTriggerScheduledRefWithPrismaDeletedAtSetParam) settable()  {}
+func (workflowTriggerScheduledRefWithPrismaDeletedAtEqualsParam) equals() {}
+
+type workflowTriggerScheduledRefWithPrismaDeletedAtEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaDeletedAtEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerScheduledRefWithPrismaDeletedAtEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaDeletedAtEqualsUniqueParam) workflowTriggerScheduledRefModel() {
+}
+func (p workflowTriggerScheduledRefWithPrismaDeletedAtEqualsUniqueParam) deletedAtField() {}
+
+func (workflowTriggerScheduledRefWithPrismaDeletedAtEqualsUniqueParam) unique() {}
+func (workflowTriggerScheduledRefWithPrismaDeletedAtEqualsUniqueParam) equals() {}
 
 type WorkflowTriggerScheduledRefWithPrismaParentEqualsSetParam interface {
 	field() builder.Field
@@ -233023,6 +236391,89 @@ func (p workflowTriggerScheduledRefWithPrismaTriggeredEqualsUniqueParam) trigger
 
 func (workflowTriggerScheduledRefWithPrismaTriggeredEqualsUniqueParam) unique() {}
 func (workflowTriggerScheduledRefWithPrismaTriggeredEqualsUniqueParam) equals() {}
+
+type WorkflowTriggerScheduledRefWithPrismaAdditionalMetadataEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowTriggerScheduledRefModel()
+	additionalMetadataField()
+}
+
+type WorkflowTriggerScheduledRefWithPrismaAdditionalMetadataSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowTriggerScheduledRefModel()
+	additionalMetadataField()
+}
+
+type workflowTriggerScheduledRefWithPrismaAdditionalMetadataSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaAdditionalMetadataSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerScheduledRefWithPrismaAdditionalMetadataSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaAdditionalMetadataSetParam) workflowTriggerScheduledRefModel() {
+}
+
+func (p workflowTriggerScheduledRefWithPrismaAdditionalMetadataSetParam) additionalMetadataField() {}
+
+type WorkflowTriggerScheduledRefWithPrismaAdditionalMetadataWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowTriggerScheduledRefModel()
+	additionalMetadataField()
+}
+
+type workflowTriggerScheduledRefWithPrismaAdditionalMetadataEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaAdditionalMetadataEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerScheduledRefWithPrismaAdditionalMetadataEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaAdditionalMetadataEqualsParam) workflowTriggerScheduledRefModel() {
+}
+
+func (p workflowTriggerScheduledRefWithPrismaAdditionalMetadataEqualsParam) additionalMetadataField() {
+}
+
+func (workflowTriggerScheduledRefWithPrismaAdditionalMetadataSetParam) settable()  {}
+func (workflowTriggerScheduledRefWithPrismaAdditionalMetadataEqualsParam) equals() {}
+
+type workflowTriggerScheduledRefWithPrismaAdditionalMetadataEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaAdditionalMetadataEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerScheduledRefWithPrismaAdditionalMetadataEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerScheduledRefWithPrismaAdditionalMetadataEqualsUniqueParam) workflowTriggerScheduledRefModel() {
+}
+func (p workflowTriggerScheduledRefWithPrismaAdditionalMetadataEqualsUniqueParam) additionalMetadataField() {
+}
+
+func (workflowTriggerScheduledRefWithPrismaAdditionalMetadataEqualsUniqueParam) unique() {}
+func (workflowTriggerScheduledRefWithPrismaAdditionalMetadataEqualsUniqueParam) equals() {}
 
 type jobActions struct {
 	// client holds the prisma client
