@@ -1371,6 +1371,9 @@ model StepRun {
   // which retry we're on for this step run
   retryCount Int @default(0)
 
+  // the internal retry count for this step run
+  internalRetryCount Int @default(0)
+
   // the run error
   error String?
 
@@ -3027,35 +3030,36 @@ const (
 type StepRunScalarFieldEnum string
 
 const (
-	StepRunScalarFieldEnumID                StepRunScalarFieldEnum = "id"
-	StepRunScalarFieldEnumCreatedAt         StepRunScalarFieldEnum = "createdAt"
-	StepRunScalarFieldEnumUpdatedAt         StepRunScalarFieldEnum = "updatedAt"
-	StepRunScalarFieldEnumDeletedAt         StepRunScalarFieldEnum = "deletedAt"
-	StepRunScalarFieldEnumTenantID          StepRunScalarFieldEnum = "tenantId"
-	StepRunScalarFieldEnumJobRunID          StepRunScalarFieldEnum = "jobRunId"
-	StepRunScalarFieldEnumStepID            StepRunScalarFieldEnum = "stepId"
-	StepRunScalarFieldEnumOrder             StepRunScalarFieldEnum = "order"
-	StepRunScalarFieldEnumQueue             StepRunScalarFieldEnum = "queue"
-	StepRunScalarFieldEnumPriority          StepRunScalarFieldEnum = "priority"
-	StepRunScalarFieldEnumWorkerID          StepRunScalarFieldEnum = "workerId"
-	StepRunScalarFieldEnumTickerID          StepRunScalarFieldEnum = "tickerId"
-	StepRunScalarFieldEnumStatus            StepRunScalarFieldEnum = "status"
-	StepRunScalarFieldEnumInput             StepRunScalarFieldEnum = "input"
-	StepRunScalarFieldEnumOutput            StepRunScalarFieldEnum = "output"
-	StepRunScalarFieldEnumInputSchema       StepRunScalarFieldEnum = "inputSchema"
-	StepRunScalarFieldEnumRequeueAfter      StepRunScalarFieldEnum = "requeueAfter"
-	StepRunScalarFieldEnumScheduleTimeoutAt StepRunScalarFieldEnum = "scheduleTimeoutAt"
-	StepRunScalarFieldEnumRetryCount        StepRunScalarFieldEnum = "retryCount"
-	StepRunScalarFieldEnumError             StepRunScalarFieldEnum = "error"
-	StepRunScalarFieldEnumStartedAt         StepRunScalarFieldEnum = "startedAt"
-	StepRunScalarFieldEnumFinishedAt        StepRunScalarFieldEnum = "finishedAt"
-	StepRunScalarFieldEnumTimeoutAt         StepRunScalarFieldEnum = "timeoutAt"
-	StepRunScalarFieldEnumCancelledAt       StepRunScalarFieldEnum = "cancelledAt"
-	StepRunScalarFieldEnumCancelledReason   StepRunScalarFieldEnum = "cancelledReason"
-	StepRunScalarFieldEnumCancelledError    StepRunScalarFieldEnum = "cancelledError"
-	StepRunScalarFieldEnumCallerFiles       StepRunScalarFieldEnum = "callerFiles"
-	StepRunScalarFieldEnumGitRepoBranch     StepRunScalarFieldEnum = "gitRepoBranch"
-	StepRunScalarFieldEnumSemaphoreReleased StepRunScalarFieldEnum = "semaphoreReleased"
+	StepRunScalarFieldEnumID                 StepRunScalarFieldEnum = "id"
+	StepRunScalarFieldEnumCreatedAt          StepRunScalarFieldEnum = "createdAt"
+	StepRunScalarFieldEnumUpdatedAt          StepRunScalarFieldEnum = "updatedAt"
+	StepRunScalarFieldEnumDeletedAt          StepRunScalarFieldEnum = "deletedAt"
+	StepRunScalarFieldEnumTenantID           StepRunScalarFieldEnum = "tenantId"
+	StepRunScalarFieldEnumJobRunID           StepRunScalarFieldEnum = "jobRunId"
+	StepRunScalarFieldEnumStepID             StepRunScalarFieldEnum = "stepId"
+	StepRunScalarFieldEnumOrder              StepRunScalarFieldEnum = "order"
+	StepRunScalarFieldEnumQueue              StepRunScalarFieldEnum = "queue"
+	StepRunScalarFieldEnumPriority           StepRunScalarFieldEnum = "priority"
+	StepRunScalarFieldEnumWorkerID           StepRunScalarFieldEnum = "workerId"
+	StepRunScalarFieldEnumTickerID           StepRunScalarFieldEnum = "tickerId"
+	StepRunScalarFieldEnumStatus             StepRunScalarFieldEnum = "status"
+	StepRunScalarFieldEnumInput              StepRunScalarFieldEnum = "input"
+	StepRunScalarFieldEnumOutput             StepRunScalarFieldEnum = "output"
+	StepRunScalarFieldEnumInputSchema        StepRunScalarFieldEnum = "inputSchema"
+	StepRunScalarFieldEnumRequeueAfter       StepRunScalarFieldEnum = "requeueAfter"
+	StepRunScalarFieldEnumScheduleTimeoutAt  StepRunScalarFieldEnum = "scheduleTimeoutAt"
+	StepRunScalarFieldEnumRetryCount         StepRunScalarFieldEnum = "retryCount"
+	StepRunScalarFieldEnumInternalRetryCount StepRunScalarFieldEnum = "internalRetryCount"
+	StepRunScalarFieldEnumError              StepRunScalarFieldEnum = "error"
+	StepRunScalarFieldEnumStartedAt          StepRunScalarFieldEnum = "startedAt"
+	StepRunScalarFieldEnumFinishedAt         StepRunScalarFieldEnum = "finishedAt"
+	StepRunScalarFieldEnumTimeoutAt          StepRunScalarFieldEnum = "timeoutAt"
+	StepRunScalarFieldEnumCancelledAt        StepRunScalarFieldEnum = "cancelledAt"
+	StepRunScalarFieldEnumCancelledReason    StepRunScalarFieldEnum = "cancelledReason"
+	StepRunScalarFieldEnumCancelledError     StepRunScalarFieldEnum = "cancelledError"
+	StepRunScalarFieldEnumCallerFiles        StepRunScalarFieldEnum = "callerFiles"
+	StepRunScalarFieldEnumGitRepoBranch      StepRunScalarFieldEnum = "gitRepoBranch"
+	StepRunScalarFieldEnumSemaphoreReleased  StepRunScalarFieldEnum = "semaphoreReleased"
 )
 
 type QueueScalarFieldEnum string
@@ -4419,6 +4423,8 @@ const stepRunFieldRequeueAfter stepRunPrismaFields = "requeueAfter"
 const stepRunFieldScheduleTimeoutAt stepRunPrismaFields = "scheduleTimeoutAt"
 
 const stepRunFieldRetryCount stepRunPrismaFields = "retryCount"
+
+const stepRunFieldInternalRetryCount stepRunPrismaFields = "internalRetryCount"
 
 const stepRunFieldError stepRunPrismaFields = "error"
 
@@ -11038,68 +11044,70 @@ type StepRunModel struct {
 
 // InnerStepRun holds the actual data
 type InnerStepRun struct {
-	ID                string        `json:"id"`
-	CreatedAt         DateTime      `json:"createdAt"`
-	UpdatedAt         DateTime      `json:"updatedAt"`
-	DeletedAt         *DateTime     `json:"deletedAt,omitempty"`
-	TenantID          string        `json:"tenantId"`
-	JobRunID          string        `json:"jobRunId"`
-	StepID            string        `json:"stepId"`
-	Order             BigInt        `json:"order"`
-	Queue             string        `json:"queue"`
-	Priority          *int          `json:"priority,omitempty"`
-	WorkerID          *string       `json:"workerId,omitempty"`
-	TickerID          *string       `json:"tickerId,omitempty"`
-	Status            StepRunStatus `json:"status"`
-	Input             *JSON         `json:"input,omitempty"`
-	Output            *JSON         `json:"output,omitempty"`
-	InputSchema       *JSON         `json:"inputSchema,omitempty"`
-	RequeueAfter      *DateTime     `json:"requeueAfter,omitempty"`
-	ScheduleTimeoutAt *DateTime     `json:"scheduleTimeoutAt,omitempty"`
-	RetryCount        int           `json:"retryCount"`
-	Error             *string       `json:"error,omitempty"`
-	StartedAt         *DateTime     `json:"startedAt,omitempty"`
-	FinishedAt        *DateTime     `json:"finishedAt,omitempty"`
-	TimeoutAt         *DateTime     `json:"timeoutAt,omitempty"`
-	CancelledAt       *DateTime     `json:"cancelledAt,omitempty"`
-	CancelledReason   *string       `json:"cancelledReason,omitempty"`
-	CancelledError    *string       `json:"cancelledError,omitempty"`
-	CallerFiles       *JSON         `json:"callerFiles,omitempty"`
-	GitRepoBranch     *string       `json:"gitRepoBranch,omitempty"`
-	SemaphoreReleased bool          `json:"semaphoreReleased"`
+	ID                 string        `json:"id"`
+	CreatedAt          DateTime      `json:"createdAt"`
+	UpdatedAt          DateTime      `json:"updatedAt"`
+	DeletedAt          *DateTime     `json:"deletedAt,omitempty"`
+	TenantID           string        `json:"tenantId"`
+	JobRunID           string        `json:"jobRunId"`
+	StepID             string        `json:"stepId"`
+	Order              BigInt        `json:"order"`
+	Queue              string        `json:"queue"`
+	Priority           *int          `json:"priority,omitempty"`
+	WorkerID           *string       `json:"workerId,omitempty"`
+	TickerID           *string       `json:"tickerId,omitempty"`
+	Status             StepRunStatus `json:"status"`
+	Input              *JSON         `json:"input,omitempty"`
+	Output             *JSON         `json:"output,omitempty"`
+	InputSchema        *JSON         `json:"inputSchema,omitempty"`
+	RequeueAfter       *DateTime     `json:"requeueAfter,omitempty"`
+	ScheduleTimeoutAt  *DateTime     `json:"scheduleTimeoutAt,omitempty"`
+	RetryCount         int           `json:"retryCount"`
+	InternalRetryCount int           `json:"internalRetryCount"`
+	Error              *string       `json:"error,omitempty"`
+	StartedAt          *DateTime     `json:"startedAt,omitempty"`
+	FinishedAt         *DateTime     `json:"finishedAt,omitempty"`
+	TimeoutAt          *DateTime     `json:"timeoutAt,omitempty"`
+	CancelledAt        *DateTime     `json:"cancelledAt,omitempty"`
+	CancelledReason    *string       `json:"cancelledReason,omitempty"`
+	CancelledError     *string       `json:"cancelledError,omitempty"`
+	CallerFiles        *JSON         `json:"callerFiles,omitempty"`
+	GitRepoBranch      *string       `json:"gitRepoBranch,omitempty"`
+	SemaphoreReleased  bool          `json:"semaphoreReleased"`
 }
 
 // RawStepRunModel is a struct for StepRun when used in raw queries
 type RawStepRunModel struct {
-	ID                RawString        `json:"id"`
-	CreatedAt         RawDateTime      `json:"createdAt"`
-	UpdatedAt         RawDateTime      `json:"updatedAt"`
-	DeletedAt         *RawDateTime     `json:"deletedAt,omitempty"`
-	TenantID          RawString        `json:"tenantId"`
-	JobRunID          RawString        `json:"jobRunId"`
-	StepID            RawString        `json:"stepId"`
-	Order             RawBigInt        `json:"order"`
-	Queue             RawString        `json:"queue"`
-	Priority          *RawInt          `json:"priority,omitempty"`
-	WorkerID          *RawString       `json:"workerId,omitempty"`
-	TickerID          *RawString       `json:"tickerId,omitempty"`
-	Status            RawStepRunStatus `json:"status"`
-	Input             *RawJSON         `json:"input,omitempty"`
-	Output            *RawJSON         `json:"output,omitempty"`
-	InputSchema       *RawJSON         `json:"inputSchema,omitempty"`
-	RequeueAfter      *RawDateTime     `json:"requeueAfter,omitempty"`
-	ScheduleTimeoutAt *RawDateTime     `json:"scheduleTimeoutAt,omitempty"`
-	RetryCount        RawInt           `json:"retryCount"`
-	Error             *RawString       `json:"error,omitempty"`
-	StartedAt         *RawDateTime     `json:"startedAt,omitempty"`
-	FinishedAt        *RawDateTime     `json:"finishedAt,omitempty"`
-	TimeoutAt         *RawDateTime     `json:"timeoutAt,omitempty"`
-	CancelledAt       *RawDateTime     `json:"cancelledAt,omitempty"`
-	CancelledReason   *RawString       `json:"cancelledReason,omitempty"`
-	CancelledError    *RawString       `json:"cancelledError,omitempty"`
-	CallerFiles       *RawJSON         `json:"callerFiles,omitempty"`
-	GitRepoBranch     *RawString       `json:"gitRepoBranch,omitempty"`
-	SemaphoreReleased RawBoolean       `json:"semaphoreReleased"`
+	ID                 RawString        `json:"id"`
+	CreatedAt          RawDateTime      `json:"createdAt"`
+	UpdatedAt          RawDateTime      `json:"updatedAt"`
+	DeletedAt          *RawDateTime     `json:"deletedAt,omitempty"`
+	TenantID           RawString        `json:"tenantId"`
+	JobRunID           RawString        `json:"jobRunId"`
+	StepID             RawString        `json:"stepId"`
+	Order              RawBigInt        `json:"order"`
+	Queue              RawString        `json:"queue"`
+	Priority           *RawInt          `json:"priority,omitempty"`
+	WorkerID           *RawString       `json:"workerId,omitempty"`
+	TickerID           *RawString       `json:"tickerId,omitempty"`
+	Status             RawStepRunStatus `json:"status"`
+	Input              *RawJSON         `json:"input,omitempty"`
+	Output             *RawJSON         `json:"output,omitempty"`
+	InputSchema        *RawJSON         `json:"inputSchema,omitempty"`
+	RequeueAfter       *RawDateTime     `json:"requeueAfter,omitempty"`
+	ScheduleTimeoutAt  *RawDateTime     `json:"scheduleTimeoutAt,omitempty"`
+	RetryCount         RawInt           `json:"retryCount"`
+	InternalRetryCount RawInt           `json:"internalRetryCount"`
+	Error              *RawString       `json:"error,omitempty"`
+	StartedAt          *RawDateTime     `json:"startedAt,omitempty"`
+	FinishedAt         *RawDateTime     `json:"finishedAt,omitempty"`
+	TimeoutAt          *RawDateTime     `json:"timeoutAt,omitempty"`
+	CancelledAt        *RawDateTime     `json:"cancelledAt,omitempty"`
+	CancelledReason    *RawString       `json:"cancelledReason,omitempty"`
+	CancelledError     *RawString       `json:"cancelledError,omitempty"`
+	CallerFiles        *RawJSON         `json:"callerFiles,omitempty"`
+	GitRepoBranch      *RawString       `json:"gitRepoBranch,omitempty"`
+	SemaphoreReleased  RawBoolean       `json:"semaphoreReleased"`
 }
 
 // RelationsStepRun holds the relation data separately
@@ -144334,6 +144342,11 @@ type stepRunQuery struct {
 	// @required
 	RetryCount stepRunQueryRetryCountInt
 
+	// InternalRetryCount
+	//
+	// @required
+	InternalRetryCount stepRunQueryInternalRetryCountInt
+
 	// Error
 	//
 	// @optional
@@ -151545,6 +151558,405 @@ func (r stepRunQueryRetryCountInt) GTEIfPresent(value *int) stepRunDefaultParam 
 
 func (r stepRunQueryRetryCountInt) Field() stepRunPrismaFields {
 	return stepRunFieldRetryCount
+}
+
+// base struct
+type stepRunQueryInternalRetryCountInt struct{}
+
+// Set the required value of InternalRetryCount
+func (r stepRunQueryInternalRetryCountInt) Set(value int) stepRunSetParam {
+
+	return stepRunSetParam{
+		data: builder.Field{
+			Name:  "internalRetryCount",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of InternalRetryCount dynamically
+func (r stepRunQueryInternalRetryCountInt) SetIfPresent(value *Int) stepRunSetParam {
+	if value == nil {
+		return stepRunSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Increment the required value of InternalRetryCount
+func (r stepRunQueryInternalRetryCountInt) Increment(value int) stepRunSetParam {
+	return stepRunSetParam{
+		data: builder.Field{
+			Name: "internalRetryCount",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "increment",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryInternalRetryCountInt) IncrementIfPresent(value *int) stepRunSetParam {
+	if value == nil {
+		return stepRunSetParam{}
+	}
+	return r.Increment(*value)
+}
+
+// Decrement the required value of InternalRetryCount
+func (r stepRunQueryInternalRetryCountInt) Decrement(value int) stepRunSetParam {
+	return stepRunSetParam{
+		data: builder.Field{
+			Name: "internalRetryCount",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "decrement",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryInternalRetryCountInt) DecrementIfPresent(value *int) stepRunSetParam {
+	if value == nil {
+		return stepRunSetParam{}
+	}
+	return r.Decrement(*value)
+}
+
+// Multiply the required value of InternalRetryCount
+func (r stepRunQueryInternalRetryCountInt) Multiply(value int) stepRunSetParam {
+	return stepRunSetParam{
+		data: builder.Field{
+			Name: "internalRetryCount",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "multiply",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryInternalRetryCountInt) MultiplyIfPresent(value *int) stepRunSetParam {
+	if value == nil {
+		return stepRunSetParam{}
+	}
+	return r.Multiply(*value)
+}
+
+// Divide the required value of InternalRetryCount
+func (r stepRunQueryInternalRetryCountInt) Divide(value int) stepRunSetParam {
+	return stepRunSetParam{
+		data: builder.Field{
+			Name: "internalRetryCount",
+			Fields: []builder.Field{
+				builder.Field{
+					Name:  "divide",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryInternalRetryCountInt) DivideIfPresent(value *int) stepRunSetParam {
+	if value == nil {
+		return stepRunSetParam{}
+	}
+	return r.Divide(*value)
+}
+
+func (r stepRunQueryInternalRetryCountInt) Equals(value int) stepRunWithPrismaInternalRetryCountEqualsParam {
+
+	return stepRunWithPrismaInternalRetryCountEqualsParam{
+		data: builder.Field{
+			Name: "internalRetryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryInternalRetryCountInt) EqualsIfPresent(value *int) stepRunWithPrismaInternalRetryCountEqualsParam {
+	if value == nil {
+		return stepRunWithPrismaInternalRetryCountEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r stepRunQueryInternalRetryCountInt) Order(direction SortOrder) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name:  "internalRetryCount",
+			Value: direction,
+		},
+	}
+}
+
+func (r stepRunQueryInternalRetryCountInt) Cursor(cursor int) stepRunCursorParam {
+	return stepRunCursorParam{
+		data: builder.Field{
+			Name:  "internalRetryCount",
+			Value: cursor,
+		},
+	}
+}
+
+func (r stepRunQueryInternalRetryCountInt) In(value []int) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "internalRetryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryInternalRetryCountInt) InIfPresent(value []int) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r stepRunQueryInternalRetryCountInt) NotIn(value []int) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "internalRetryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryInternalRetryCountInt) NotInIfPresent(value []int) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r stepRunQueryInternalRetryCountInt) Lt(value int) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "internalRetryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryInternalRetryCountInt) LtIfPresent(value *int) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r stepRunQueryInternalRetryCountInt) Lte(value int) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "internalRetryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryInternalRetryCountInt) LteIfPresent(value *int) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r stepRunQueryInternalRetryCountInt) Gt(value int) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "internalRetryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryInternalRetryCountInt) GtIfPresent(value *int) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r stepRunQueryInternalRetryCountInt) Gte(value int) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "internalRetryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryInternalRetryCountInt) GteIfPresent(value *int) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r stepRunQueryInternalRetryCountInt) Not(value int) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "internalRetryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r stepRunQueryInternalRetryCountInt) NotIfPresent(value *int) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use Lt instead.
+
+func (r stepRunQueryInternalRetryCountInt) LT(value int) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "internalRetryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LtIfPresent instead.
+func (r stepRunQueryInternalRetryCountInt) LTIfPresent(value *int) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.LT(*value)
+}
+
+// deprecated: Use Lte instead.
+
+func (r stepRunQueryInternalRetryCountInt) LTE(value int) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "internalRetryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use LteIfPresent instead.
+func (r stepRunQueryInternalRetryCountInt) LTEIfPresent(value *int) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.LTE(*value)
+}
+
+// deprecated: Use Gt instead.
+
+func (r stepRunQueryInternalRetryCountInt) GT(value int) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "internalRetryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GtIfPresent instead.
+func (r stepRunQueryInternalRetryCountInt) GTIfPresent(value *int) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.GT(*value)
+}
+
+// deprecated: Use Gte instead.
+
+func (r stepRunQueryInternalRetryCountInt) GTE(value int) stepRunDefaultParam {
+	return stepRunDefaultParam{
+		data: builder.Field{
+			Name: "internalRetryCount",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use GteIfPresent instead.
+func (r stepRunQueryInternalRetryCountInt) GTEIfPresent(value *int) stepRunDefaultParam {
+	if value == nil {
+		return stepRunDefaultParam{}
+	}
+	return r.GTE(*value)
+}
+
+func (r stepRunQueryInternalRetryCountInt) Field() stepRunPrismaFields {
+	return stepRunFieldInternalRetryCount
 }
 
 // base struct
@@ -252956,6 +253368,7 @@ var stepRunOutput = []builder.Output{
 	{Name: "requeueAfter"},
 	{Name: "scheduleTimeoutAt"},
 	{Name: "retryCount"},
+	{Name: "internalRetryCount"},
 	{Name: "error"},
 	{Name: "startedAt"},
 	{Name: "finishedAt"},
@@ -254925,6 +255338,84 @@ func (p stepRunWithPrismaRetryCountEqualsUniqueParam) retryCountField() {}
 
 func (stepRunWithPrismaRetryCountEqualsUniqueParam) unique() {}
 func (stepRunWithPrismaRetryCountEqualsUniqueParam) equals() {}
+
+type StepRunWithPrismaInternalRetryCountEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	stepRunModel()
+	internalRetryCountField()
+}
+
+type StepRunWithPrismaInternalRetryCountSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRunModel()
+	internalRetryCountField()
+}
+
+type stepRunWithPrismaInternalRetryCountSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunWithPrismaInternalRetryCountSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunWithPrismaInternalRetryCountSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunWithPrismaInternalRetryCountSetParam) stepRunModel() {}
+
+func (p stepRunWithPrismaInternalRetryCountSetParam) internalRetryCountField() {}
+
+type StepRunWithPrismaInternalRetryCountWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	stepRunModel()
+	internalRetryCountField()
+}
+
+type stepRunWithPrismaInternalRetryCountEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunWithPrismaInternalRetryCountEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunWithPrismaInternalRetryCountEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunWithPrismaInternalRetryCountEqualsParam) stepRunModel() {}
+
+func (p stepRunWithPrismaInternalRetryCountEqualsParam) internalRetryCountField() {}
+
+func (stepRunWithPrismaInternalRetryCountSetParam) settable()  {}
+func (stepRunWithPrismaInternalRetryCountEqualsParam) equals() {}
+
+type stepRunWithPrismaInternalRetryCountEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p stepRunWithPrismaInternalRetryCountEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p stepRunWithPrismaInternalRetryCountEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p stepRunWithPrismaInternalRetryCountEqualsUniqueParam) stepRunModel()            {}
+func (p stepRunWithPrismaInternalRetryCountEqualsUniqueParam) internalRetryCountField() {}
+
+func (stepRunWithPrismaInternalRetryCountEqualsUniqueParam) unique() {}
+func (stepRunWithPrismaInternalRetryCountEqualsUniqueParam) equals() {}
 
 type StepRunWithPrismaErrorEqualsSetParam interface {
 	field() builder.Field
