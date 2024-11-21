@@ -719,6 +719,10 @@ model WorkflowTriggerEventRef {
 }
 
 model WorkflowTriggerCronRef {
+  id String @unique @default(uuid()) @db.Uuid
+
+  name String?
+
   // the parent workflow
   parent   WorkflowTriggers @relation(fields: [parentId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   parentId String           @db.Uuid
@@ -744,7 +748,7 @@ model WorkflowTriggerCronRef {
   additionalMetadata Json?
 
   // cron references must be unique per workflow
-  @@unique([parentId, cron])
+  @@unique([parentId, cron, name])
 }
 
 model WorkflowTriggerScheduledRef {
@@ -1176,9 +1180,10 @@ model WorkflowRunTriggeredBy {
   eventId String? @db.Uuid
 
   // the cron reference that triggered this workflow
-  cron         WorkflowTriggerCronRef? @relation(fields: [cronParentId, cronSchedule], references: [parentId, cron])
+  cron         WorkflowTriggerCronRef? @relation(fields: [cronParentId, cronSchedule, cronName], references: [parentId, cron, name])
   cronParentId String?                 @db.Uuid
   cronSchedule String?
+  cronName     String?
 
   // a specific time that triggered this workflow
   scheduled   WorkflowTriggerScheduledRef? @relation(fields: [scheduledId], references: [id])
@@ -2779,6 +2784,8 @@ const (
 type WorkflowTriggerCronRefScalarFieldEnum string
 
 const (
+	WorkflowTriggerCronRefScalarFieldEnumID                 WorkflowTriggerCronRefScalarFieldEnum = "id"
+	WorkflowTriggerCronRefScalarFieldEnumName               WorkflowTriggerCronRefScalarFieldEnum = "name"
 	WorkflowTriggerCronRefScalarFieldEnumParentID           WorkflowTriggerCronRefScalarFieldEnum = "parentId"
 	WorkflowTriggerCronRefScalarFieldEnumCreatedAt          WorkflowTriggerCronRefScalarFieldEnum = "createdAt"
 	WorkflowTriggerCronRefScalarFieldEnumUpdatedAt          WorkflowTriggerCronRefScalarFieldEnum = "updatedAt"
@@ -2972,6 +2979,7 @@ const (
 	WorkflowRunTriggeredByScalarFieldEnumEventID      WorkflowRunTriggeredByScalarFieldEnum = "eventId"
 	WorkflowRunTriggeredByScalarFieldEnumCronParentID WorkflowRunTriggeredByScalarFieldEnum = "cronParentId"
 	WorkflowRunTriggeredByScalarFieldEnumCronSchedule WorkflowRunTriggeredByScalarFieldEnum = "cronSchedule"
+	WorkflowRunTriggeredByScalarFieldEnumCronName     WorkflowRunTriggeredByScalarFieldEnum = "cronName"
 	WorkflowRunTriggeredByScalarFieldEnumScheduledID  WorkflowRunTriggeredByScalarFieldEnum = "scheduledId"
 )
 
@@ -3932,6 +3940,10 @@ const workflowTriggerEventRefFieldEventKey workflowTriggerEventRefPrismaFields =
 
 type workflowTriggerCronRefPrismaFields = prismaFields
 
+const workflowTriggerCronRefFieldID workflowTriggerCronRefPrismaFields = "id"
+
+const workflowTriggerCronRefFieldName workflowTriggerCronRefPrismaFields = "name"
+
 const workflowTriggerCronRefFieldParent workflowTriggerCronRefPrismaFields = "parent"
 
 const workflowTriggerCronRefFieldParentID workflowTriggerCronRefPrismaFields = "parentId"
@@ -4291,6 +4303,8 @@ const workflowRunTriggeredByFieldCron workflowRunTriggeredByPrismaFields = "cron
 const workflowRunTriggeredByFieldCronParentID workflowRunTriggeredByPrismaFields = "cronParentId"
 
 const workflowRunTriggeredByFieldCronSchedule workflowRunTriggeredByPrismaFields = "cronSchedule"
+
+const workflowRunTriggeredByFieldCronName workflowRunTriggeredByPrismaFields = "cronName"
 
 const workflowRunTriggeredByFieldScheduled workflowRunTriggeredByPrismaFields = "scheduled"
 
@@ -9596,6 +9610,8 @@ type WorkflowTriggerCronRefModel struct {
 
 // InnerWorkflowTriggerCronRef holds the actual data
 type InnerWorkflowTriggerCronRef struct {
+	ID                 string    `json:"id"`
+	Name               *string   `json:"name,omitempty"`
 	ParentID           string    `json:"parentId"`
 	CreatedAt          DateTime  `json:"createdAt"`
 	UpdatedAt          DateTime  `json:"updatedAt"`
@@ -9609,6 +9625,8 @@ type InnerWorkflowTriggerCronRef struct {
 
 // RawWorkflowTriggerCronRefModel is a struct for WorkflowTriggerCronRef when used in raw queries
 type RawWorkflowTriggerCronRefModel struct {
+	ID                 RawString    `json:"id"`
+	Name               *RawString   `json:"name,omitempty"`
 	ParentID           RawString    `json:"parentId"`
 	CreatedAt          RawDateTime  `json:"createdAt"`
 	UpdatedAt          RawDateTime  `json:"updatedAt"`
@@ -9625,6 +9643,13 @@ type RelationsWorkflowTriggerCronRef struct {
 	Parent    *WorkflowTriggersModel        `json:"parent,omitempty"`
 	Ticker    *TickerModel                  `json:"ticker,omitempty"`
 	Triggered []WorkflowRunTriggeredByModel `json:"triggered,omitempty"`
+}
+
+func (r WorkflowTriggerCronRefModel) Name() (value String, ok bool) {
+	if r.InnerWorkflowTriggerCronRef.Name == nil {
+		return value, false
+	}
+	return *r.InnerWorkflowTriggerCronRef.Name, true
 }
 
 func (r WorkflowTriggerCronRefModel) Parent() (value *WorkflowTriggersModel) {
@@ -10697,6 +10722,7 @@ type InnerWorkflowRunTriggeredBy struct {
 	EventID      *string   `json:"eventId,omitempty"`
 	CronParentID *string   `json:"cronParentId,omitempty"`
 	CronSchedule *string   `json:"cronSchedule,omitempty"`
+	CronName     *string   `json:"cronName,omitempty"`
 	ScheduledID  *string   `json:"scheduledId,omitempty"`
 }
 
@@ -10712,6 +10738,7 @@ type RawWorkflowRunTriggeredByModel struct {
 	EventID      *RawString   `json:"eventId,omitempty"`
 	CronParentID *RawString   `json:"cronParentId,omitempty"`
 	CronSchedule *RawString   `json:"cronSchedule,omitempty"`
+	CronName     *RawString   `json:"cronName,omitempty"`
 	ScheduledID  *RawString   `json:"scheduledId,omitempty"`
 }
 
@@ -10761,6 +10788,13 @@ func (r WorkflowRunTriggeredByModel) CronSchedule() (value String, ok bool) {
 		return value, false
 	}
 	return *r.InnerWorkflowRunTriggeredBy.CronSchedule, true
+}
+
+func (r WorkflowRunTriggeredByModel) CronName() (value String, ok bool) {
+	if r.InnerWorkflowRunTriggeredBy.CronName == nil {
+		return value, false
+	}
+	return *r.InnerWorkflowRunTriggeredBy.CronName, true
 }
 
 func (r WorkflowRunTriggeredByModel) Scheduled() (value *WorkflowTriggerScheduledRefModel, ok bool) {
@@ -80792,6 +80826,18 @@ var WorkflowTriggerCronRef = workflowTriggerCronRefQuery{}
 
 // workflowTriggerCronRefQuery exposes query functions for the workflowTriggerCronRef model
 type workflowTriggerCronRefQuery struct {
+
+	// ID
+	//
+	// @required
+	// @unique
+	ID workflowTriggerCronRefQueryIDString
+
+	// Name
+	//
+	// @optional
+	Name workflowTriggerCronRefQueryNameString
+
 	Parent workflowTriggerCronRefQueryParentRelations
 
 	// ParentID
@@ -80895,22 +80941,764 @@ func (workflowTriggerCronRefQuery) And(params ...WorkflowTriggerCronRefWherePara
 	}
 }
 
-func (workflowTriggerCronRefQuery) ParentIDCron(
+func (workflowTriggerCronRefQuery) ParentIDCronName(
 	_parentID WorkflowTriggerCronRefWithPrismaParentIDWhereParam,
 
 	_cron WorkflowTriggerCronRefWithPrismaCronWhereParam,
+
+	_name WorkflowTriggerCronRefWithPrismaNameWhereParam,
 ) WorkflowTriggerCronRefEqualsUniqueWhereParam {
 	var fields []builder.Field
 
 	fields = append(fields, _parentID.field())
 	fields = append(fields, _cron.field())
+	fields = append(fields, _name.field())
 
 	return workflowTriggerCronRefEqualsUniqueParam{
 		data: builder.Field{
-			Name:   "parentId_cron",
+			Name:   "parentId_cron_name",
 			Fields: builder.TransformEquals(fields),
 		},
 	}
+}
+
+// base struct
+type workflowTriggerCronRefQueryIDString struct{}
+
+// Set the required value of ID
+func (r workflowTriggerCronRefQueryIDString) Set(value string) workflowTriggerCronRefSetParam {
+
+	return workflowTriggerCronRefSetParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of ID dynamically
+func (r workflowTriggerCronRefQueryIDString) SetIfPresent(value *String) workflowTriggerCronRefSetParam {
+	if value == nil {
+		return workflowTriggerCronRefSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowTriggerCronRefQueryIDString) Equals(value string) workflowTriggerCronRefWithPrismaIDEqualsUniqueParam {
+
+	return workflowTriggerCronRefWithPrismaIDEqualsUniqueParam{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryIDString) EqualsIfPresent(value *string) workflowTriggerCronRefWithPrismaIDEqualsUniqueParam {
+	if value == nil {
+		return workflowTriggerCronRefWithPrismaIDEqualsUniqueParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowTriggerCronRefQueryIDString) Order(direction SortOrder) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryIDString) Cursor(cursor string) workflowTriggerCronRefCursorParam {
+	return workflowTriggerCronRefCursorParam{
+		data: builder.Field{
+			Name:  "id",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryIDString) In(value []string) workflowTriggerCronRefParamUnique {
+	return workflowTriggerCronRefParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryIDString) InIfPresent(value []string) workflowTriggerCronRefParamUnique {
+	if value == nil {
+		return workflowTriggerCronRefParamUnique{}
+	}
+	return r.In(value)
+}
+
+func (r workflowTriggerCronRefQueryIDString) NotIn(value []string) workflowTriggerCronRefParamUnique {
+	return workflowTriggerCronRefParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryIDString) NotInIfPresent(value []string) workflowTriggerCronRefParamUnique {
+	if value == nil {
+		return workflowTriggerCronRefParamUnique{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowTriggerCronRefQueryIDString) Lt(value string) workflowTriggerCronRefParamUnique {
+	return workflowTriggerCronRefParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryIDString) LtIfPresent(value *string) workflowTriggerCronRefParamUnique {
+	if value == nil {
+		return workflowTriggerCronRefParamUnique{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowTriggerCronRefQueryIDString) Lte(value string) workflowTriggerCronRefParamUnique {
+	return workflowTriggerCronRefParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryIDString) LteIfPresent(value *string) workflowTriggerCronRefParamUnique {
+	if value == nil {
+		return workflowTriggerCronRefParamUnique{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowTriggerCronRefQueryIDString) Gt(value string) workflowTriggerCronRefParamUnique {
+	return workflowTriggerCronRefParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryIDString) GtIfPresent(value *string) workflowTriggerCronRefParamUnique {
+	if value == nil {
+		return workflowTriggerCronRefParamUnique{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowTriggerCronRefQueryIDString) Gte(value string) workflowTriggerCronRefParamUnique {
+	return workflowTriggerCronRefParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryIDString) GteIfPresent(value *string) workflowTriggerCronRefParamUnique {
+	if value == nil {
+		return workflowTriggerCronRefParamUnique{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowTriggerCronRefQueryIDString) Contains(value string) workflowTriggerCronRefParamUnique {
+	return workflowTriggerCronRefParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryIDString) ContainsIfPresent(value *string) workflowTriggerCronRefParamUnique {
+	if value == nil {
+		return workflowTriggerCronRefParamUnique{}
+	}
+	return r.Contains(*value)
+}
+
+func (r workflowTriggerCronRefQueryIDString) StartsWith(value string) workflowTriggerCronRefParamUnique {
+	return workflowTriggerCronRefParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryIDString) StartsWithIfPresent(value *string) workflowTriggerCronRefParamUnique {
+	if value == nil {
+		return workflowTriggerCronRefParamUnique{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r workflowTriggerCronRefQueryIDString) EndsWith(value string) workflowTriggerCronRefParamUnique {
+	return workflowTriggerCronRefParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryIDString) EndsWithIfPresent(value *string) workflowTriggerCronRefParamUnique {
+	if value == nil {
+		return workflowTriggerCronRefParamUnique{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r workflowTriggerCronRefQueryIDString) Mode(value QueryMode) workflowTriggerCronRefParamUnique {
+	return workflowTriggerCronRefParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryIDString) ModeIfPresent(value *QueryMode) workflowTriggerCronRefParamUnique {
+	if value == nil {
+		return workflowTriggerCronRefParamUnique{}
+	}
+	return r.Mode(*value)
+}
+
+func (r workflowTriggerCronRefQueryIDString) Not(value string) workflowTriggerCronRefParamUnique {
+	return workflowTriggerCronRefParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryIDString) NotIfPresent(value *string) workflowTriggerCronRefParamUnique {
+	if value == nil {
+		return workflowTriggerCronRefParamUnique{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r workflowTriggerCronRefQueryIDString) HasPrefix(value string) workflowTriggerCronRefParamUnique {
+	return workflowTriggerCronRefParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r workflowTriggerCronRefQueryIDString) HasPrefixIfPresent(value *string) workflowTriggerCronRefParamUnique {
+	if value == nil {
+		return workflowTriggerCronRefParamUnique{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r workflowTriggerCronRefQueryIDString) HasSuffix(value string) workflowTriggerCronRefParamUnique {
+	return workflowTriggerCronRefParamUnique{
+		data: builder.Field{
+			Name: "id",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r workflowTriggerCronRefQueryIDString) HasSuffixIfPresent(value *string) workflowTriggerCronRefParamUnique {
+	if value == nil {
+		return workflowTriggerCronRefParamUnique{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r workflowTriggerCronRefQueryIDString) Field() workflowTriggerCronRefPrismaFields {
+	return workflowTriggerCronRefFieldID
+}
+
+// base struct
+type workflowTriggerCronRefQueryNameString struct{}
+
+// Set the optional value of Name
+func (r workflowTriggerCronRefQueryNameString) Set(value string) workflowTriggerCronRefSetParam {
+
+	return workflowTriggerCronRefSetParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of Name dynamically
+func (r workflowTriggerCronRefQueryNameString) SetIfPresent(value *String) workflowTriggerCronRefSetParam {
+	if value == nil {
+		return workflowTriggerCronRefSetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of Name dynamically
+func (r workflowTriggerCronRefQueryNameString) SetOptional(value *String) workflowTriggerCronRefSetParam {
+	if value == nil {
+
+		var v *string
+		return workflowTriggerCronRefSetParam{
+			data: builder.Field{
+				Name:  "name",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowTriggerCronRefQueryNameString) Equals(value string) workflowTriggerCronRefWithPrismaNameEqualsParam {
+
+	return workflowTriggerCronRefWithPrismaNameEqualsParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryNameString) EqualsIfPresent(value *string) workflowTriggerCronRefWithPrismaNameEqualsParam {
+	if value == nil {
+		return workflowTriggerCronRefWithPrismaNameEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowTriggerCronRefQueryNameString) EqualsOptional(value *String) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryNameString) IsNull() workflowTriggerCronRefDefaultParam {
+	var str *string = nil
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryNameString) Order(direction SortOrder) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryNameString) Cursor(cursor string) workflowTriggerCronRefCursorParam {
+	return workflowTriggerCronRefCursorParam{
+		data: builder.Field{
+			Name:  "name",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryNameString) In(value []string) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryNameString) InIfPresent(value []string) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowTriggerCronRefQueryNameString) NotIn(value []string) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryNameString) NotInIfPresent(value []string) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowTriggerCronRefQueryNameString) Lt(value string) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryNameString) LtIfPresent(value *string) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowTriggerCronRefQueryNameString) Lte(value string) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryNameString) LteIfPresent(value *string) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowTriggerCronRefQueryNameString) Gt(value string) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryNameString) GtIfPresent(value *string) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowTriggerCronRefQueryNameString) Gte(value string) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryNameString) GteIfPresent(value *string) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowTriggerCronRefQueryNameString) Contains(value string) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryNameString) ContainsIfPresent(value *string) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r workflowTriggerCronRefQueryNameString) StartsWith(value string) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryNameString) StartsWithIfPresent(value *string) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r workflowTriggerCronRefQueryNameString) EndsWith(value string) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryNameString) EndsWithIfPresent(value *string) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r workflowTriggerCronRefQueryNameString) Mode(value QueryMode) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryNameString) ModeIfPresent(value *QueryMode) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r workflowTriggerCronRefQueryNameString) Not(value string) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowTriggerCronRefQueryNameString) NotIfPresent(value *string) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r workflowTriggerCronRefQueryNameString) HasPrefix(value string) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r workflowTriggerCronRefQueryNameString) HasPrefixIfPresent(value *string) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r workflowTriggerCronRefQueryNameString) HasSuffix(value string) workflowTriggerCronRefDefaultParam {
+	return workflowTriggerCronRefDefaultParam{
+		data: builder.Field{
+			Name: "name",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r workflowTriggerCronRefQueryNameString) HasSuffixIfPresent(value *string) workflowTriggerCronRefDefaultParam {
+	if value == nil {
+		return workflowTriggerCronRefDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r workflowTriggerCronRefQueryNameString) Field() workflowTriggerCronRefPrismaFields {
+	return workflowTriggerCronRefFieldName
 }
 
 // base struct
@@ -128469,6 +129257,11 @@ type workflowRunTriggeredByQuery struct {
 	// @optional
 	CronSchedule workflowRunTriggeredByQueryCronScheduleString
 
+	// CronName
+	//
+	// @optional
+	CronName workflowRunTriggeredByQueryCronNameString
+
 	Scheduled workflowRunTriggeredByQueryScheduledRelations
 
 	// ScheduledID
@@ -132175,6 +132968,398 @@ func (r workflowRunTriggeredByQueryCronScheduleString) HasSuffixIfPresent(value 
 
 func (r workflowRunTriggeredByQueryCronScheduleString) Field() workflowRunTriggeredByPrismaFields {
 	return workflowRunTriggeredByFieldCronSchedule
+}
+
+// base struct
+type workflowRunTriggeredByQueryCronNameString struct{}
+
+// Set the optional value of CronName
+func (r workflowRunTriggeredByQueryCronNameString) Set(value string) workflowRunTriggeredBySetParam {
+
+	return workflowRunTriggeredBySetParam{
+		data: builder.Field{
+			Name:  "cronName",
+			Value: value,
+		},
+	}
+
+}
+
+// Set the optional value of CronName dynamically
+func (r workflowRunTriggeredByQueryCronNameString) SetIfPresent(value *String) workflowRunTriggeredBySetParam {
+	if value == nil {
+		return workflowRunTriggeredBySetParam{}
+	}
+
+	return r.Set(*value)
+}
+
+// Set the optional value of CronName dynamically
+func (r workflowRunTriggeredByQueryCronNameString) SetOptional(value *String) workflowRunTriggeredBySetParam {
+	if value == nil {
+
+		var v *string
+		return workflowRunTriggeredBySetParam{
+			data: builder.Field{
+				Name:  "cronName",
+				Value: v,
+			},
+		}
+	}
+
+	return r.Set(*value)
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) Equals(value string) workflowRunTriggeredByWithPrismaCronNameEqualsParam {
+
+	return workflowRunTriggeredByWithPrismaCronNameEqualsParam{
+		data: builder.Field{
+			Name: "cronName",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) EqualsIfPresent(value *string) workflowRunTriggeredByWithPrismaCronNameEqualsParam {
+	if value == nil {
+		return workflowRunTriggeredByWithPrismaCronNameEqualsParam{}
+	}
+	return r.Equals(*value)
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) EqualsOptional(value *String) workflowRunTriggeredByDefaultParam {
+	return workflowRunTriggeredByDefaultParam{
+		data: builder.Field{
+			Name: "cronName",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) IsNull() workflowRunTriggeredByDefaultParam {
+	var str *string = nil
+	return workflowRunTriggeredByDefaultParam{
+		data: builder.Field{
+			Name: "cronName",
+			Fields: []builder.Field{
+				{
+					Name:  "equals",
+					Value: str,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) Order(direction SortOrder) workflowRunTriggeredByDefaultParam {
+	return workflowRunTriggeredByDefaultParam{
+		data: builder.Field{
+			Name:  "cronName",
+			Value: direction,
+		},
+	}
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) Cursor(cursor string) workflowRunTriggeredByCursorParam {
+	return workflowRunTriggeredByCursorParam{
+		data: builder.Field{
+			Name:  "cronName",
+			Value: cursor,
+		},
+	}
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) In(value []string) workflowRunTriggeredByDefaultParam {
+	return workflowRunTriggeredByDefaultParam{
+		data: builder.Field{
+			Name: "cronName",
+			Fields: []builder.Field{
+				{
+					Name:  "in",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) InIfPresent(value []string) workflowRunTriggeredByDefaultParam {
+	if value == nil {
+		return workflowRunTriggeredByDefaultParam{}
+	}
+	return r.In(value)
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) NotIn(value []string) workflowRunTriggeredByDefaultParam {
+	return workflowRunTriggeredByDefaultParam{
+		data: builder.Field{
+			Name: "cronName",
+			Fields: []builder.Field{
+				{
+					Name:  "notIn",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) NotInIfPresent(value []string) workflowRunTriggeredByDefaultParam {
+	if value == nil {
+		return workflowRunTriggeredByDefaultParam{}
+	}
+	return r.NotIn(value)
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) Lt(value string) workflowRunTriggeredByDefaultParam {
+	return workflowRunTriggeredByDefaultParam{
+		data: builder.Field{
+			Name: "cronName",
+			Fields: []builder.Field{
+				{
+					Name:  "lt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) LtIfPresent(value *string) workflowRunTriggeredByDefaultParam {
+	if value == nil {
+		return workflowRunTriggeredByDefaultParam{}
+	}
+	return r.Lt(*value)
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) Lte(value string) workflowRunTriggeredByDefaultParam {
+	return workflowRunTriggeredByDefaultParam{
+		data: builder.Field{
+			Name: "cronName",
+			Fields: []builder.Field{
+				{
+					Name:  "lte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) LteIfPresent(value *string) workflowRunTriggeredByDefaultParam {
+	if value == nil {
+		return workflowRunTriggeredByDefaultParam{}
+	}
+	return r.Lte(*value)
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) Gt(value string) workflowRunTriggeredByDefaultParam {
+	return workflowRunTriggeredByDefaultParam{
+		data: builder.Field{
+			Name: "cronName",
+			Fields: []builder.Field{
+				{
+					Name:  "gt",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) GtIfPresent(value *string) workflowRunTriggeredByDefaultParam {
+	if value == nil {
+		return workflowRunTriggeredByDefaultParam{}
+	}
+	return r.Gt(*value)
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) Gte(value string) workflowRunTriggeredByDefaultParam {
+	return workflowRunTriggeredByDefaultParam{
+		data: builder.Field{
+			Name: "cronName",
+			Fields: []builder.Field{
+				{
+					Name:  "gte",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) GteIfPresent(value *string) workflowRunTriggeredByDefaultParam {
+	if value == nil {
+		return workflowRunTriggeredByDefaultParam{}
+	}
+	return r.Gte(*value)
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) Contains(value string) workflowRunTriggeredByDefaultParam {
+	return workflowRunTriggeredByDefaultParam{
+		data: builder.Field{
+			Name: "cronName",
+			Fields: []builder.Field{
+				{
+					Name:  "contains",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) ContainsIfPresent(value *string) workflowRunTriggeredByDefaultParam {
+	if value == nil {
+		return workflowRunTriggeredByDefaultParam{}
+	}
+	return r.Contains(*value)
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) StartsWith(value string) workflowRunTriggeredByDefaultParam {
+	return workflowRunTriggeredByDefaultParam{
+		data: builder.Field{
+			Name: "cronName",
+			Fields: []builder.Field{
+				{
+					Name:  "startsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) StartsWithIfPresent(value *string) workflowRunTriggeredByDefaultParam {
+	if value == nil {
+		return workflowRunTriggeredByDefaultParam{}
+	}
+	return r.StartsWith(*value)
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) EndsWith(value string) workflowRunTriggeredByDefaultParam {
+	return workflowRunTriggeredByDefaultParam{
+		data: builder.Field{
+			Name: "cronName",
+			Fields: []builder.Field{
+				{
+					Name:  "endsWith",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) EndsWithIfPresent(value *string) workflowRunTriggeredByDefaultParam {
+	if value == nil {
+		return workflowRunTriggeredByDefaultParam{}
+	}
+	return r.EndsWith(*value)
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) Mode(value QueryMode) workflowRunTriggeredByDefaultParam {
+	return workflowRunTriggeredByDefaultParam{
+		data: builder.Field{
+			Name: "cronName",
+			Fields: []builder.Field{
+				{
+					Name:  "mode",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) ModeIfPresent(value *QueryMode) workflowRunTriggeredByDefaultParam {
+	if value == nil {
+		return workflowRunTriggeredByDefaultParam{}
+	}
+	return r.Mode(*value)
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) Not(value string) workflowRunTriggeredByDefaultParam {
+	return workflowRunTriggeredByDefaultParam{
+		data: builder.Field{
+			Name: "cronName",
+			Fields: []builder.Field{
+				{
+					Name:  "not",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) NotIfPresent(value *string) workflowRunTriggeredByDefaultParam {
+	if value == nil {
+		return workflowRunTriggeredByDefaultParam{}
+	}
+	return r.Not(*value)
+}
+
+// deprecated: Use StartsWith instead.
+
+func (r workflowRunTriggeredByQueryCronNameString) HasPrefix(value string) workflowRunTriggeredByDefaultParam {
+	return workflowRunTriggeredByDefaultParam{
+		data: builder.Field{
+			Name: "cronName",
+			Fields: []builder.Field{
+				{
+					Name:  "starts_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use StartsWithIfPresent instead.
+func (r workflowRunTriggeredByQueryCronNameString) HasPrefixIfPresent(value *string) workflowRunTriggeredByDefaultParam {
+	if value == nil {
+		return workflowRunTriggeredByDefaultParam{}
+	}
+	return r.HasPrefix(*value)
+}
+
+// deprecated: Use EndsWith instead.
+
+func (r workflowRunTriggeredByQueryCronNameString) HasSuffix(value string) workflowRunTriggeredByDefaultParam {
+	return workflowRunTriggeredByDefaultParam{
+		data: builder.Field{
+			Name: "cronName",
+			Fields: []builder.Field{
+				{
+					Name:  "ends_with",
+					Value: value,
+				},
+			},
+		},
+	}
+}
+
+// deprecated: Use EndsWithIfPresent instead.
+func (r workflowRunTriggeredByQueryCronNameString) HasSuffixIfPresent(value *string) workflowRunTriggeredByDefaultParam {
+	if value == nil {
+		return workflowRunTriggeredByDefaultParam{}
+	}
+	return r.HasSuffix(*value)
+}
+
+func (r workflowRunTriggeredByQueryCronNameString) Field() workflowRunTriggeredByPrismaFields {
+	return workflowRunTriggeredByFieldCronName
 }
 
 // base struct
@@ -234140,6 +235325,8 @@ type workflowTriggerCronRefActions struct {
 }
 
 var workflowTriggerCronRefOutput = []builder.Output{
+	{Name: "id"},
+	{Name: "name"},
 	{Name: "parentId"},
 	{Name: "createdAt"},
 	{Name: "updatedAt"},
@@ -234314,6 +235501,162 @@ func (p workflowTriggerCronRefSetParam) field() builder.Field {
 }
 
 func (p workflowTriggerCronRefSetParam) workflowTriggerCronRefModel() {}
+
+type WorkflowTriggerCronRefWithPrismaIDEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowTriggerCronRefModel()
+	idField()
+}
+
+type WorkflowTriggerCronRefWithPrismaIDSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowTriggerCronRefModel()
+	idField()
+}
+
+type workflowTriggerCronRefWithPrismaIDSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerCronRefWithPrismaIDSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerCronRefWithPrismaIDSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerCronRefWithPrismaIDSetParam) workflowTriggerCronRefModel() {}
+
+func (p workflowTriggerCronRefWithPrismaIDSetParam) idField() {}
+
+type WorkflowTriggerCronRefWithPrismaIDWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowTriggerCronRefModel()
+	idField()
+}
+
+type workflowTriggerCronRefWithPrismaIDEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerCronRefWithPrismaIDEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerCronRefWithPrismaIDEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerCronRefWithPrismaIDEqualsParam) workflowTriggerCronRefModel() {}
+
+func (p workflowTriggerCronRefWithPrismaIDEqualsParam) idField() {}
+
+func (workflowTriggerCronRefWithPrismaIDSetParam) settable()  {}
+func (workflowTriggerCronRefWithPrismaIDEqualsParam) equals() {}
+
+type workflowTriggerCronRefWithPrismaIDEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerCronRefWithPrismaIDEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerCronRefWithPrismaIDEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerCronRefWithPrismaIDEqualsUniqueParam) workflowTriggerCronRefModel() {}
+func (p workflowTriggerCronRefWithPrismaIDEqualsUniqueParam) idField()                     {}
+
+func (workflowTriggerCronRefWithPrismaIDEqualsUniqueParam) unique() {}
+func (workflowTriggerCronRefWithPrismaIDEqualsUniqueParam) equals() {}
+
+type WorkflowTriggerCronRefWithPrismaNameEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowTriggerCronRefModel()
+	nameField()
+}
+
+type WorkflowTriggerCronRefWithPrismaNameSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowTriggerCronRefModel()
+	nameField()
+}
+
+type workflowTriggerCronRefWithPrismaNameSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerCronRefWithPrismaNameSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerCronRefWithPrismaNameSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerCronRefWithPrismaNameSetParam) workflowTriggerCronRefModel() {}
+
+func (p workflowTriggerCronRefWithPrismaNameSetParam) nameField() {}
+
+type WorkflowTriggerCronRefWithPrismaNameWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowTriggerCronRefModel()
+	nameField()
+}
+
+type workflowTriggerCronRefWithPrismaNameEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerCronRefWithPrismaNameEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerCronRefWithPrismaNameEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerCronRefWithPrismaNameEqualsParam) workflowTriggerCronRefModel() {}
+
+func (p workflowTriggerCronRefWithPrismaNameEqualsParam) nameField() {}
+
+func (workflowTriggerCronRefWithPrismaNameSetParam) settable()  {}
+func (workflowTriggerCronRefWithPrismaNameEqualsParam) equals() {}
+
+type workflowTriggerCronRefWithPrismaNameEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowTriggerCronRefWithPrismaNameEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowTriggerCronRefWithPrismaNameEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowTriggerCronRefWithPrismaNameEqualsUniqueParam) workflowTriggerCronRefModel() {}
+func (p workflowTriggerCronRefWithPrismaNameEqualsUniqueParam) nameField()                   {}
+
+func (workflowTriggerCronRefWithPrismaNameEqualsUniqueParam) unique() {}
+func (workflowTriggerCronRefWithPrismaNameEqualsUniqueParam) equals() {}
 
 type WorkflowTriggerCronRefWithPrismaParentEqualsSetParam interface {
 	field() builder.Field
@@ -248632,6 +249975,7 @@ var workflowRunTriggeredByOutput = []builder.Output{
 	{Name: "eventId"},
 	{Name: "cronParentId"},
 	{Name: "cronSchedule"},
+	{Name: "cronName"},
 	{Name: "scheduledId"},
 }
 
@@ -249658,6 +251002,84 @@ func (p workflowRunTriggeredByWithPrismaCronScheduleEqualsUniqueParam) cronSched
 
 func (workflowRunTriggeredByWithPrismaCronScheduleEqualsUniqueParam) unique() {}
 func (workflowRunTriggeredByWithPrismaCronScheduleEqualsUniqueParam) equals() {}
+
+type WorkflowRunTriggeredByWithPrismaCronNameEqualsSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	equals()
+	workflowRunTriggeredByModel()
+	cronNameField()
+}
+
+type WorkflowRunTriggeredByWithPrismaCronNameSetParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunTriggeredByModel()
+	cronNameField()
+}
+
+type workflowRunTriggeredByWithPrismaCronNameSetParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunTriggeredByWithPrismaCronNameSetParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunTriggeredByWithPrismaCronNameSetParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunTriggeredByWithPrismaCronNameSetParam) workflowRunTriggeredByModel() {}
+
+func (p workflowRunTriggeredByWithPrismaCronNameSetParam) cronNameField() {}
+
+type WorkflowRunTriggeredByWithPrismaCronNameWhereParam interface {
+	field() builder.Field
+	getQuery() builder.Query
+	workflowRunTriggeredByModel()
+	cronNameField()
+}
+
+type workflowRunTriggeredByWithPrismaCronNameEqualsParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunTriggeredByWithPrismaCronNameEqualsParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunTriggeredByWithPrismaCronNameEqualsParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunTriggeredByWithPrismaCronNameEqualsParam) workflowRunTriggeredByModel() {}
+
+func (p workflowRunTriggeredByWithPrismaCronNameEqualsParam) cronNameField() {}
+
+func (workflowRunTriggeredByWithPrismaCronNameSetParam) settable()  {}
+func (workflowRunTriggeredByWithPrismaCronNameEqualsParam) equals() {}
+
+type workflowRunTriggeredByWithPrismaCronNameEqualsUniqueParam struct {
+	data  builder.Field
+	query builder.Query
+}
+
+func (p workflowRunTriggeredByWithPrismaCronNameEqualsUniqueParam) field() builder.Field {
+	return p.data
+}
+
+func (p workflowRunTriggeredByWithPrismaCronNameEqualsUniqueParam) getQuery() builder.Query {
+	return p.query
+}
+
+func (p workflowRunTriggeredByWithPrismaCronNameEqualsUniqueParam) workflowRunTriggeredByModel() {}
+func (p workflowRunTriggeredByWithPrismaCronNameEqualsUniqueParam) cronNameField()               {}
+
+func (workflowRunTriggeredByWithPrismaCronNameEqualsUniqueParam) unique() {}
+func (workflowRunTriggeredByWithPrismaCronNameEqualsUniqueParam) equals() {}
 
 type WorkflowRunTriggeredByWithPrismaScheduledEqualsSetParam interface {
 	field() builder.Field
