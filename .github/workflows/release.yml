@@ -1,0 +1,85 @@
+name: Build and Release
+
+# Fork release workflow (yudaprama/hatchet). Follows the metering pattern:
+# push to main -> build per-OS/arch bare binaries -> GitHub Release tagged
+# v${{ github.run_number }}. Ships ONLY the backend binaries (hatchet-engine,
+# hatchet-api, hatchet-migrate) — the frontend is served separately from web/.
+# All three cmd targets are pure-Go (no CGO, no embedded frontend), so they
+# cross-compile cleanly on a single ubuntu runner.
+#
+# Named release.yml (not .yaml) so it does not collide with the upstream
+# hatchet-dev/hatchet release.yaml that this fork leaves in place.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux,  goarch: amd64, slug: linux-amd64 }
+          - { goos: darwin, goarch: amd64, slug: darwin-amd64 }
+          - { goos: darwin, goarch: arm64, slug: darwin-arm64 }
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Build backend binaries
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          mkdir -p dist
+          # The three backend targets the stack runs. hatchet-migrate embeds
+          # its SQL migrations; engine + api are pure Go. ldflags stamp the
+          # version into hatchet-lite's Version var (harmless for these cmd
+          # packages that don't reference it).
+          go build -trimpath -ldflags "-X main.Version=${{ github.run_number }}" \
+            -o dist/hatchet-engine-${{ matrix.slug }} ./cmd/hatchet-engine
+          go build -trimpath \
+            -o dist/hatchet-api-${{ matrix.slug }} ./cmd/hatchet-api
+          go build -trimpath \
+            -o dist/hatchet-migrate-${{ matrix.slug }} ./cmd/hatchet-migrate
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hatchet-${{ matrix.slug }}
+          path: dist/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: Release v${{ github.run_number }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
