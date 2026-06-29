@@ -54,6 +54,8 @@ jobs:
             -o dist/hatchet-api-${{ matrix.slug }} ./cmd/hatchet-api
           go build -trimpath \
             -o dist/hatchet-migrate-${{ matrix.slug }} ./cmd/hatchet-migrate
+          go build -trimpath \
+            -o dist/hatchet-admin-${{ matrix.slug }} ./cmd/hatchet-admin
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
