@@ -614,6 +614,17 @@ type AuthConfig struct {
 
 	CustomAuthenticator CustomAuthenticator
 
+	// EdgeAuthEnabled turns on Kawai edge-trusted auth: the API trusts an
+	// identity header injected by the Ory Oathkeeper edge (see pkg/auth/kawai).
+	// When true, registerSpec also injects the customAuth scheme into every
+	// authenticated operation so edge requests reach the CustomAuthenticator.
+	EdgeAuthEnabled bool
+
+	// EdgeProvisionMiddleware JIT-provisions the Hatchet user/tenant/membership
+	// for an edge request. It is registered BEFORE the populator (which loads
+	// {tenant} and would 404 on a missing tenant). nil when edge auth is off.
+	EdgeProvisionMiddleware middleware.MiddlewareFunc
+
 	// Operations listed here bypass the tenant RBAC check. Use this for
 	// extension operations (e.g. cloud) that handle their own authorization
 	// in handlers. OSS operations in rbac.yaml are still fully checked.

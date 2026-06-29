@@ -27,6 +27,7 @@ import (
 	"github.com/hatchet-dev/hatchet/pkg/analytics/posthog"
 	"github.com/hatchet-dev/hatchet/pkg/auth/cookie"
 	"github.com/hatchet-dev/hatchet/pkg/auth/exchangetoken"
+	"github.com/hatchet-dev/hatchet/pkg/auth/kawai"
 	"github.com/hatchet-dev/hatchet/pkg/auth/oauth"
 	"github.com/hatchet-dev/hatchet/pkg/auth/token"
 	"github.com/hatchet-dev/hatchet/pkg/config/client"
@@ -799,6 +800,23 @@ func createControllerLayer(dc *database.Layer, cf *server.ServerConfigFile, vers
 
 	if cf.Runtime.FrontendURL == "" {
 		cf.Runtime.FrontendURL = cf.Runtime.ServerURL
+	}
+
+	// Kawai edge auth: when enabled, the API trusts an identity header injected
+	// by the Ory Oathkeeper edge and maps Hatchet tenant == Kawai workspace,
+	// JIT-provisioning the user/tenant/membership. Gated by env so default
+	// (token/cookie) auth is unchanged. See pkg/auth/kawai.
+	if os.Getenv("SERVER_AUTH_KAWAI_EDGE_ENABLED") == "true" {
+		prov := kawai.NewProvisioner(dc.V1, kawai.Config{
+			UserHeader:      os.Getenv("SERVER_AUTH_KAWAI_USER_HEADER"),
+			WorkspaceHeader: os.Getenv("SERVER_AUTH_KAWAI_WORKSPACE_HEADER"),
+			EmailDomain:     os.Getenv("SERVER_AUTH_KAWAI_EMAIL_DOMAIN"),
+			DefaultRole:     os.Getenv("SERVER_AUTH_KAWAI_DEFAULT_ROLE"),
+		}, &l)
+		auth.CustomAuthenticator = kawai.NewAuthenticator(prov)
+		auth.EdgeAuthEnabled = true
+		auth.EdgeProvisionMiddleware = prov.Middleware()
+		l.Warn().Msg("kawai edge auth enabled: API trusts edge-injected identity header — ensure this API is bound behind Oathkeeper and not publicly reachable")
 	}
 
 	return cleanup, &server.ServerConfig{

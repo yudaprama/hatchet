@@ -49,6 +49,7 @@ import (
 	"github.com/hatchet-dev/hatchet/api/v1/server/middleware/ratelimit"
 	"github.com/hatchet-dev/hatchet/api/v1/server/middleware/telemetry"
 	"github.com/hatchet-dev/hatchet/api/v1/server/oas/gen"
+	"github.com/hatchet-dev/hatchet/pkg/auth/kawai"
 	"github.com/hatchet-dev/hatchet/pkg/config/server"
 	"github.com/hatchet-dev/hatchet/pkg/repository"
 	"github.com/hatchet-dev/hatchet/pkg/repository/sqlcv1"
@@ -237,6 +238,14 @@ func (t *APIServer) getCoreEchoService() (*echo.Echo, error) {
 }
 
 func (t *APIServer) registerSpec(g *echo.Group, spec *openapi3.T) (*populator.Populator, error) {
+	// Kawai edge auth: make every authenticated operation also accept the
+	// customAuth scheme so edge-trusted requests reach the CustomAuthenticator.
+	// Mutates the loaded spec before NewMiddlewareHandler reads it — no contract
+	// regeneration needed.
+	if t.config.Auth.EdgeAuthEnabled {
+		kawai.InjectCustomAuth(spec)
+	}
+
 	// application middleware
 	populatorMW := populator.NewPopulator(t.config)
 
@@ -694,6 +703,11 @@ func (t *APIServer) registerSpec(g *echo.Group, spec *openapi3.T) (*populator.Po
 		return nil, err
 	}
 	mw.Use(headers.Middleware())
+	// JIT-provision the Kawai user/tenant/membership BEFORE the populator, which
+	// loads {tenant} by id and would 404 on a not-yet-provisioned workspace.
+	if t.config.Auth.EdgeAuthEnabled && t.config.Auth.EdgeProvisionMiddleware != nil {
+		mw.Use(t.config.Auth.EdgeProvisionMiddleware)
+	}
 	mw.Use(populatorMW.Middleware)
 	mw.Use(authnMW.Middleware)
 	mw.Use(authzMW.Middleware)
