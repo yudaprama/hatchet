@@ -32,7 +32,15 @@ func InjectCustomAuth(spec *openapi3.T) {
 
 	custom := openapi3.NewSecurityRequirement().Authenticate("customAuth")
 
-	for _, pathItem := range spec.Paths.Map() {
+	for path, pathItem := range spec.Paths.Map() {
+		// Public health/metadata endpoints must stay unauthenticated — they
+		// carry no tenant data and are probed by health checks / monitoring
+		// without an edge identity. Without this guard they inherit the spec's
+		// global security fallback and get customAuth injected, which makes the
+		// kawai Authenticator demand X-User-Id and 403 liveness probes.
+		if isPublicPath(path) {
+			continue
+		}
 		for _, op := range pathItem.Operations() {
 			// Effective security = the operation's own, or the global default.
 			eff := op.Security
@@ -67,4 +75,11 @@ func hasScheme(reqs *openapi3.SecurityRequirements, name string) bool {
 		}
 	}
 	return false
+}
+
+// isPublicPath reports whether path is an unauthenticated Hatchet endpoint that
+// must bypass edge-auth. Mirrors the telemetry skipper's notion of public health
+// routes (/api/live, /api/ready) plus the anonymous tenant-bootstrap routes.
+func isPublicPath(path string) bool {
+	return path == "/api/live" || path == "/api/ready"
 }
