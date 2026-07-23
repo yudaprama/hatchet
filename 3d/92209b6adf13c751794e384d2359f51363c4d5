@@ -1,0 +1,20 @@
+pkg/auth/kawai/spec.go
+  s_c840ac3d4ebfc6::t_987cc808c2420a 35-43
+  s_c840ac3d4ebfc6::t_abf6bbe725d7e3 79-85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "3d92209b6adf13c751794e384d2359f51363c4d5",
+  "prompts": {},
+  "sessions": {
+    "s_c840ac3d4ebfc6": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_077f9b093ffejiR7C9RyO6kC3U",
+        "model": "glm-5.2"
+      },
+      "human_author": "yudaprama <yudhaprama@icloud.com>"
+    }
+  }
+}
