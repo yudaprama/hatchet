@@ -1,0 +1,25 @@
+pkg/auth/kawai/kawai.go
+  s_c810b4519ffba8::t_2f6a521f48e06a 5-8,16,54-55,72-73,85,138,140-141,143,156,166,181,186,250,266
+api/v1/server/run/run.go
+  s_c810b4519ffba8::t_932a921ea4af00 242
+api/v1/server/handlers/authz/workspace.go
+  s_c810b4519ffba8::t_932a921ea4af00 3,62-63,67,71,75,82,87,98
+pkg/config/loader/loader.go
+  s_c810b4519ffba8::t_2f6a521f48e06a 900-901,909
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "7d0e13e3f573b88dd3f22421e09f6fb79b0663a5",
+  "prompts": {},
+  "sessions": {
+    "s_c810b4519ffba8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f9a3d-559c-7f72-96b7-00df2478c42a",
+        "model": "gpt-5.6-luna"
+      },
+      "human_author": "yudaprama <yudhaprama@icloud.com>"
+    }
+  }
+}
