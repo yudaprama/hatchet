@@ -1,0 +1,19 @@
+api/v1/server/handlers/authz/workspace.go
+  s_284f15e41b2899::t_71b746055da4b4 66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "0714463d2baa00cba0b81b1b6da64debc7d0699d",
+  "prompts": {},
+  "sessions": {
+    "s_284f15e41b2899": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_066eb327afferY7zZNBbA5L65K",
+        "model": "kawai-pro-max"
+      },
+      "human_author": "yudaprama <yudhaprama@icloud.com>"
+    }
+  }
+}
