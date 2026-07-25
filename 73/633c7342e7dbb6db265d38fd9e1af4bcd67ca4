@@ -1,0 +1,50 @@
+AGENTS.md
+  s_e675002a2f3021::t_fea08ecd4d3a6e 19-35
+pkg/auth/kawai/spec.go
+  s_90ae29684ea782::t_78b58ab126867d 1-85
+pkg/config/server/server.go
+  s_90ae29684ea782::t_ec4f5809caa996 602-612
+internal/services/grpc/middleware/auth.go
+  s_90ae29684ea782::t_a1d8ad79675025 107-109
+  s_90ae29684ea782::t_0b68faa3d3fe1f 6,33-39,81-106,110-122
+  s_90ae29684ea782::t_8c571c03891e36 123-125
+pkg/auth/kawai/kawai.go
+  s_90ae29684ea782::t_78b58ab126867d 1-276
+pkg/client/loader/loader.go
+  s_90ae29684ea782::t_c8f83f37ff706b 75-81
+pkg/config/loader/loader.go
+  s_90ae29684ea782::t_768c99e2f7b1e5 899-915
+  s_90ae29684ea782::t_67009de012ee5a 31
+api/v1/server/authn/middleware.go
+  s_90ae29684ea782::t_fae3bf0e7c2b3e 302-313
+api/v1/server/run/run.go
+  s_90ae29684ea782::t_f073e59248bbe3 244-249
+  s_90ae29684ea782::t_52db0a0792f6b7 53
+  s_90ae29684ea782::t_6f662580f37ca4 707-711
+api/v1/server/authz/middleware.go
+  s_90ae29684ea782::t_28bae0551c3fc2 168-175
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "73633c7342e7dbb6db265d38fd9e1af4bcd67ca4",
+  "prompts": {},
+  "sessions": {
+    "s_90ae29684ea782": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_06b36b334ffeWb1N9AYzTK2NPQ",
+        "model": "ling-3.0-flash-free"
+      },
+      "human_author": "yudaprama <yudhaprama@icloud.com>"
+    },
+    "s_e675002a2f3021": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_06945b39cffeS5XL33KbokCW3A",
+        "model": "mimo-v2.5-free"
+      },
+      "human_author": "yudaprama <yudhaprama@icloud.com>"
+    }
+  }
+}
