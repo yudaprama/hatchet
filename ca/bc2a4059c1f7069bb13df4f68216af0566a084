@@ -1,0 +1,31 @@
+pkg/auth/kawai/kawai.go
+  s_0359c8929684a4::t_1d3dc684f6cfac 189-196,207-208
+  s_0359c8929684a4::t_84c2c859465cf1 229-231,238-239,250-252
+  s_0359c8929684a4::t_541968d90bffe4 71,96-102,106-109,111-114,124-126
+  s_0359c8929684a4::t_4fcaf6e4b389ac 6-10,12-16
+  s_0359c8929684a4::t_ae166111e6733f 49,51-53,56-57,59-61,69-70
+  s_0359c8929684a4::t_be624f6fbef6c5 165-168,171,174-175
+api/v1/server/handlers/authz/workspace.go
+  s_0359c8929684a4::t_c71ebb597a5fc7 1-114
+pkg/config/loader/loader.go
+  s_0359c8929684a4::t_87d9256fe387e3 899-904,908
+api/v1/server/run/run.go
+  s_0359c8929684a4::t_ba2f3c61a59813 22
+  s_0359c8929684a4::t_0f940319233eb6 239-243
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "cabc2a4059c1f7069bb13df4f68216af0566a084",
+  "prompts": {},
+  "sessions": {
+    "s_0359c8929684a4": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_0686cf53fffe1cTG82MC2hkLSg",
+        "model": "glm-5.2"
+      },
+      "human_author": "yudaprama <yudhaprama@icloud.com>"
+    }
+  }
+}
