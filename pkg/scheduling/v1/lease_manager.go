@@ -17,7 +17,17 @@ import (
 	"github.com/hatchet-dev/hatchet/pkg/repository/sqlcv1"
 )
 
-const concurrencyLeasesChBuffer = 1024
+const (
+	concurrencyLeasesChBuffer = 1024
+
+	// Lease-poll cadence. A tenant holding at least one lease is polled actively so
+	// newly-registered workers, queues, concurrency strategies, and batches appear
+	// with low latency. An idle tenant (no leases held) backs off in steps up to
+	// the max to shed baseline DB load — each tick still runs four list queries.
+	leasePollIntervalActive = 5 * time.Second
+	leasePollIntervalStep   = 5 * time.Second
+	leasePollIntervalMax    = 30 * time.Second
+)
 
 // LeaseManager is responsible for leases on multiple queues and multiplexing
 // queue results to callers. It is still tenant-scoped.
@@ -579,7 +589,10 @@ func (l *LeaseManager) acquireBatchLeases(ctx context.Context) error {
 	return nil
 }
 
-func (l *LeaseManager) acquireAllLeases(ctx context.Context) {
+// acquireAllLeases runs the four lease-acquisition paths concurrently and returns
+// the total number of leases held afterwards. Callers use the count to decide
+// whether to keep polling fast (active tenant) or back off (idle tenant).
+func (l *LeaseManager) acquireAllLeases(ctx context.Context) int {
 	loopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -619,22 +632,60 @@ func (l *LeaseManager) acquireAllLeases(ctx context.Context) {
 		}
 	}()
 	wg.Wait()
+
+	// Snapshot the leases held after acquisition. Each slice is mutated only under
+	// its own mutex (batches only inside acquireBatchLeases, which just completed),
+	// so these brief locks are safe here.
+	total := 0
+
+	l.workerLeasesMu.Lock()
+	total += len(l.workerLeases)
+	l.workerLeasesMu.Unlock()
+
+	l.queueLeasesMu.Lock()
+	total += len(l.queueLeases)
+	l.queueLeasesMu.Unlock()
+
+	l.concurrencyLeasesMu.Lock()
+	total += len(l.concurrencyLeases)
+	l.concurrencyLeasesMu.Unlock()
+
+	total += len(l.batchLeases)
+
+	return total
 }
 
-// loopForLeases acquires new leases every 5 seconds for workers, queues, and concurrency strategies
+// loopForLeases acquires new leases for workers, queues, concurrency strategies, and
+// batches. The interval adapts to activity: a tenant holding leases polls at the
+// active interval so new resources appear quickly; an idle tenant backs off up to
+// the max interval to reduce baseline queries against the database.
 func (l *LeaseManager) loopForLeases(ctx context.Context) {
 	// Perform an initial lease acquisition immediately so that callers don't have to wait
-	// for the first ticker interval before workers, queues, and concurrency strategies are discovered.
+	// for the first interval before workers, queues, and concurrency strategies are discovered.
+	interval := leasePollIntervalActive
+
 	l.acquireAllLeases(ctx)
 
-	ticker := time.NewTicker(5 * time.Second)
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			l.acquireAllLeases(ctx)
+		case <-timer.C:
+			totalLeases := l.acquireAllLeases(ctx)
+
+			if totalLeases > 0 {
+				interval = leasePollIntervalActive
+			} else if interval < leasePollIntervalMax {
+				interval += leasePollIntervalStep
+				if interval > leasePollIntervalMax {
+					interval = leasePollIntervalMax
+				}
+			}
+
+			timer.Reset(interval)
 		}
 	}
 }

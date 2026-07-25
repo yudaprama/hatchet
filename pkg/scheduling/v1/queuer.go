@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/hatchet-dev/hatchet/pkg/integrations/metrics/prometheus"
 	v1 "github.com/hatchet-dev/hatchet/pkg/repository"
@@ -258,25 +259,10 @@ func (q *Queuer) loopQueue(ctx context.Context) {
 		refillTime := time.Since(checkpoint)
 		checkpoint = time.Now()
 
-		rls, err := q.repo.GetTaskRateLimits(ctx, nil, qis)
-
-		if err != nil {
-			span.RecordError(err)
-			span.End()
-
-			q.l.Error().Ctx(ctx).Err(err).Msg("error getting rate limits")
-
-			q.unackedToUnassigned(qis)
-			continue
-		}
-
-		if len(rls) > 0 {
-			q.hasRateLimits = true
-		}
-
-		rateLimitTime := time.Since(checkpoint)
-		checkpoint = time.Now()
-
+		// Compute stepIds (and per-trigger desired labels) once; the four metadata
+		// reads below are independent of each other and are fetched concurrently
+		// rather than serially to cut per-tick latency roughly from the sum to the
+		// max of their round-trips.
 		stepIds := make([]uuid.UUID, 0, len(qis))
 		taskIdToDesiredLabelsFromTrigger := make(map[int64][]*sqlcv1.GetDesiredLabelsRow)
 
@@ -296,46 +282,34 @@ func (q *Queuer) loopQueue(ctx context.Context) {
 			}
 		}
 
-		labels, err := q.repo.GetDesiredLabels(ctx, nil, stepIds)
+		var (
+			rls          map[int64]map[string]int32
+			labels       map[uuid.UUID][]*sqlcv1.GetDesiredLabelsRow
+			batchConfigs map[string]bool
+			stepRequests map[uuid.UUID]map[string]int32
+		)
 
-		if err != nil {
+		g, gctx := errgroup.WithContext(ctx)
+		g.Go(func() (err error) { rls, err = q.repo.GetTaskRateLimits(gctx, nil, qis); return err })
+		g.Go(func() (err error) { labels, err = q.repo.GetDesiredLabels(gctx, nil, stepIds); return err })
+		g.Go(func() (err error) { batchConfigs, err = q.repo.GetStepBatchConfigs(gctx, stepIds); return err })
+		g.Go(func() (err error) { stepRequests, err = q.repo.GetStepSlotRequests(gctx, nil, stepIds); return err })
+
+		if err := g.Wait(); err != nil {
 			span.RecordError(err)
 			span.End()
-			q.l.Error().Ctx(ctx).Err(err).Msg("error getting desired labels")
+
+			q.l.Error().Ctx(ctx).Err(err).Msg("error loading queue item metadata")
 
 			q.unackedToUnassigned(qis)
 			continue
 		}
 
-		desiredLabelsTime := time.Since(checkpoint)
-		checkpoint = time.Now()
-
-		batchConfigs, err := q.repo.GetStepBatchConfigs(ctx, stepIds)
-
-		if err != nil {
-			span.RecordError(err)
-			span.End()
-			q.l.Error().Err(err).Msg("error getting batch configs")
-
-			q.unackedToUnassigned(qis)
-			continue
+		if len(rls) > 0 {
+			q.hasRateLimits = true
 		}
 
-		batchConfigTime := time.Since(checkpoint)
-		checkpoint = time.Now()
-
-		stepRequests, err := q.repo.GetStepSlotRequests(ctx, nil, stepIds)
-
-		if err != nil {
-			span.RecordError(err)
-			span.End()
-			q.l.Error().Ctx(ctx).Err(err).Msg("error getting step slot requests")
-
-			q.unackedToUnassigned(qis)
-			continue
-		}
-
-		getSlotRequestsTime := time.Since(checkpoint)
+		metadataTime := time.Since(checkpoint)
 		checkpoint = time.Now()
 
 		assignCh := q.s.tryAssign(ctx, qis, labels, stepRequests, rls, taskIdToDesiredLabelsFromTrigger, batchConfigs)
@@ -426,13 +400,7 @@ func (q *Queuer) loopQueue(ctx context.Context) {
 			q.l.Warn().Ctx(ctx).Dur(
 				"refill_time", refillTime,
 			).Dur(
-				"rate_limit_time", rateLimitTime,
-			).Dur(
-				"desired_labels_time", desiredLabelsTime,
-			).Dur(
-				"get_slot_requests_time", getSlotRequestsTime,
-			).Dur(
-				"batch_config_time", batchConfigTime,
+				"metadata_time", metadataTime,
 			).Dur(
 				"assign_time", assignTime,
 			).Dur("elapsed", elapsed).Int("item_count", len(qis)).Msg("queue processing took longer than 100ms")

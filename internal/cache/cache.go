@@ -25,7 +25,9 @@ type TTLCache[K comparable, V any] struct {
 }
 
 // NewTTL creates a new TTLCache instance and starts a goroutine to periodically
-// remove expired items every 5 seconds.
+// remove expired items every 60 seconds. Get already performs lazy expiry on
+// read, so the sweeper only reclaims memory for keys that are never read again;
+// a longer interval keeps the write lock off the hot path.
 func NewTTL[K comparable, V any]() *TTLCache[K, V] {
 	c := &TTLCache[K, V]{
 		items: make(map[K]item[V]),
@@ -33,8 +35,9 @@ func NewTTL[K comparable, V any]() *TTLCache[K, V] {
 	}
 
 	go func() {
-		// Create a new ticker to remove expired items every 5 seconds.
-		ticker := time.NewTicker(5 * time.Second)
+		// Sweep periodically to reclaim memory for dead keys. Lazy expiry in Get
+		// handles active keys, so this only needs to run infrequently.
+		ticker := time.NewTicker(60 * time.Second)
 		defer ticker.Stop()
 
 		for {

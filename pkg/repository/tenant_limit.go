@@ -260,7 +260,7 @@ func (t *tenantLimitRepository) addToUnflushed(resource sqlcv1.LimitResource, te
 }
 
 func (t *tenantLimitRepository) loopFlush(ctx context.Context) {
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for {

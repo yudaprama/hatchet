@@ -236,12 +236,9 @@ func (s *DispatcherImpl) Listen(request *contracts.WorkerListenRequest, stream c
 		s.workers.DeleteForSession(workerId, sessionId)
 	}()
 
-	// update the worker with a last heartbeat time every 5 seconds as long as the worker is connected
+	// update the worker with a last heartbeat time every 4 seconds as long as the worker is connected
 	go func() {
-		timer := time.NewTicker(100 * time.Millisecond)
-
-		// set the last heartbeat to 6 seconds ago so the first heartbeat is sent immediately
-		lastHeartbeat := time.Now().UTC().Add(-6 * time.Second)
+		timer := time.NewTicker(4 * time.Second)
 		defer timer.Stop()
 
 		for {
@@ -253,24 +250,21 @@ func (s *DispatcherImpl) Listen(request *contracts.WorkerListenRequest, stream c
 				s.l.Debug().Ctx(ctx).Msgf("closing stream for worker id: %s", request.WorkerId)
 				return
 			case <-timer.C:
-				if now := time.Now().UTC(); lastHeartbeat.Add(4 * time.Second).Before(now) {
-					s.l.Debug().Ctx(ctx).Msgf("updating worker %s heartbeat", request.WorkerId)
+				now := time.Now().UTC()
+				s.l.Debug().Ctx(ctx).Msgf("updating worker %s heartbeat", request.WorkerId)
 
-					_, err := s.repov1.Workers().UpdateWorker(ctx, tenantId, workerId, &v1.UpdateWorkerOpts{
-						LastHeartbeatAt: &now,
-						IsActive:        v1.BoolPtr(true),
-					})
+				_, err := s.repov1.Workers().UpdateWorker(ctx, tenantId, workerId, &v1.UpdateWorkerOpts{
+					LastHeartbeatAt: &now,
+					IsActive:        v1.BoolPtr(true),
+				})
 
-					if err != nil {
-						if errors.Is(err, pgx.ErrNoRows) {
-							return
-						}
-
-						s.l.Error().Ctx(ctx).Err(err).Msgf("could not update worker %s heartbeat", request.WorkerId)
+				if err != nil {
+					if errors.Is(err, pgx.ErrNoRows) {
 						return
 					}
 
-					lastHeartbeat = time.Now().UTC()
+					s.l.Error().Ctx(ctx).Err(err).Msgf("could not update worker %s heartbeat", request.WorkerId)
+					return
 				}
 			}
 		}

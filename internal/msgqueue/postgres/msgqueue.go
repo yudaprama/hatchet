@@ -276,11 +276,12 @@ func (p *PostgresMessageQueue) Subscribe(queue msgqueue.Queue, preAck msgqueue.A
 		return len(messages) == p.qos, nil
 	}))
 
-	// we poll once per second for new messages
-	ticker := time.NewTicker(time.Second)
+	// LISTEN/NOTIFY drives the fast path; this ticker is a fallback that catches
+	// any notifications missed if the listener connection drops or lags.
+	ticker := time.NewTicker(5 * time.Second)
 
 	// we use the listener to poll for new messages more quickly
-	newMsgCh := make(chan struct{})
+	newMsgCh := make(chan struct{}, 1)
 
 	// start the listener
 	go func() {
@@ -299,7 +300,12 @@ func (p *PostgresMessageQueue) Subscribe(queue msgqueue.Queue, preAck msgqueue.A
 				return doTask(task, nil)
 			}
 
-			newMsgCh <- struct{}{}
+			// non-blocking signal: if a poll is already pending the dispatch loop
+			// will pick up this notification on its next ReadMessages call.
+			select {
+			case newMsgCh <- struct{}{}:
+			default:
+			}
 			return nil
 		})
 

@@ -248,48 +248,65 @@ func (s *Scheduler) Start() (func() error, error) {
 		return nil, fmt.Errorf("could not subscribe to job processing queue: %w", err)
 	}
 
+	// Fixed worker pools process scheduling results. Previously each result spawned an
+	// unbounded goroutine, which under burst load could exhaust the DB connection pool.
+	// A bounded set of workers caps in-flight scheduling while preserving parallelism.
+	const resultWorkers = 8
+
 	queueResults := s.pool.GetResultsCh()
 
 	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case res := <-queueResults:
-				s.l.Debug().Ctx(ctx).Msgf("partition: received queue results")
+		var rwg sync.WaitGroup
+		for i := 0; i < resultWorkers; i++ {
+			rwg.Add(1)
+			go func() {
+				defer rwg.Done()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case res := <-queueResults:
+						if res == nil {
+							continue
+						}
 
-				if res == nil {
-					continue
-				}
+						s.l.Debug().Ctx(ctx).Msgf("partition: received queue results")
 
-				go func(results *v1.QueueResults) {
-					err := s.scheduleStepRuns(ctx, results.TenantId, results)
-
-					if err != nil {
-						s.l.Error().Ctx(ctx).Err(err).Msg("could not schedule step runs")
+						if err := s.scheduleStepRuns(ctx, res.TenantId, res); err != nil {
+							s.l.Error().Ctx(ctx).Err(err).Msg("could not schedule step runs")
+						}
 					}
-				}(res)
-			}
+				}
+			}()
 		}
+		rwg.Wait()
 	}()
 
 	concurrencyResults := s.pool.GetConcurrencyResultsCh()
 
 	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case res := <-concurrencyResults:
-				s.l.Debug().Ctx(ctx).Msgf("partition: received concurrency results")
+		var cwg sync.WaitGroup
+		for i := 0; i < resultWorkers; i++ {
+			cwg.Add(1)
+			go func() {
+				defer cwg.Done()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case res := <-concurrencyResults:
+						if res == nil {
+							continue
+						}
 
-				if res == nil {
-					continue
+						s.l.Debug().Ctx(ctx).Msgf("partition: received concurrency results")
+
+						s.notifyAfterConcurrency(ctx, res.TenantId, res)
+					}
 				}
-
-				go s.notifyAfterConcurrency(ctx, res.TenantId, res)
-			}
+			}()
 		}
+		cwg.Wait()
 	}()
 
 	cleanup := func() error {
