@@ -63,7 +63,7 @@ func permissionLevel(permission string) int {
 // {user (email), workspace (uuid), permission} from the request body, resolves
 // the TenantMember by email+tenantId, and answers 200/403.
 //
-// Semantics (matching the former pREST adapter + authzworkspace/handler.go):
+// Semantics:
 //   - empty workspace → 200 (personal scope, upstream scopes by user_id only);
 //   - member found with sufficient role → 200;
 //   - member not found or insufficient role → 403;
