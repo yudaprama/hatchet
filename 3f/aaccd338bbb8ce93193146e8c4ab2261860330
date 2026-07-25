@@ -1,0 +1,36 @@
+pkg/repository/tenant_limit.go
+  s_61591cea9f6b02::t_6c0e0b42f29e8a 263
+internal/services/dispatcher/server.go
+  s_61591cea9f6b02::t_66639884559906 239,241,253-254,256-259,261-262,266-267
+internal/msgqueue/postgres/msgqueue.go
+  s_61591cea9f6b02::t_686f97f8df3654 303-308
+  s_61591cea9f6b02::t_bc402b70f4a890 279-281,284
+internal/cache/cache.go
+  s_61591cea9f6b02::t_12c1e033d5ab0d 28-30,38-40
+pkg/scheduling/v1/lease_manager.go
+  s_61591cea9f6b02::t_427a74f06ca0fe 592-595,635-655,658-661,664-666,669-670,676-688
+  s_61591cea9f6b02::t_935bf41a71313c 20-30
+pkg/scheduling/v1/queuer.go
+  s_61591cea9f6b02::t_4ae48d777cb3d4 403
+  s_61591cea9f6b02::t_6899bef6ad1f7b 287
+  s_61591cea9f6b02::t_f6fec11060c0e8 13
+  s_61591cea9f6b02::t_cf36d9a5f7069b 262-265,285-286,288-290,292-296,298,301-302,308-309,312
+internal/services/scheduler/v1/scheduler.go
+  s_61591cea9f6b02::t_8e6479b0280fa1 251-255,259-277,279-280,282,288-305,307,309
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "3faaccd338bbb8ce93193146e8c4ab2261860330",
+  "prompts": {},
+  "sessions": {
+    "s_61591cea9f6b02": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_066a85c18ffeYZo1Lh6wbDlUTg",
+        "model": "mimo-v2.5-free"
+      },
+      "human_author": "yudaprama <yudhaprama@icloud.com>"
+    }
+  }
+}
