@@ -299,6 +299,18 @@ func (a *AuthN) handleBearerAuth(c echo.Context) error {
 		return forbidden
 	}
 
+	// Kawai edge auth: internal trusted callers (hatchet-workers on loopback)
+	// pass the tenant UUID as the bearer "token" — no JWT. Accept it when the
+	// UUID matches the tenant already loaded by the populator from the URL path.
+	if a.config.Auth.EdgeAuthEnabled {
+		if tenantUUID, err := uuid.Parse(token); err == nil && tenantUUID == queriedTenant.ID {
+			ctx = context.WithValue(ctx, analytics.TenantIDKey, tenantUUID)
+			ctx = context.WithValue(ctx, analytics.SourceKey, analytics.SourceAPI)
+			c.SetRequest(c.Request().WithContext(ctx))
+			return nil
+		}
+	}
+
 	// Validate the token.
 	tenantId, tokenUUID, err := a.config.Auth.JWTManager.ValidateTenantToken(c.Request().Context(), token)
 

@@ -16,3 +16,20 @@
   </a>
 </Callout>
 ```
+
+## Fork Management
+
+- **origin**: `https://github.com/yudaprama/hatchet` (your fork)
+- **upstream**: `https://github.com/hatchet-dev/hatchet` (official repo)
+
+### Syncing with upstream
+
+```bash
+git sync-fork
+```
+
+This runs `git fetch upstream && git rebase --autostash upstream/main`. Always rebase (not merge) to keep history linear.
+
+### Customization commits
+
+Your custom changes are rebased on top of upstream/main. Do not push custom commits directly to upstream. When syncing, rebase your custom branch onto the latest upstream/main.

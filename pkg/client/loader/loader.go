@@ -72,7 +72,13 @@ func GetClientConfigFromConfigFile(tokenOverride *string, cf *client.ClientConfi
 	tokenConf, err := loaderutils.GetConfFromJWT(cf.Token)
 
 	if err != nil {
-		return nil, err
+		// Not a JWT — Kawai edge auth mode. The token is a bare tenant UUID;
+		// server URL, gRPC address, and tenant ID come from env vars
+		// (HATCHET_CLIENT_HOST_PORT, HATCHET_CLIENT_SERVER_URL,
+		// HATCHET_CLIENT_TENANT_ID) already loaded by viper into cf.
+		tokenConf = &loaderutils.TokenConf{
+			TenantId: cf.TenantId,
+		}
 	}
 
 	if grpcBroadcastAddress == "" && tokenConf.GrpcBroadcastAddress != "" {

@@ -165,6 +165,14 @@ func (a *AuthZ) validateUserTenantPermissions(c echo.Context, r *middleware.Rout
 		user, ok := c.Get("user").(*sqlcv1.User)
 
 		if !ok {
+			// Kawai edge auth: internal trusted callers (hatchet-workers on
+			// loopback) authenticate via bearer tenant UUID — no user. Skip
+			// the membership check and authorize as OWNER so SDK operations
+			// (create cron, list runs, etc.) pass RBAC.
+			if a.config.Auth.EdgeAuthEnabled {
+				return a.authorizeTenantOperations(string(sqlcv1.TenantMemberRoleOWNER), r)
+			}
+
 			a.l.Debug().Ctx(ctx).Msgf("user not found in context")
 
 			return unauthorized
