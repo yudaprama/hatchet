@@ -3,15 +3,17 @@
 // Oathkeeper edge — no per-request Hatchet API token.
 //
 // Model: Hatchet tenant == Kawai workspace (same UUID), Hatchet tenant member
-// == workspace member. The edge injects the Kratos identity as X-User-Id and
-// the active workspace as X-Workspace-Id (after a Keto workspace authorization
-// check, exactly like the prest-workspace rules). This package then:
+// == workspace member. The edge injects the Kratos identity as X-User-Id, the
+// real Kratos email as X-User-Email, and the active workspace as X-Workspace-Id
+// (after a membership authorization check via the /api/v1/authz/workspace
+// adapter). This package then JIT-provisions the matching Hatchet user (using
+// the real Kratos email) so Hatchet's authn/authz accepts the request.
 //
-//   - JIT-provisions the matching Hatchet user (email <id>@<domain>), tenant
-//     (id = workspace UUID) and membership in a middleware that runs BEFORE the
-//     populator (which loads {tenant} by id and would 404 on a missing tenant);
-//   - resolves c.Set("user") in a CustomAuthenticator so Hatchet's authn/authz
-//     accepts the request and scopes it to the workspace's tenant.
+// Tenants and memberships are created EXPLICITLY via Hatchet's own API
+// (POST /api/v1/tenants makes the creator OWNER; invite-accept adds members).
+// The provision middleware only ensures the Hatchet User row exists — it does
+// NOT auto-create tenants or memberships (the edge adapter denies requests for
+// workspaces the user is not a member of before they reach Hatchet).
 //
 // SECURITY: this trusts the edge-injected headers. The Hatchet API MUST be
 // bound on loopback behind Oathkeeper (which strips any client-supplied copy of
@@ -44,23 +46,28 @@ type Repo interface {
 
 // Config controls edge-auth behavior. Zero values fall back to sane defaults.
 type Config struct {
-	// UserHeader carries the Kratos identity (default "X-User-Id").
+	// UserHeader carries the Kratos identity id (default "X-User-Id").
 	UserHeader string
+	// EmailHeader carries the Kratos identity email (default "X-User-Email").
+	// Used as the Hatchet user's email so invite-accept email matching works.
+	EmailHeader string
 	// WorkspaceHeader carries the active workspace id (default "X-Workspace-Id").
 	WorkspaceHeader string
-	// EmailDomain is the synthetic email suffix for provisioned users
-	// (default "kawai.local"). The local part is the Kratos identity id.
+	// EmailDomain is the synthetic email suffix for provisioned users when the
+	// email header is absent (loopback/internal callers). Default "kawai.local".
 	EmailDomain string
-	// DefaultRole is the tenant role granted to JIT-provisioned members
-	// (default "ADMIN"). Authorization for customAuth routes is enforced by
-	// membership existence (see Authenticator.Authorize), so the role only has
-	// to be a valid Hatchet role; finer per-workspace role mapping is a follow-up.
+	// DefaultRole is the tenant role granted to explicitly-provisioned members
+	// (default "ADMIN"). Not used for JIT auto-provisioning anymore —
+	// memberships are created via tenant:create (OWNER) or invite-accept.
 	DefaultRole string
 }
 
 func (c Config) withDefaults() Config {
 	if c.UserHeader == "" {
 		c.UserHeader = "X-User-Id"
+	}
+	if c.EmailHeader == "" {
+		c.EmailHeader = "X-User-Email"
 	}
 	if c.WorkspaceHeader == "" {
 		c.WorkspaceHeader = "X-Workspace-Id"
@@ -86,17 +93,25 @@ func NewProvisioner(repo Repo, cfg Config, l *zerolog.Logger) *Provisioner {
 	return &Provisioner{repo: repo, cfg: cfg.withDefaults(), l: l}
 }
 
-// userEmail maps a Kratos identity id to its deterministic Hatchet email.
+// resolveEmail returns the user's real email from the edge header, falling back
+// to the deterministic synthetic email only for loopback/internal callers that
+// don't carry the X-User-Email header (e.g. gRPC workers with bearer tenant UUID).
+func (p *Provisioner) resolveEmail(c echo.Context, kawaiUserID string) string {
+	if email := strings.TrimSpace(c.Request().Header.Get(p.cfg.EmailHeader)); email != "" {
+		return strings.ToLower(email)
+	}
+	return strings.ToLower(kawaiUserID) + "@" + p.cfg.EmailDomain
+}
+
+// userEmail is the fallback synthetic email for callers without a request context.
 func (p *Provisioner) userEmail(kawaiUserID string) string {
 	return strings.ToLower(kawaiUserID) + "@" + p.cfg.EmailDomain
 }
 
-// EnsureUser returns the Hatchet user for a Kawai identity, creating it on first
-// sight. The user is created email-verified with no password/OAuth — it is only
-// ever authenticated upstream by the edge.
-func (p *Provisioner) EnsureUser(ctx context.Context, kawaiUserID string) (*sqlcv1.User, error) {
-	email := p.userEmail(kawaiUserID)
-
+// EnsureUser returns the Hatchet user matching the given email, creating it on
+// first sight. The user is created email-verified with no password/OAuth — it
+// is only ever authenticated upstream by the edge.
+func (p *Provisioner) EnsureUser(ctx context.Context, email, name string) (*sqlcv1.User, error) {
 	u, err := p.repo.User().GetUserByEmail(ctx, email)
 	if err == nil {
 		return u, nil
@@ -106,7 +121,9 @@ func (p *Provisioner) EnsureUser(ctx context.Context, kawaiUserID string) (*sqlc
 	}
 
 	verified := true
-	name := kawaiUserID
+	if name == "" {
+		name = email
+	}
 	created, err := p.repo.User().CreateUser(ctx, &repository.CreateUserOpts{
 		Email:         email,
 		EmailVerified: &verified,
@@ -145,21 +162,17 @@ func (p *Provisioner) EnsureTenant(ctx context.Context, workspaceID string) (*sq
 	return created, nil
 }
 
-// EnsureMembership makes the user a member of the tenant if not already.
+// EnsureMembership verifies the user is a member of the tenant. With edge auth,
+// the Oathkeeper /api/v1/authz/workspace adapter checks membership BEFORE the
+// request reaches Hatchet — so a missing membership here is an anomaly (edge
+// bypassed). Fail-closed: return error instead of auto-creating.
 func (p *Provisioner) EnsureMembership(ctx context.Context, tenantID, userID uuid.UUID) error {
 	m, err := p.repo.Tenant().GetTenantMemberByUserID(ctx, tenantID, userID)
-	if err == nil && m != nil {
-		return nil
-	}
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	if err != nil {
 		return fmt.Errorf("get tenant member: %w", err)
 	}
-
-	if _, err := p.repo.Tenant().CreateTenantMember(ctx, tenantID, &repository.CreateTenantMemberOpts{
-		Role:   p.cfg.DefaultRole,
-		UserId: userID,
-	}); err != nil {
-		return fmt.Errorf("create tenant membership: %w", err)
+	if m == nil {
+		return fmt.Errorf("not a member of tenant %s", tenantID)
 	}
 	return nil
 }
@@ -173,44 +186,29 @@ func (p *Provisioner) tenantIDFromRequest(c echo.Context) string {
 	return strings.TrimSpace(c.Request().Header.Get(p.cfg.WorkspaceHeader))
 }
 
-// Middleware returns a Hatchet MiddlewareFunc that JIT-provisions the
-// user/tenant/membership for edge requests. It MUST be registered before the
-// populator. Requests without the identity header pass through untouched so
-// local API-token (bearer) callers are unaffected.
+// Middleware returns a Hatchet MiddlewareFunc that JIT-provisions the Hatchet
+// user for edge requests. It MUST be registered before the populator.
+//
+// Tenants and memberships are created EXPLICITLY via Hatchet's API
+// (tenant:create, invite-accept) — this middleware only ensures the Hatchet
+// User row exists so the populator and authn/authz can resolve c.Set("user").
+// Requests without the identity header pass through untouched so local
+// API-token (bearer) callers are unaffected.
 func (p *Provisioner) Middleware() apimiddleware.MiddlewareFunc {
 	return func(_ *apimiddleware.RouteInfo) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			userID := strings.TrimSpace(c.Request().Header.Get(p.cfg.UserHeader))
-			tenantID := p.tenantIDFromRequest(c)
 
 			// Not an edge-authenticated request — leave bearer/cookie auth alone.
 			if userID == "" {
 				return nil
 			}
 
-			ctx := c.Request().Context()
-
-			user, err := p.EnsureUser(ctx, userID)
+			email := p.resolveEmail(c, userID)
+			user, err := p.EnsureUser(c.Request().Context(), email, userID)
 			if err != nil {
 				p.l.Error().Err(err).Msg("kawai: provision user failed")
 				return echo.NewHTTPError(http.StatusInternalServerError, "could not provision identity")
-			}
-
-			// User-scoped (non-tenant) endpoints: just stash the user.
-			if tenantID == "" {
-				c.Set("user", user)
-				return nil
-			}
-
-			tenant, err := p.EnsureTenant(ctx, tenantID)
-			if err != nil {
-				p.l.Error().Err(err).Msg("kawai: provision tenant failed")
-				return echo.NewHTTPError(http.StatusInternalServerError, "could not provision workspace tenant")
-			}
-
-			if err := p.EnsureMembership(ctx, tenant.ID, user.ID); err != nil {
-				p.l.Error().Err(err).Msg("kawai: provision membership failed")
-				return echo.NewHTTPError(http.StatusInternalServerError, "could not provision workspace membership")
 			}
 
 			c.Set("user", user)
@@ -228,16 +226,17 @@ func NewAuthenticator(prov *Provisioner) *Authenticator {
 	return &Authenticator{prov: prov}
 }
 
-// Authenticate resolves the Hatchet user from the edge identity header. The
-// provision middleware has normally already created it; EnsureUser keeps this
-// safe if the route skipped provisioning.
+// Authenticate resolves the Hatchet user from the edge identity + email headers.
+// The provision middleware has normally already created it; EnsureUser keeps
+// this safe if the route skipped provisioning.
 func (a *Authenticator) Authenticate(c echo.Context, _ *apimiddleware.RouteInfo) error {
 	userID := strings.TrimSpace(c.Request().Header.Get(a.prov.cfg.UserHeader))
 	if userID == "" {
 		return echo.NewHTTPError(http.StatusUnauthorized, "missing edge identity header")
 	}
 
-	user, err := a.prov.EnsureUser(c.Request().Context(), userID)
+	email := a.prov.resolveEmail(c, userID)
+	user, err := a.prov.EnsureUser(c.Request().Context(), email, userID)
 	if err != nil {
 		a.prov.l.Error().Err(err).Msg("kawai: authenticate resolve user failed")
 		return echo.NewHTTPError(http.StatusUnauthorized, "could not resolve identity")
@@ -248,9 +247,9 @@ func (a *Authenticator) Authenticate(c echo.Context, _ *apimiddleware.RouteInfo)
 }
 
 // Authorize enforces that the resolved user is a member of the request's tenant.
-// Tenant-level permission (view/write) was already checked at the edge via Keto;
-// here we only confirm Hatchet-side membership exists. Non-tenant-scoped routes
-// (no tenant in context) are allowed — the edge already authenticated the user.
+// The edge /api/v1/authz/workspace adapter already checked membership before
+// the request reached Hatchet; this is defense-in-depth. Non-tenant-scoped
+// routes (no tenant in context) are allowed — the edge authenticated the user.
 func (a *Authenticator) Authorize(c echo.Context, _ *apimiddleware.RouteInfo) error {
 	tenant, ok := c.Get("tenant").(*sqlcv1.Tenant)
 	if !ok {

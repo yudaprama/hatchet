@@ -19,6 +19,7 @@ import (
 	"github.com/hatchet-dev/hatchet/api/v1/server/authn"
 	"github.com/hatchet-dev/hatchet/api/v1/server/authz"
 	apitokens "github.com/hatchet-dev/hatchet/api/v1/server/handlers/api-tokens"
+	authzadapter "github.com/hatchet-dev/hatchet/api/v1/server/handlers/authz"
 	"github.com/hatchet-dev/hatchet/api/v1/server/handlers/events"
 	"github.com/hatchet-dev/hatchet/api/v1/server/handlers/info"
 	"github.com/hatchet-dev/hatchet/api/v1/server/handlers/ingestors"
@@ -234,6 +235,11 @@ func (t *APIServer) getCoreEchoService() (*echo.Echo, error) {
 	myStrictApiHandler := gen.NewStrictHandler(service)
 
 	gen.RegisterHandlers(g, myStrictApiHandler)
+
+	// Kawai authz adapter: Oathkeeper remote_json endpoint. Registered OUTSIDE
+	// the OpenAPI spec middleware chain (no populator/authn/authz) since it IS
+	// the trust root for those middlewares. Loopback-only.
+	e.POST("/api/v1/authz/workspace", echo.WrapHandler(authzadapter.WorkspaceAuthzHandler(t.config)))
 
 	return e, nil
 }
