@@ -2,10 +2,10 @@
 // web SPA can call Hatchet's tenant-scoped API directly through the Ory
 // Oathkeeper edge — no per-request Hatchet API token.
 //
-// Model: Hatchet tenant == Kawai workspace (same UUID), Hatchet tenant member
-// == workspace member. The edge injects the Kratos identity as X-User-Id, the
-// real Kratos email as X-User-Email, and the active workspace as X-Workspace-Id
-// (after a membership authorization check via the /api/v1/authz/workspace
+// Model: Hatchet tenant == Kawai tenant (same UUID), Hatchet tenant member
+// == tenant member. The edge injects the Kratos identity as X-User-Id, the
+// real Kratos email as X-User-Email, and the active tenant as X-Tenant-Id
+// (after a membership authorization check via the /api/v1/authz/tenant
 // adapter). This package then JIT-provisions the matching Hatchet user (using
 // the real Kratos email) so Hatchet's authn/authz accepts the request.
 //
@@ -13,7 +13,7 @@
 // (POST /api/v1/tenants makes the creator OWNER; invite-accept adds members).
 // The provision middleware only ensures the Hatchet User row exists — it does
 // NOT auto-create tenants or memberships (the edge adapter denies requests for
-// workspaces the user is not a member of before they reach Hatchet).
+// tenants the user is not a member of before they reach Hatchet).
 //
 // SECURITY: this trusts the edge-injected headers. The Hatchet API MUST be
 // bound on loopback behind Oathkeeper (which strips any client-supplied copy of
@@ -51,8 +51,8 @@ type Config struct {
 	// EmailHeader carries the Kratos identity email (default "X-User-Email").
 	// Used as the Hatchet user's email so invite-accept email matching works.
 	EmailHeader string
-	// WorkspaceHeader carries the active workspace id (default "X-Workspace-Id").
-	WorkspaceHeader string
+	// TenantHeader carries the active tenant id (default "X-Tenant-Id").
+	TenantHeader string
 	// EmailDomain is the synthetic email suffix for provisioned users when the
 	// email header is absent (loopback/internal callers). Default "kawai.local".
 	EmailDomain string
@@ -69,8 +69,8 @@ func (c Config) withDefaults() Config {
 	if c.EmailHeader == "" {
 		c.EmailHeader = "X-User-Email"
 	}
-	if c.WorkspaceHeader == "" {
-		c.WorkspaceHeader = "X-Workspace-Id"
+	if c.TenantHeader == "" {
+		c.TenantHeader = "X-Tenant-Id"
 	}
 	if c.EmailDomain == "" {
 		c.EmailDomain = "kawai.local"
@@ -82,7 +82,7 @@ func (c Config) withDefaults() Config {
 }
 
 // Provisioner performs idempotent get-or-create of the Hatchet user, tenant and
-// membership that mirror a Kawai identity + workspace.
+// membership that mirror a Kawai identity + tenant.
 type Provisioner struct {
 	repo Repo
 	cfg  Config
@@ -135,12 +135,12 @@ func (p *Provisioner) EnsureUser(ctx context.Context, email, name string) (*sqlc
 	return created, nil
 }
 
-// EnsureTenant returns the Hatchet tenant whose id equals the workspace UUID,
+// EnsureTenant returns the Hatchet tenant whose id equals the tenant UUID,
 // creating it on first sight.
-func (p *Provisioner) EnsureTenant(ctx context.Context, workspaceID string) (*sqlcv1.Tenant, error) {
-	wsUUID, err := uuid.Parse(strings.TrimSpace(workspaceID))
+func (p *Provisioner) EnsureTenant(ctx context.Context, tenantID string) (*sqlcv1.Tenant, error) {
+	wsUUID, err := uuid.Parse(strings.TrimSpace(tenantID))
 	if err != nil {
-		return nil, fmt.Errorf("invalid workspace id %q: %w", workspaceID, err)
+		return nil, fmt.Errorf("invalid tenant id %q: %w", tenantID, err)
 	}
 
 	t, err := p.repo.Tenant().GetTenantByID(ctx, wsUUID)
@@ -153,7 +153,7 @@ func (p *Provisioner) EnsureTenant(ctx context.Context, workspaceID string) (*sq
 
 	created, err := p.repo.Tenant().CreateTenant(ctx, &repository.CreateTenantOpts{
 		ID:   &wsUUID,
-		Name: workspaceID,
+		Name: tenantID,
 		Slug: wsUUID.String(),
 	})
 	if err != nil {
@@ -163,7 +163,7 @@ func (p *Provisioner) EnsureTenant(ctx context.Context, workspaceID string) (*sq
 }
 
 // EnsureMembership verifies the user is a member of the tenant. With edge auth,
-// the Oathkeeper /api/v1/authz/workspace adapter checks membership BEFORE the
+// the Oathkeeper /api/v1/authz/tenant adapter checks membership BEFORE the
 // request reaches Hatchet — so a missing membership here is an anomaly (edge
 // bypassed). Fail-closed: return error instead of auto-creating.
 func (p *Provisioner) EnsureMembership(ctx context.Context, tenantID, userID uuid.UUID) error {
@@ -178,12 +178,12 @@ func (p *Provisioner) EnsureMembership(ctx context.Context, tenantID, userID uui
 }
 
 // tenantIDFromRequest prefers the {tenant} path param (what the populator and
-// routing use) and falls back to the workspace header.
+// routing use) and falls back to the tenant header.
 func (p *Provisioner) tenantIDFromRequest(c echo.Context) string {
 	if id := strings.TrimSpace(c.Param("tenant")); id != "" {
 		return id
 	}
-	return strings.TrimSpace(c.Request().Header.Get(p.cfg.WorkspaceHeader))
+	return strings.TrimSpace(c.Request().Header.Get(p.cfg.TenantHeader))
 }
 
 // Middleware returns a Hatchet MiddlewareFunc that JIT-provisions the Hatchet
@@ -247,7 +247,7 @@ func (a *Authenticator) Authenticate(c echo.Context, _ *apimiddleware.RouteInfo)
 }
 
 // Authorize enforces that the resolved user is a member of the request's tenant.
-// The edge /api/v1/authz/workspace adapter already checked membership before
+// The edge /api/v1/authz/tenant adapter already checked membership before
 // the request reached Hatchet; this is defense-in-depth. Non-tenant-scoped
 // routes (no tenant in context) are allowed — the edge authenticated the user.
 func (a *Authenticator) Authorize(c echo.Context, _ *apimiddleware.RouteInfo) error {
@@ -263,7 +263,7 @@ func (a *Authenticator) Authorize(c echo.Context, _ *apimiddleware.RouteInfo) er
 
 	member, err := a.prov.repo.Tenant().GetTenantMemberByUserID(c.Request().Context(), tenant.ID, user.ID)
 	if err != nil || member == nil {
-		return echo.NewHTTPError(http.StatusForbidden, "not a member of this workspace")
+		return echo.NewHTTPError(http.StatusForbidden, "not a member of this tenant")
 	}
 
 	return nil

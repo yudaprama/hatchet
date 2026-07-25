@@ -239,7 +239,7 @@ func (t *APIServer) getCoreEchoService() (*echo.Echo, error) {
 	// Kawai authz adapter: Oathkeeper remote_json endpoint. Registered OUTSIDE
 	// the OpenAPI spec middleware chain (no populator/authn/authz) since it IS
 	// the trust root for those middlewares. Loopback-only.
-	e.POST("/api/v1/authz/workspace", echo.WrapHandler(authzadapter.WorkspaceAuthzHandler(t.config)))
+	e.POST("/api/v1/authz/tenant", echo.WrapHandler(authzadapter.TenantAuthzHandler(t.config)))
 
 	return e, nil
 }

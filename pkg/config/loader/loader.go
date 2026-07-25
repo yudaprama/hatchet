@@ -897,8 +897,8 @@ func createControllerLayer(dc *database.Layer, cf *server.ServerConfigFile, vers
 	}
 
 	// Kawai edge auth: when enabled, the API trusts identity headers injected
-	// by the Ory Oathkeeper edge (X-User-Id, X-User-Email, X-Workspace-Id) and
-	// maps Hatchet tenant == Kawai workspace. The provision middleware JIT-creates
+	// by the Ory Oathkeeper edge (X-User-Id, X-User-Email, X-Tenant-Id) and
+	// maps Hatchet tenant == Kawai tenant. The provision middleware JIT-creates
 	// the Hatchet user using the real Kratos email so invite-accept matching
 	// works. Tenants and memberships are created explicitly via Hatchet's API.
 	// Gated by env so default (token/cookie) auth is unchanged. See pkg/auth/kawai.
@@ -906,7 +906,7 @@ func createControllerLayer(dc *database.Layer, cf *server.ServerConfigFile, vers
 		prov := kawai.NewProvisioner(dc.V1, kawai.Config{
 			UserHeader:      os.Getenv("SERVER_AUTH_KAWAI_USER_HEADER"),
 			EmailHeader:     os.Getenv("SERVER_AUTH_KAWAI_USER_EMAIL_HEADER"),
-			WorkspaceHeader: os.Getenv("SERVER_AUTH_KAWAI_WORKSPACE_HEADER"),
+			TenantHeader: os.Getenv("SERVER_AUTH_KAWAI_WORKSPACE_HEADER"),
 			EmailDomain:     os.Getenv("SERVER_AUTH_KAWAI_EMAIL_DOMAIN"),
 			DefaultRole:     os.Getenv("SERVER_AUTH_KAWAI_DEFAULT_ROLE"),
 		}, &l)

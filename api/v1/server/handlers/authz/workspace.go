@@ -1,6 +1,6 @@
 // Package authz implements the Kawai edge-authz status-code adapter.
 //
-// POST /api/v1/authz/workspace is called by Ory Oathkeeper's remote_json
+// POST /api/v1/authz/tenant is called by Ory Oathkeeper's remote_json
 // authorizer to verify workspace membership BEFORE the request reaches any
 // upstream service (Hatchet itself or pREST). It checks the Hatchet
 // TenantMember table directly — the single source of truth for workspace
@@ -59,32 +59,32 @@ func permissionLevel(permission string) int {
 	}
 }
 
-// WorkspaceAuthzHandler returns the Oathkeeper remote_json adapter. It reads
-// {user (email), workspace (uuid), permission} from the request body, resolves
+// TenantAuthzHandler returns the Oathkeeper remote_json adapter. It reads
+// {user (email), tenant (uuid), permission} from the request body, resolves
 // the TenantMember by email+tenantId, and answers 200/403.
 //
 // Semantics:
-//   - empty workspace → 200 (personal scope, upstream scopes by user_id only);
+//   - empty tenant → 200 (personal scope, upstream scopes by user_id only);
 //   - member found with sufficient role → 200;
 //   - member not found or insufficient role → 403;
 //   - any error → 403 (fail closed).
-func WorkspaceAuthzHandler(config *server.ServerConfig) http.HandlerFunc {
+func TenantAuthzHandler(config *server.ServerConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			User       string `json:"user"`
-			Workspace  string `json:"workspace"`
+			Tenant     string `json:"tenant"`
 			Permission string `json:"permission"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.User == "" {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		if body.Workspace == "" {
+		if body.Tenant == "" {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 
-		workspaceUUID, err := uuid.Parse(body.Workspace)
+		tenantUUID, err := uuid.Parse(body.Tenant)
 		if err != nil {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
@@ -95,7 +95,7 @@ func WorkspaceAuthzHandler(config *server.ServerConfig) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		member, err := config.V1.Tenant().GetTenantMemberByEmail(ctx, workspaceUUID, body.User)
+		member, err := config.V1.Tenant().GetTenantMemberByEmail(ctx, tenantUUID, body.User)
 		if err != nil || member == nil {
 			if err != nil && !errors.Is(err, context.DeadlineExceeded) {
 				// Expected for non-members (pgx.ErrNoRows) — deny, do not log loudly.
