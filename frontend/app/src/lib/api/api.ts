@@ -6,6 +6,7 @@ import {
 import { Api } from './generated/Api';
 import { Api as CloudApi } from './generated/cloud/Api';
 import { Api as ControlPlaneApi } from './generated/control-plane/Api';
+import { clearKawaiSessionToken, kawaiAuthHeaders } from '@/lib/kawai-auth';
 import { isRetryableRequestError } from '@/lib/query-retry';
 import queryClient from '@/query-client';
 import { InternalAxiosRequestConfig } from 'axios';
@@ -76,6 +77,24 @@ export const controlPlaneApi = new ControlPlaneApi({
 
 api.instance.interceptors.request.use(exchangeTokenInterceptor);
 cloudApi.instance.interceptors.request.use(exchangeTokenInterceptor);
+
+for (const client of [api, cloudApi, controlPlaneApi]) {
+  client.instance.interceptors.request.use((config) => {
+    const headers = kawaiAuthHeaders();
+    for (const [name, value] of Object.entries(headers)) {
+      config.headers.set(name, value);
+    }
+    config.withCredentials = true;
+    return config;
+  });
+  client.instance.interceptors.response.use(
+    (response) => response,
+    (error) => {
+      if (error?.response?.status === 401) clearKawaiSessionToken();
+      return Promise.reject(error);
+    },
+  );
+}
 
 export const CONTROL_PLANE_TENANT_STORAGE_KEY = 'controlPlaneLastTenant';
 

@@ -10,6 +10,7 @@ import {
   CONTROL_PLANE_TENANT_STORAGE_KEY,
 } from '@/lib/api/api';
 import { exchangeTokenQueryOptions } from '@/lib/api/exchange-token';
+import { KawaiOidcCallback } from '@/pages/auth/kawai-oidc-callback';
 import queryClient from '@/query-client';
 import {
   RouterProvider,
@@ -36,6 +37,12 @@ const rootRoute = createRootRoute({
       <NotFound />
     </Root>
   ),
+});
+
+const kawaiOidcCallbackRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'oidc-callback',
+  component: KawaiOidcCallback,
 });
 
 const authRoute = createRoute({
@@ -1112,6 +1119,7 @@ const tenantRoutes = [
 ];
 
 const routeTree = rootRoute.addChildren([
+  kawaiOidcCallbackRoute,
   authRoute.addChildren([authLoginRoute, authRegisterRoute]),
   onboardingVerifyRoute,
   authenticatedRoute.addChildren([
@@ -1168,6 +1176,7 @@ declare module '@tanstack/react-router' {
 export const appRoutes = {
   rootRoute,
   authRoute,
+  kawaiOidcCallbackRoute,
   authLoginRoute,
   authRegisterRoute,
   onboardingVerifyRoute,
