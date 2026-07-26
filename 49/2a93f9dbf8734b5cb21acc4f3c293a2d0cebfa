@@ -1,0 +1,29 @@
+frontend/app/src/lib/kawai-auth.ts
+  s_fb374dbb870bac::t_c9511c9ae10646 6-9
+frontend/app/src/hooks/use-control-plane.ts
+  s_fb374dbb870bac::t_cdddc71415a416 9
+  s_fb374dbb870bac::t_c9511c9ae10646 4,6,10,13
+frontend/app/src/pages/auth/no-auth.tsx
+  s_fb374dbb870bac::t_c9511c9ae10646 7,41-45
+frontend/app/src/hooks/use-cloud.ts
+  s_fb374dbb870bac::t_cdddc71415a416 92
+  s_fb374dbb870bac::t_c9511c9ae10646 8-9,93-97
+frontend/app/src/providers/app-context.tsx
+  s_fb374dbb870bac::t_c9511c9ae10646 19,87,96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "492a93f9dbf8734b5cb21acc4f3c293a2d0cebfa",
+  "prompts": {},
+  "sessions": {
+    "s_fb374dbb870bac": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f9c21-92a0-7901-a10f-7d2e8fe6876f",
+        "model": "gpt-5.6-luna"
+      },
+      "human_author": "yudaprama <yudhaprama@icloud.com>"
+    }
+  }
+}
