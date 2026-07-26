@@ -1,0 +1,58 @@
+frontend/app/src/pages/auth/kawai-oidc-callback.tsx
+  s_fb374dbb870bac::t_0cb8480f2c0bfb 1-29
+frontend/app/src/router.tsx
+  s_fb374dbb870bac::t_ca966d6510ac6e 13
+  s_fb374dbb870bac::t_33dd32f8a6f68a 42-47,1122,1179
+frontend/app/src/pages/auth/login/index.tsx
+  s_fb374dbb870bac::t_33dd32f8a6f68a 1,4
+frontend/app/src/pages/auth/kawai-auth-page.tsx
+  s_fb374dbb870bac::t_33dd32f8a6f68a 1-3,5,7-48,53-58,63-97
+  s_fb374dbb870bac::t_ca966d6510ac6e 4,6,49-52,59-62
+frontend/app/vercel.json
+  s_fb374dbb870bac::t_33dd32f8a6f68a 1-13
+frontend/app/src/lib/kawai-auth.ts
+  s_fb374dbb870bac::t_33dd32f8a6f68a 1-49,53-62,66-74,79-89,94-100,104-154
+  s_fb374dbb870bac::t_ca966d6510ac6e 50-52,63-65,75-78,90-93,101-103
+frontend/app/src/lib/api/api.ts
+  s_fb374dbb870bac::t_ca966d6510ac6e 9
+  s_fb374dbb870bac::t_33dd32f8a6f68a 81-97
+  s_fb374dbb870bac::t_f5a2256da13ac6 98
+frontend/app/src/pages/auth/register/index.tsx
+  s_fb374dbb870bac::t_33dd32f8a6f68a 1,4
+examples/go/affinity-workers/main.go
+  s_fb374dbb870bac::t_5bea603aa60cc9 38
+examples/go/child-workflows/main.go
+  s_fb374dbb870bac::t_ac5e56c0c8fcb6 78,130
+examples/go/idempotency/worker.go
+  s_fb374dbb870bac::t_ecbfd2f9461c20 34,51
+examples/go/manual-slot-release/main.go
+  s_fb374dbb870bac::t_437a54423070c0 41
+examples/go/migration-guides/mergent.go
+  s_fb374dbb870bac::t_8402dbd8766998 48
+examples/go/on-event/main.go
+  s_fb374dbb870bac::t_2f30a65647e435 43,52,69
+examples/go/sticky-workers/main.go
+  s_fb374dbb870bac::t_b9cd67c4c4cc15 51,94
+examples/go/streaming/consumer/main.go
+  s_fb374dbb870bac::t_c4f510613ab294 37
+examples/go/streaming/server/main.go
+  s_fb374dbb870bac::t_4a52ad08c8f65a 57
+examples/go/streaming/shared/task.go
+  s_fb374dbb870bac::t_3f5bee31eb91f5 49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "799ebdd7b935dde2a9b8fa0bcf30d7b70426c30b",
+  "prompts": {},
+  "sessions": {
+    "s_fb374dbb870bac": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f9c21-92a0-7901-a10f-7d2e8fe6876f",
+        "model": "gpt-5.6-luna"
+      },
+      "human_author": "yudaprama <yudhaprama@icloud.com>"
+    }
+  }
+}
