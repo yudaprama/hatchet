@@ -74,27 +74,13 @@ export async function startKawaiSocialLogin(
       throw new Error('Kratos returned no session token exchange code');
     }
 
-    const submitResponse = await fetch(flow.ui.action, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({ method: 'oidc', provider }),
-    });
-    const submitBody = (await submitResponse.json().catch(() => ({}))) as {
-      redirect_browser_to?: string;
-    };
-    if (!submitBody.redirect_browser_to) {
-      throw new Error(
-        `Kratos did not return an OAuth redirect (${submitResponse.status})`,
-      );
-    }
+    // Kratos intentionally requires a browser navigation for OIDC. Posting
+    // this as fetch returns 422 browser_location_change_required, even though
+    // the response contains a valid redirect URL. Submit a normal HTML form
+    // in the popup so Kratos can redirect the browser to Google directly.
+    submitOidcForm(popup, flow.ui.action, provider);
 
-    const returnCode = await waitForOidcCallback(
-      popup,
-      submitBody.redirect_browser_to,
-    );
+    const returnCode = await waitForOidcCallback(popup);
     const exchangeResponse = await fetch(
       `${KRATOS_URL}/sessions/token-exchange` +
         `?init_code=${encodeURIComponent(flow.session_token_exchange_code)}` +
@@ -120,9 +106,36 @@ export async function startKawaiSocialLogin(
   }
 }
 
-function waitForOidcCallback(popup: Window, authUrl: string): Promise<string> {
-  popup.location.href = authUrl;
+function submitOidcForm(
+  popup: Window,
+  action: string,
+  provider: 'google' | 'github',
+): void {
+  const document = popup.document;
+  document.open();
+  document.write('<!doctype html><html><body></body></html>');
+  document.close();
 
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = action;
+  form.style.display = 'none';
+
+  const method = document.createElement('input');
+  method.name = 'method';
+  method.value = 'oidc';
+  form.appendChild(method);
+
+  const providerInput = document.createElement('input');
+  providerInput.name = 'provider';
+  providerInput.value = provider;
+  form.appendChild(providerInput);
+
+  document.body.appendChild(form);
+  form.submit();
+}
+
+function waitForOidcCallback(popup: Window): Promise<string> {
   return new Promise((resolve, reject) => {
     let settled = false;
     const timer = window.setInterval(() => {
