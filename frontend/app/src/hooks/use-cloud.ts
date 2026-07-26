@@ -5,6 +5,8 @@ import {
   FeatureFlags,
 } from '@/lib/api/generated/cloud/data-contracts';
 import { useQuery } from '@tanstack/react-query';
+import { useLocation } from '@tanstack/react-router';
+import { isPublicAuthPath } from '@/lib/kawai-auth';
 
 export const metadataIndicatesLegacyCloudEnabled = (
   cloudMeta: APICloudMetadata,
@@ -87,7 +89,12 @@ type UseCloudReturn =
 // cloud backend (`isLegacyCloudEnabled` is `false` then). Outside the control
 // plane the two coincide.
 export default function useCloud(tenantId?: string): UseCloudReturn {
-  const cloudMetaQuery = useQuery(getCloudMetadataQuery);
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const isPublicAuthRoute = isPublicAuthPath(pathname);
+  const cloudMetaQuery = useQuery({
+    ...getCloudMetadataQuery,
+    enabled: !isPublicAuthRoute,
+  });
   const { isControlPlaneEnabled, controlPlaneMeta } = useControlPlane();
 
   const featureFlagsQuery = useQuery({

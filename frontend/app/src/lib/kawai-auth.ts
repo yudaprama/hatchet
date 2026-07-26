@@ -3,6 +3,10 @@ const KRATOS_URL =
   import.meta.env.VITE_KRATOS_URL ??
   'https://backend.kawai.pro/.ory/kratos/public';
 
+export function isPublicAuthPath(pathname = window.location.pathname): boolean {
+  return pathname === '/oidc-callback' || pathname.startsWith('/auth/');
+}
+
 type OidcFlow = {
   ui: { action: string };
   session_token_exchange_code?: string;

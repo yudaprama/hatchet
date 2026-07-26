@@ -16,6 +16,7 @@ import {
   useCallback,
 } from 'react';
 import invariant from 'tiny-invariant';
+import { isPublicAuthPath } from '@/lib/kawai-auth';
 
 /**
  * Shared application context providing user, tenant, and organization data
@@ -83,6 +84,7 @@ export function AppContextProvider({ children }: AppContextProviderProps) {
   // Get tenant ID from route params (following TanStack Router best practices)
   // This replaces the old useCurrentTenantId pattern
   const params = useParams({ strict: false });
+  const isPublicAuthRoute = isPublicAuthPath(window.location.pathname);
   const [lastTenant, setLastTenant] = useAtom(lastTenantAtom);
   const tenantParamInPath = params.tenant;
   const organizationParamInPath = params.organization;
@@ -91,6 +93,7 @@ export function AppContextProvider({ children }: AppContextProviderProps) {
   const { userGetCurrentQuery } = useUserApi();
   const currentUserQuery = useQuery({
     ...userGetCurrentQuery(),
+    enabled: !isPublicAuthRoute,
     retry: false,
   });
 

@@ -4,6 +4,7 @@ import queryClient from '@/query-client';
 import { appRoutes } from '@/router';
 import { redirect } from '@tanstack/react-router';
 import { AxiosError, isAxiosError } from 'axios';
+import { getKawaiSessionToken } from '@/lib/kawai-auth';
 
 const noAuthMiddleware = async () => {
   try {
@@ -37,6 +38,11 @@ const noAuthMiddleware = async () => {
 };
 
 export async function loader() {
+  // The auth screen is public. Avoid probing protected Hatchet endpoints when
+  // there is no Kawai session; those probes only produce expected 401s.
+  if (!getKawaiSessionToken()) {
+    return null;
+  }
   await noAuthMiddleware();
   return null;
 }
