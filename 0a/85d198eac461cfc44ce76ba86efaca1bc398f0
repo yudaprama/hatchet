@@ -1,0 +1,19 @@
+frontend/app/src/lib/kawai-auth.ts
+  s_fb374dbb870bac::t_a4e36a1f5c6771 77-81,83,109-136,138
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "0a85d198eac461cfc44ce76ba86efaca1bc398f0",
+  "prompts": {},
+  "sessions": {
+    "s_fb374dbb870bac": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f9c21-92a0-7901-a10f-7d2e8fe6876f",
+        "model": "gpt-5.6-luna"
+      },
+      "human_author": "yudaprama <yudhaprama@icloud.com>"
+    }
+  }
+}
