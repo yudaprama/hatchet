@@ -42,37 +42,37 @@ lint = [
     "mypy==1.20.1",
     "types-protobuf>=5.28.3.20241030",
     "black==26.3.1",
-    "click>=8.4.2",
-    "types-psutil>=7.2.2.20260518",
+    "click>=8.5.0",
+    "types-psutil>=7.2.2.20260906",
     "ruff==0.15.10",
-    "types-requests>=2.33.0.20260712",
+    "types-requests>=2.33.0.20260906",
     "psutil>=6.0.0",
-    "types-grpcio>=1.82.1.20260711",
+    "types-grpcio>=1.84.0.20260928",
     "types-grpcio-status (>=1.0.0.20260408,<2.0.0.0)",
 ]
 
 test = [
     "pytest>=9.1.1,<10",
     "pytest-asyncio>=1.4.0",
-    "pytest-env>=1.6.0",
+    "pytest-env>=1.7.1",
     "pytest-retry>=1.7.0",
-    "psycopg[pool]>=3.3.4,<4",
+    "psycopg[pool]>=3.3.6,<4",
     "pytest-xdist>=3.7.0",
     "requests>=2.34.2,<3",
-    "boto3[s3]>=1.43.46",
-    "botocore>=1.43.51",
+    "boto3[s3]>=1.43.51",
+    "botocore>=1.43.108",
 ]
 
 docs = [
     "mkdocs>=1.6.1,<2",
     "mkdocstrings[python]>=1.0.6,<2",
-    "pydoclint>=0.9.1",
+    "pydoclint>=0.11.0",
     "markdownify>=1.2.3",
-    "openai>=2.46.0,<3",
+    "openai>=2.54.0,<3",
     "bs4>=0.0.2",
     "types-beautifulsoup4>=4.12.0.20250204",
-    "fastapi>=0.139.2,<1",
-    "uvicorn>=0.51.0,<1",
+    "fastapi>=0.141.1,<1",
+    "uvicorn>=0.54.0,<1",
 ]
 
 claude = ["claude-agent-sdk", "mcp"]
